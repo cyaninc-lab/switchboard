@@ -24,6 +24,7 @@ Tauri-specific code. Everything is under `/v1`; breaking changes get `/v2`.
 | `PATCH /v1/entries/{id}` | rename, regroup, pin, change account or default mode |
 | `DELETE /v1/entries/{id}` | off the tree only; the session stays on disk |
 | `GET /v1/entries/{id}/messages?offset=&limit=` | history via `get_session_messages()`, no resume needed |
+| `GET /v1/commands` | slash commands for the menu, with descriptions where known |
 | `GET/POST/PATCH/DELETE /v1/watches` | watch definitions: source, target entry, instructions, mode, delivery, quiet hours |
 | `GET /v1/inbox?since=` · `POST /v1/inbox/{id}/read` | messages from agents and watches |
 
@@ -37,7 +38,7 @@ Client → daemon:
 | type | fields |
 | --- | --- |
 | `subscribe` | `entries: [id]` (or `"all"`) |
-| `send` | `entry, text` (starts or resumes the session if stopped) |
+| `send` | `entry, text, images?` (starts or resumes the session if stopped; images = `[{media_type, data(base64)}]`, PNG/JPEG/GIF/WebP, ≤5 MB each, ≤10) |
 | `interrupt` / `stop` | `entry` |
 | `set_mode` | `entry, mode` (default, acceptEdits, plan, auto, dontAsk, bypassPermissions) |
 | `permission_reply` | `request_id, allow, message?, remember?` |
@@ -56,6 +57,8 @@ Daemon → client:
 | `terminal_opened` / `terminal_closed` | `entry` (the TUI started / exited) |
 | `terminal_output` | `entry, data` |
 | `mode` | `entry, mode` (after a `set_mode`) |
+| `commands` | `entry, commands` (slash commands the session reported at start) |
+| `notice` | `entry, text` (e.g. conversation compacted) |
 | `error` | `entry?, code, message` |
 
 Every subscribed client receives every event, so several clients stay live on one session.

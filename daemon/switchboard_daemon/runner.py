@@ -5,6 +5,9 @@ Events (docs/protocol.md): state, delta, message, permission_request, permission
 import asyncio, dataclasses, os, shutil, time, uuid
 
 IDLE_CLOSE = int(os.environ.get("SWITCHBOARD_IDLE_CLOSE", 600))
+IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+MAX_IMAGE_B64 = 7_000_000  # ~5 MB of image per attachment
+MAX_IMAGES = 10
 MODES = {"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}
 
 
@@ -31,6 +34,8 @@ def as_history(msg):
                 blocks.append({"type": "tool_use", "id": b.id, "name": b.name, "input": b.input})
             elif bn == "ToolResultBlock":
                 blocks.append({"type": "tool_result", "tool_use_id": b.tool_use_id, "content": b.content, "is_error": b.is_error})
+            elif isinstance(b, dict):
+                blocks.append(b)
         content = blocks
     role = "assistant" if name == "AssistantMessage" else "user"
     return {"type": role, "uuid": getattr(msg, "uuid", None) or uuid.uuid4().hex, "message": {"role": role, "content": content}}
@@ -44,6 +49,7 @@ class Live:
     working: bool = False
     last_active: float = dataclasses.field(default_factory=time.time)
     pending: dict = dataclasses.field(default_factory=dict)  # request id -> Future
+    said: bool = False  # did this turn produce any assistant text (built-in commands may only return a result)
 
 
 class Runner:
@@ -51,6 +57,7 @@ class Runner:
         self.store, self.sdk, self.broadcast = store, sdk, broadcast
         self.live: dict[str, Live] = {}
         self.cli_path = os.environ.get("SWITCHBOARD_CLAUDE") or shutil.which("claude")
+        self.commands: list[str] = []  # slash commands from the last session start (init message)
 
     # ---- state ----
     def state(self, entry_id):
@@ -88,13 +95,29 @@ class Runner:
         lv = holder["lv"] = self.live[entry["id"]] = Live(entry["id"], client)
         return lv
 
-    async def send(self, entry, text):
+    async def send(self, entry, text, images=None):
+        images = images or []
+        if len(images) > MAX_IMAGES:
+            raise ValueError("too_many_images")
+        for im in images:
+            if im.get("media_type") not in IMAGE_TYPES:
+                raise ValueError("unsupported_image_type")
+            if len(im.get("data", "")) > MAX_IMAGE_B64:
+                raise ValueError("image_too_large")
         lv = await self._open(entry)
         if lv.working:
             raise RuntimeError("busy")
-        lv.working, lv.last_active = True, time.time()
+        lv.working, lv.last_active, lv.said = True, time.time(), False
         await self._emit_state(entry["id"])
-        await lv.client.query(text)
+        if images:
+            content = [{"type": "image", "source": {"type": "base64", "media_type": im["media_type"], "data": im["data"]}} for im in images]
+            content.append({"type": "text", "text": text or "(image)"})
+
+            async def one():
+                yield {"type": "user", "message": {"role": "user", "content": content}}
+            await lv.client.query(one())
+        else:
+            await lv.client.query(text)
         lv.reader = asyncio.get_running_loop().create_task(self._read(lv))
 
     async def _read(self, lv):
@@ -106,9 +129,22 @@ class Runner:
                     if ev.get("type") == "content_block_delta" and ev.get("delta", {}).get("type") == "text_delta":
                         await self.broadcast({"type": "delta", "entry": lv.entry_id, "text": ev["delta"]["text"]})
                 elif (h := as_history(m)) is not None:
+                    lv.said |= h["type"] == "assistant"
                     await self.broadcast({"type": "message", "entry": lv.entry_id, "message": h})
-                elif type(m).__name__ == "ResultMessage" and m.is_error:
-                    await self.broadcast({"type": "error", "entry": lv.entry_id, "code": "result_error", "message": str(m.result)[:500]})
+                elif type(m).__name__ == "SystemMessage":
+                    sub, data = getattr(m, "subtype", ""), getattr(m, "data", {}) or {}
+                    if sub == "init" and data.get("slash_commands"):
+                        self.commands = list(data["slash_commands"])
+                        await self.broadcast({"type": "commands", "entry": lv.entry_id, "commands": self.commands})
+                    elif sub == "compact_boundary":
+                        await self.broadcast({"type": "notice", "entry": lv.entry_id, "text": "Conversation compacted"})
+                elif type(m).__name__ == "ResultMessage":
+                    if m.is_error:
+                        await self.broadcast({"type": "error", "entry": lv.entry_id, "code": "result_error", "message": str(m.result)[:500]})
+                    elif m.result and not lv.said:  # e.g. /usage, /context: output arrives only as the result
+                        await self.broadcast({"type": "message", "entry": lv.entry_id, "message": {
+                            "type": "assistant", "uuid": uuid.uuid4().hex,
+                            "message": {"role": "assistant", "content": [{"type": "text", "text": str(m.result)}]}}})
         except Exception as e:  # a dead CLI process must not take the daemon down
             await self.broadcast({"type": "error", "entry": lv.entry_id, "code": "session_error", "message": str(e)[:500]})
         finally:

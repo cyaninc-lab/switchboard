@@ -3,6 +3,8 @@
   import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell } from '$lib/shell';
   import type { ServiceStatus } from '$lib/shell';
   import TerminalView from '$lib/Terminal.svelte';
+  import { md } from '$lib/markdown';
+  import { tick } from 'svelte';
   import type { Machine, Entry, Session, HistoryMessage } from '$lib/api';
 
   // the HTML autofocus attribute only works on page load, not on elements Svelte adds later
@@ -55,6 +57,48 @@
   let streaming = $state<Record<string, string>>({});
   let prompts = $state<Record<string, { request_id: string; tool: string; input: any }[]>>({});
   let draft = $state('');
+  // follow new output while the view is at the bottom; leave it alone once the user scrolls up to read
+  let logEl = $state<HTMLDivElement>();
+  let stick = true;
+  const onLogScroll = () => { if (logEl) stick = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 80; };
+  $effect(() => {
+    messages.length; selected && streaming[selected.entry.id]; selected && prompts[selected.entry.id]?.length;
+    if (stick) tick().then(() => logEl && (logEl.scrollTop = logEl.scrollHeight));
+  });
+  // attachments (images) and the slash-command menu
+  let attachments = $state<(api.Image & { url: string; name: string })[]>([]);
+  let cmdList = $state<Record<string, api.Command[]>>({});
+  let cmdIdx = $state(0);
+  let fileInput = $state<HTMLInputElement>();
+  const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+  async function addFiles(files: Iterable<File>) {
+    for (const f of files) {
+      if (!IMAGE_TYPES.includes(f.type)) { liveErr = `${f.name || 'That file'} isn't a PNG, JPEG, GIF or WebP image`; continue; }
+      if (f.size > 5_000_000) { liveErr = `${f.name || 'Image'} is over 5 MB`; continue; }
+      const url = await new Promise<string>((ok) => { const r = new FileReader(); r.onload = () => ok(r.result as string); r.readAsDataURL(f); });
+      attachments = [...attachments, { media_type: f.type, data: url.split(',')[1], url, name: f.name || 'pasted image' }];
+    }
+  }
+  function onPaste(ev: ClipboardEvent) {
+    const files = [...(ev.clipboardData?.items ?? [])].filter((i) => i.kind === 'file').map((i) => i.getAsFile()!).filter(Boolean);
+    if (files.length) { ev.preventDefault(); addFiles(files); }
+  }
+  function onDrop(ev: DragEvent) { ev.preventDefault(); if (ev.dataTransfer?.files.length) addFiles(ev.dataTransfer.files); }
+  async function loadCommands(m: Machine) { try { cmdList[m.url] = await api.commands(m); } catch {} }
+  let menu = $derived.by(() => {
+    if (!selected || !/^\/\S*$/.test(draft)) return [];
+    const q = draft.slice(1).toLowerCase();
+    return (cmdList[selected.machine.url] ?? []).filter((c) => c.name.toLowerCase().includes(q))
+      .sort((a, b) => Number(!a.name.toLowerCase().startsWith(q)) - Number(!b.name.toLowerCase().startsWith(q))).slice(0, 8);
+  });
+  function complete(c: api.Command) { draft = `/${c.name} `; cmdIdx = 0; }
+  function onInputKey(ev: KeyboardEvent) {
+    if (!menu.length) return;
+    if (ev.key === 'ArrowDown') { ev.preventDefault(); cmdIdx = (cmdIdx + 1) % menu.length; }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); cmdIdx = (cmdIdx - 1 + menu.length) % menu.length; }
+    else if (ev.key === 'Tab' || (ev.key === 'Enter' && draft !== `/${menu[cmdIdx]?.name}`)) { ev.preventDefault(); complete(menu[Math.min(cmdIdx, menu.length - 1)]); }
+    else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); draft = ''; }
+  }
   let liveErr = $state('');
   const LIVE_STATES = ['working', 'waiting', 'ready'];
   // real-terminal toggle: which entry shows the claude TUI, and who receives its output
@@ -85,6 +129,10 @@
       prompts[e.entry] = (prompts[e.entry] ?? []).filter((p) => p.request_id !== e.request_id);
     } else if (e.type === 'mode') {
       setEntry(e.entry, { mode: e.mode });
+    } else if (e.type === 'commands') {
+      if (selected) loadCommands(selected.machine);
+    } else if (e.type === 'notice') {
+      if (selected?.entry.id === e.entry) messages = [...messages, { type: 'assistant', uuid: crypto.randomUUID(), message: { content: [{ type: 'text', text: `— ${e.text} —` }] } }];
     } else if (e.type === 'terminal_output') {
       if (e.entry === termFor) termSink?.(e.data);
     } else if (e.type === 'terminal_closed') {
@@ -96,11 +144,13 @@
   const live = () => (selected ? lives.get(selected.machine.url) : undefined);
   function sendDraft(ev: Event) {
     ev.preventDefault();
-    if (!selected || !draft.trim()) return;
+    if (!selected || (!draft.trim() && !attachments.length)) return;
     try {
-      live()!.send(selected.entry.id, draft);
-      messages = [...messages, { type: 'user', uuid: crypto.randomUUID(), message: { role: 'user', content: draft } }];
-      draft = ''; liveErr = '';
+      const images = attachments.map(({ media_type, data }) => ({ media_type, data }));
+      live()!.send(selected.entry.id, draft, images);
+      const content = [...images.map((im) => ({ type: 'image', source: { type: 'base64', ...im } })), { type: 'text', text: draft }];
+      messages = [...messages, { type: 'user', uuid: crypto.randomUUID(), message: { role: 'user', content } }];
+      draft = ''; attachments = []; liveErr = '';
     } catch (e) { liveErr = (e as Error).message; }
   }
   function act(fn: (l: api.Live, id: string) => void) {
@@ -152,6 +202,8 @@
   async function open(machine: Machine, entry: Entry) {
     if (termFor && termFor !== entry.id) termFor = null;
     selected = { machine, entry };
+    stick = true;
+    if (!cmdList[machine.url]) loadCommands(machine);
     loadingHistory = true;
     try { messages = await api.history(machine, entry.id); }
     catch (e) { messages = []; }
@@ -295,12 +347,18 @@
         {#if termFor === selected.entry.id}
           {#key selected.entry.id}<TerminalView live={live()!} entry={selected.entry.id} listen={(fn) => (termSink = fn)} />{/key}
         {:else}
-        <div class="log mono" role="log" aria-label="Session history">
+        <div class="log mono" role="log" aria-label="Session history" bind:this={logEl} onscroll={onLogScroll}>
           {#if loadingHistory}<div class="muted">Loading…</div>{/if}
           {#each messages as msg (msg.uuid)}
             {#each api.render(msg) as line}
-              {#if line.kind === 'text'}
-                <div class:you={msg.type === 'user'}>{#if msg.type === 'user'}<span class="prompt">❯ </span>{:else}<span class="bullet">⏺ </span>{/if}{line.text}</div>
+              {#if line.kind === 'image'}
+                <img class="shot" src={line.text} alt="Attachment" />
+              {:else if line.kind === 'text'}
+                {#if msg.type === 'user'}
+                  <div class="you"><span class="prompt">❯ </span>{line.text}</div>
+                {:else}
+                  <div class="reply"><span class="bullet">⏺</span><div class="md">{@html md(line.text)}</div></div>
+                {/if}
               {:else if line.kind === 'tool'}
                 <div><span class="bullet">⏺ </span><span class="tool">{line.text}</span></div>
               {:else}
@@ -321,11 +379,31 @@
           {/each}
         </div>
         {#if liveErr}<div class="liveerr" role="alert">{liveErr}</div>{/if}
-        <form class="inputbar mono" onsubmit={sendDraft}>
+        {#if menu.length}
+          <div class="cmdmenu" role="listbox" aria-label="Slash commands">
+            {#each menu as c, i (c.name)}
+              <button type="button" role="option" aria-selected={i === cmdIdx} class:on={i === cmdIdx} onclick={() => complete(c)}>
+                <span class="mono">/{c.name}</span><span class="muted small">{c.description}</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
+        {#if attachments.length}
+          <div class="attach" aria-label="Attached images">
+            {#each attachments as a, i (a.url)}
+              <span class="thumb"><img src={a.url} alt={a.name} /><button type="button" aria-label="Remove {a.name}" onclick={() => (attachments = attachments.filter((_, j) => j !== i))}>×</button></span>
+            {/each}
+          </div>
+        {/if}
+        <form class="inputbar mono" onsubmit={sendDraft} ondragover={(e) => e.preventDefault()} ondrop={onDrop}>
           <span class="prompt">❯</span>
           <label class="grow"><span class="sr">Message this session</span>
-            <input bind:value={draft} disabled={selected.entry.state === 'terminal' || selected.entry.state === 'missing'}
+            <input bind:value={draft} onpaste={onPaste} onkeydown={onInputKey} disabled={selected.entry.state === 'terminal' || selected.entry.state === 'missing'}
               placeholder={selected.entry.state === 'terminal' ? 'Open in a terminal elsewhere' : selected.entry.state === 'working' ? 'Working… (Esc to interrupt)' : 'Message this session'} /></label>
+          <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden bind:this={fileInput} onchange={(e) => { addFiles((e.target as HTMLInputElement).files ?? []); (e.target as HTMLInputElement).value = ''; }} />
+          <button type="button" class="tiny" aria-label="Attach images" title="Attach images (or paste / drop them)" onclick={() => fileInput?.click()}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" /></svg>
+          </button>
           {#if selected.entry.state === 'working'}<button type="button" class="tiny" onclick={() => act((l, id) => l.interrupt(id))}>Esc · interrupt</button>{/if}
         </form>
         {/if}
@@ -476,7 +554,19 @@
   .term { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--base); }
   .termhead { display: flex; gap: 16px; align-items: center; padding: 8px 18px; font-size: 12px; color: var(--o2); border-bottom: 1px solid var(--s0); }
   .log { flex: 1; overflow: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; white-space: pre-wrap; word-break: break-word; }
-  .you { color: var(--text); } .prompt { color: var(--mauve); font-weight: 600; } .bullet { color: var(--mauve); }
+  .you { color: var(--text); }
+  .reply { display: flex; gap: 8px; white-space: normal; }
+  .md { min-width: 0; font-family: Inter, system-ui, sans-serif; line-height: 1.55; }
+  .md :global(p) { margin: 0 0 8px; } .md :global(p:last-child) { margin-bottom: 0; }
+  .md :global(h1), .md :global(h2), .md :global(h3) { font-size: 14px; margin: 10px 0 6px; color: var(--mauve); }
+  .md :global(code) { font-family: 'JetBrains Mono', monospace; background: var(--s0); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .md :global(pre) { background: var(--mantle); border: 1px solid var(--s0); border-radius: 8px; padding: 10px 12px; overflow-x: auto; }
+  .md :global(pre code) { background: none; padding: 0; }
+  .md :global(table) { border-collapse: collapse; margin: 6px 0; font-size: 12px; display: block; overflow-x: auto; }
+  .md :global(th), .md :global(td) { border: 1px solid var(--s1); padding: 3px 8px; text-align: left; }
+  .md :global(th) { background: var(--s0); }
+  .md :global(a) { color: var(--sky); }
+  .md :global(ul), .md :global(ol) { margin: 4px 0 8px; padding-left: 20px; } .prompt { color: var(--mauve); font-weight: 600; } .bullet { color: var(--mauve); }
   .tool { color: var(--sub1); } .result { color: var(--o2); padding-left: 18px; }
   .inputbar { display: flex; gap: 10px; align-items: center; padding: 12px 18px; border-top: 1px solid var(--s0); }
   .inputbar input { border: 0; background: none; }
@@ -488,6 +578,14 @@
   .permactions { display: flex; gap: 8px; font-family: Inter, system-ui, sans-serif; }
   .allow { background: var(--green); color: var(--crust); border: 0; border-radius: 8px; padding: 8px 16px; font-weight: 600; }
   .deny { background: none; color: var(--red); border: 1px solid rgba(243, 139, 168, 0.45); border-radius: 8px; padding: 8px 16px; }
+  .shot { max-width: 320px; max-height: 200px; border-radius: 8px; border: 1px solid var(--s1); display: block; margin: 4px 0 4px 18px; }
+  .cmdmenu { margin: 0 18px; background: var(--mantle); border: 1px solid var(--s1); border-radius: 10px; padding: 4px; display: flex; flex-direction: column; }
+  .cmdmenu button { display: grid; grid-template-columns: minmax(140px, auto) 1fr; gap: 12px; text-align: left; background: none; border: 0; color: var(--text); padding: 6px 10px; border-radius: 6px; }
+  .cmdmenu button.on { background: var(--s0); }
+  .cmdmenu .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .attach { display: flex; gap: 8px; padding: 8px 18px 0; flex-wrap: wrap; }
+  .thumb { position: relative; } .thumb img { height: 56px; border-radius: 6px; border: 1px solid var(--s1); display: block; }
+  .thumb button { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; border: 0; background: var(--s1); color: var(--text); font-size: 12px; line-height: 18px; padding: 0; }
   .liveerr { color: var(--red); padding: 6px 18px; font-size: 12px; }
   .modepick { display: inline-flex; gap: 6px; align-items: center; }
   .modepick select { appearance: none; -webkit-appearance: none; padding-right: 14px; background: var(--base); color: var(--text); border: 1px solid var(--s1); border-radius: 6px; font: inherit; padding: 1px 4px; }

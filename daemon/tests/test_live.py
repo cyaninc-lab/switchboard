@@ -150,3 +150,28 @@ def test_terminal_pty(tmp_path, monkeypatch):
         await until(ws, lambda m: m["type"] == "terminal_closed")  # the fake exits after one line
         await client.close()
     asyncio.run(t())
+
+
+def test_images_commands_and_result_only_output(tmp_path, monkeypatch):
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        eid = e["id"]
+        png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+        await ws.send_json({"type": "send", "entry": eid, "text": "what is this?", "images": [{"media_type": "image/png", "data": png}] * 2})
+        _, seen = await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        cmds = [m for m in seen if m["type"] == "commands"]
+        assert cmds and "compact" in cmds[0]["commands"]
+        assert any("I can see 2 image(s)" in str(m) for m in seen if m["type"] == "message")
+        # the menu now uses the session's real list, with skill/built-in descriptions where known
+        r = await (await client.get("/v1/commands", headers=h)).json()
+        assert r["from_session"] and {"name": "compact", "description": "Summarise older messages to free up context"} in r["commands"]
+        # built-in command output that arrives only as the result is shown as a reply
+        await ws.send_json({"type": "send", "entry": eid, "text": "/usage"})
+        _, seen = await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        assert any("12% of this week" in str(m) for m in seen if m["type"] == "message")
+        # validation
+        await ws.send_json({"type": "send", "entry": eid, "text": "x", "images": [{"media_type": "image/tiff", "data": png}]})
+        err, _ = await until(ws, lambda m: m["type"] == "error")
+        assert "unsupported_image_type" in err["message"]
+        await client.close()
+    asyncio.run(t())

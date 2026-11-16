@@ -91,6 +91,12 @@ class StreamEvent:
 
 
 @dataclasses.dataclass
+class SystemMessage:
+    subtype: str
+    data: dict
+
+
+@dataclasses.dataclass
 class ResultMessage:
     is_error: bool = False
     result: str = ""
@@ -120,7 +126,7 @@ class PermissionResultDeny:
 class ClaudeSDKClient:
     """Scripted stand-in: streams a reply; "run" asks to use Bash; "slow" works for 30 s (interruptible)."""
     def __init__(self, options):
-        self.options, self.prompt, self.interrupted = options, "", False
+        self.options, self.prompt, self.interrupted, self.images, self.started = options, "", False, 0, False
 
     async def connect(self):
         pass
@@ -129,7 +135,14 @@ class ClaudeSDKClient:
         pass
 
     async def query(self, text):
-        self.prompt, self.interrupted = text, False
+        self.interrupted, self.images = False, 0
+        if isinstance(text, str):
+            self.prompt = text
+            return
+        async for msg in text:  # a user message with content blocks (images)
+            blocks = msg["message"]["content"]
+            self.images = sum(b["type"] == "image" for b in blocks)
+            self.prompt = " ".join(b.get("text", "") for b in blocks if b["type"] == "text")
 
     async def interrupt(self):
         self.interrupted = True
@@ -139,6 +152,14 @@ class ClaudeSDKClient:
 
     async def receive_response(self):
         text = self.prompt
+        if not self.started:
+            self.started = True
+            yield SystemMessage("init", {"slash_commands": ["compact", "clear", "usage", "deploy", "yt-add"]})
+        if text.startswith("/usage"):  # built-in commands answer only with a result
+            yield ResultMessage(result="**Plan usage:** 12% of this week's limit")
+            return
+        if self.images:
+            yield AssistantMessage([TextBlock(f"I can see {self.images} image(s).")])
         for word in "Looking into it.".split(" "):
             yield StreamEvent({"type": "content_block_delta", "delta": {"type": "text_delta", "text": word + " "}})
             await asyncio.sleep(0.05)

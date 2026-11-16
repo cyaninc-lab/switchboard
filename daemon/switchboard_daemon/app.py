@@ -1,5 +1,5 @@
 """HTTP API v1 (phase 1: pairing, machine, sessions, tree entries, history). See docs/protocol.md."""
-import asyncio, dataclasses, glob, json, os, platform, socket
+import asyncio, dataclasses, glob, itertools, json, os, platform, socket
 from pathlib import Path
 from aiohttp import web
 import claude_agent_sdk as sdk
@@ -178,7 +178,7 @@ async def messages(request):
 
 async def ws_handler(request):
     """One socket per client. First message must be {"type":"auth","token":...} (browsers can't set headers on a WebSocket)."""
-    ws = web.WebSocketResponse(heartbeat=30)
+    ws = web.WebSocketResponse(heartbeat=30, max_msg_size=80 * 1024 * 1024)  # image attachments
     await ws.prepare(request)
     store, runner = request.app[STORE], request.app[RUNNER]
     try:
@@ -220,7 +220,7 @@ async def ws_handler(request):
                 elif t == "send":
                     if entry["session_id"] in await _off(open_in_terminal) - runner.held_sessions():
                         raise RuntimeError("open_in_terminal")
-                    await runner.send(entry, m["text"])
+                    await runner.send(entry, m.get("text", ""), m.get("images"))
                 elif t == "interrupt":
                     await runner.interrupt(eid)
                 elif t == "stop":
@@ -244,6 +244,46 @@ async def _broadcast(app, event):
             await ws.send_json(event)
         except Exception:
             app[SOCKETS].discard(ws)
+
+
+BUILTIN_COMMANDS = {
+    "compact": "Summarise older messages to free up context", "clear": "Start over with an empty context",
+    "context": "Show what is using the context window", "usage": "Show plan usage and limits",
+    "init": "Write a CLAUDE.md for this project", "review": "Review a pull request",
+}
+
+
+def _skill_descriptions():
+    """name -> description from the user's skills and command files (the init list has names only)."""
+    out, home = {}, Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
+    plugin_skills = list(home.glob("plugins/cache/*/*/*/skills/*/SKILL.md"))  # <marketplace>/<plugin>/<version>
+    for f in list(home.glob("skills/*/SKILL.md")) + list(home.glob("commands/*.md")) + plugin_skills:
+        name = f.parent.name if f.name == "SKILL.md" else f.stem
+        if f in plugin_skills:
+            name = f"{f.parents[3].name}:{name}"  # plugin:skill, as the session lists it
+        try:
+            head = f.read_text(encoding="utf-8", errors="replace")[:3000]
+        except OSError:
+            continue
+        lines = head.splitlines()
+        desc = ""
+        for i, l in enumerate(lines):
+            if l.startswith("description:"):
+                desc = l.split(":", 1)[1].strip().strip('"')
+                if desc in (">", "|", ">-", "|-"):  # YAML block scalar: the text is on the indented lines below
+                    block = itertools.takewhile(lambda x: x.startswith((" ", "\t")) or not x.strip(), lines[i + 1:])
+                    desc = " ".join(x.strip() for x in block).strip().split("  ")[0]  # first paragraph
+                break
+        out[name] = desc
+    return out
+
+
+async def commands(request):
+    """Slash commands for the menu: the session's real list once one has started here, else built-ins + the user's skills."""
+    descs = {**BUILTIN_COMMANDS, **await _off(_skill_descriptions)}
+    names = request.app[RUNNER].commands or sorted(descs)
+    return web.json_response({"commands": [{"name": n, "description": descs.get(n, "")} for n in names],
+                              "from_session": bool(request.app[RUNNER].commands)})
 
 
 def make_app(store: Store, name=None):
@@ -271,6 +311,6 @@ def make_app(store: Store, name=None):
         web.post("/v1/pair", pair), web.get("/v1/machine", machine), web.get("/v1/sessions", sessions),
         web.get("/v1/entries", list_entries), web.post("/v1/entries", add_entry),
         web.patch("/v1/entries/{id}", update_entry), web.delete("/v1/entries/{id}", remove_entry),
-        web.get("/v1/entries/{id}/messages", messages), web.get("/v1/ws", ws_handler),
+        web.get("/v1/entries/{id}/messages", messages), web.get("/v1/ws", ws_handler), web.get("/v1/commands", commands),
     ])
     return app

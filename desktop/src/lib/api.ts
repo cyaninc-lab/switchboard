@@ -54,17 +54,31 @@ export const addEntry = (m: Machine, body: { session_id: string; name?: string; 
 export const updateEntry = (m: Machine, id: string, body: Partial<{ name: string; group: string; pinned: boolean }>) =>
   call<Entry>(m, `/v1/entries/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
 export const removeEntry = (m: Machine, id: string) => call<void>(m, `/v1/entries/${id}`, { method: 'DELETE' });
+export const commands = (m: Machine) => call<{ commands: Command[] }>(m, '/v1/commands').then((d) => d.commands);
 export const history = (m: Machine, id: string, limit = 400) =>
   call<{ messages: HistoryMessage[] }>(m, `/v1/entries/${id}/messages?limit=${limit}`).then((d) => d.messages);
 
 /** Flatten an SDK message into display lines: text, tool calls and tool results. */
-export type Line = { kind: 'text' | 'tool' | 'result'; text: string };
+export type Line = { kind: 'text' | 'tool' | 'result' | 'image'; text: string };
+export type Image = { media_type: string; data: string };
+export type Command = { name: string; description: string };
+// Claude Code stores slash commands and their output wrapped in tags; show them as the user typed / saw them.
+function untag(t: string): string {
+  const name = t.match(/<command-name>\s*([^<]*?)\s*<\/command-name>/)?.[1];
+  if (name) {
+    const args = t.match(/<command-args>([\s\S]*?)<\/command-args>/)?.[1]?.trim();
+    return `${name.startsWith('/') ? name : '/' + name}${args ? ' ' + args : ''}`;
+  }
+  return t.replace(/<\/?local-command-std(out|err)>/g, '').replace(/<command-message>[\s\S]*?<\/command-message>/g, '');
+}
+
 export function render(msg: HistoryMessage): Line[] {
   const c = msg.message?.content;
-  if (typeof c === 'string') return [{ kind: 'text', text: c }];
+  if (typeof c === 'string') return [{ kind: 'text', text: untag(c) }];
   if (!Array.isArray(c)) return [];
   return c.flatMap((b: any): Line[] => {
-    if (b.type === 'text') return [{ kind: 'text' as const, text: b.text }];
+    if (b.type === 'text') return [{ kind: 'text' as const, text: untag(b.text) }];
+    if (b.type === 'image' && b.source?.type === 'base64') return [{ kind: 'image' as const, text: `data:${b.source.media_type};base64,${b.source.data}` }];
     if (b.type === 'tool_use') {
       const arg = b.input?.command ?? b.input?.file_path ?? b.input?.pattern ?? b.input?.description ?? '';
       return [{ kind: 'tool' as const, text: `${b.name}(${String(arg).slice(0, 160)})` }];
@@ -87,6 +101,8 @@ export type LiveEvent =
   | { type: 'permission_resolved'; entry: string; request_id: string; allow: boolean; by: string }
   | { type: 'mode'; entry: string; mode: string }
   | { type: 'terminal_opened' | 'terminal_closed'; entry: string }
+  | { type: 'commands'; entry: string; commands: string[] }
+  | { type: 'notice'; entry: string; text: string }
   | { type: 'terminal_output'; entry: string; data: string }
   | { type: 'error'; entry?: string; code: string; message: string };
 
@@ -116,7 +132,7 @@ export class Live {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(o));
     else throw new Error('Not connected to ' + this.m.name);
   }
-  send(entry: string, text: string) { this.sendJson({ type: 'send', entry, text }); }
+  send(entry: string, text: string, images: Image[] = []) { this.sendJson({ type: 'send', entry, text, images }); }
   interrupt(entry: string) { this.sendJson({ type: 'interrupt', entry }); }
   stop(entry: string) { this.sendJson({ type: 'stop', entry }); }
   setMode(entry: string, mode: string) { this.sendJson({ type: 'set_mode', entry, mode }); }
