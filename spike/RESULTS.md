@@ -16,8 +16,8 @@ model claude-haiku-5-5, signed in with a Claude subscription. Scripts: `spike.py
 | `set_permission_mode()` mid-session | pass | acceptEdits wrote a file without asking |
 | Auto mode | pass | ran without asking `can_use_tool` |
 | Memory per session | ~240 MiB RSS | one claude process per live session (x86) |
-| Resume under a second account | not run | needs a `claude setup-token` token in `SPIKE_ALT_TOKEN` |
-| Memory on ARM (Raspberry Pi 5) | not run | needs a token on the Pi |
+| Resume under a second account | pass | session started on account A resumed with account B's token (`CLAUDE_CODE_OAUTH_TOKEN`) with full context; a bogus token fails with 401, so the token really is used |
+| Memory on ARM (Raspberry Pi 5, 16 GB) | ~210 MiB RSS | per live session; with 4.6 GiB free that's roughly 15-20 live sessions, so idle close matters on small boxes |
 
 Lessons for the daemon:
 
