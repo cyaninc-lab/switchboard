@@ -1,0 +1,2 @@
+[console_scripts]
+switchboard-daemon = switchboard_daemon.__main__:main

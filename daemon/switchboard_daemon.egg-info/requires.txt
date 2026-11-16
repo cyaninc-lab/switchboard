@@ -1,0 +1,5 @@
+claude-agent-sdk>=0.2.182
+aiohttp>=3.9
+
+[test]
+pytest
