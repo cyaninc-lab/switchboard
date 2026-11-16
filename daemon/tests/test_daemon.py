@@ -119,3 +119,11 @@ def test_tree_flow(env):
         assert (await (await c.get("/v1/entries", headers=h)).json())["entries"] == []
         assert (await c.delete(f"/v1/entries/{e['id']}", headers=h)).status == 404
     run(store, t)
+
+
+def test_exit_with_alive_check():
+    import subprocess
+    from switchboard_daemon.__main__ import _alive
+    assert _alive(os.getpid())
+    p = subprocess.Popen(["true"]); p.wait()
+    assert not _alive(p.pid)

@@ -1,5 +1,6 @@
 <script lang="ts">
   import * as api from '$lib/api';
+  import { pairLocal } from '$lib/shell';
   import type { Machine, Entry, Session, HistoryMessage } from '$lib/api';
 
   // the HTML autofocus attribute only works on page load, not on elements Svelte adds later
@@ -38,7 +39,26 @@
     }));
     tree = next;
   }
-  $effect(() => { refresh(); const t = setInterval(refresh, 10000); return () => clearInterval(t); });
+  // In the desktop app, this machine's daemon is connected automatically (no code to type),
+  // and re-paired if its token stopped working (e.g. its data was reset).
+  const LOCAL = 'http://127.0.0.1:7878';
+  async function ensureLocal() {
+    const known = machines.find((m) => m.url === LOCAL);
+    if (known) {
+      try { await api.entries(known); return; } catch (e) { if ((e as Error).message !== 'unauthorized') return; }
+    }
+    try {
+      const m = await pairLocal();
+      if (!m) return;
+      machines = [m, ...machines.filter((x) => x.url !== LOCAL)];
+      api.saveMachines(machines);
+    } catch (e) { console.error('local daemon:', e); }
+  }
+  $effect(() => {
+    ensureLocal().then(refresh);
+    const t = setInterval(refresh, 10000);
+    return () => clearInterval(t);
+  });
 
   function groups(m: Machine) {
     const es = (tree[m.url]?.entries ?? []).filter((e) => !filter || (e.name + ' ' + e.group).toLowerCase().includes(filter.toLowerCase()));
