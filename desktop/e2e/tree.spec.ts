@@ -42,7 +42,7 @@ test('connect, add from a machine, read history, pin, remove', async ({ page }) 
   // a session already in the tree is marked and can't be added twice
   await page.getByRole('button', { name: '+ Add' }).click();
   await expect(dialog.getByRole('button', { name: /Deploy #52 rolled back/ })).toBeDisabled();
-  await expect(dialog.getByText('in tree')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: /Deploy #52 rolled back/ }).getByText('in tree')).toBeVisible();
   // a session open in a terminal elsewhere shows as such once added
   await dialog.getByRole('button', { name: /Bump Glance/ }).click();
   await dialog.getByRole('button', { name: 'Add to tree' }).click();

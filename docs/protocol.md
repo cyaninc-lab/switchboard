@@ -29,7 +29,8 @@ Tauri-specific code. Everything is under `/v1`; breaking changes get `/v2`.
 
 ## WebSocket `/v1/ws`
 
-One socket per client per daemon. JSON messages with a `type`.
+One socket per client per daemon. JSON messages with a `type`. The first client message must be
+`{"type": "auth", "token": ...}` (browsers can't set headers on a WebSocket); the daemon answers `hello`.
 
 Client → daemon:
 
@@ -46,13 +47,14 @@ Daemon → client:
 
 | type | fields |
 | --- | --- |
-| `state` | `entry, state` (working, waiting, stopped, terminal, error) |
+| `state` | `entry, state` (working, waiting, ready = live and idle, stopped, terminal, error) |
 | `delta` | `entry, text` (partial streaming) |
 | `message` | `entry, message` (full assistant/user/tool message, same shape as history) |
 | `permission_request` | `request_id, entry, tool, input` |
 | `permission_resolved` | `request_id, allow, by` (first answer wins; every client is told) |
 | `inbox` | `item` |
 | `terminal_output` | `entry, data` |
+| `mode` | `entry, mode` (after a `set_mode`) |
 | `error` | `entry?, code, message` |
 
 Every subscribed client receives every event, so several clients stay live on one session.

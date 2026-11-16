@@ -50,3 +50,108 @@ def get_session_info(session_id):
 
 def get_session_messages(session_id, limit=None, offset=0):
     return HISTORY[offset:offset + limit if limit else None] if get_session_info(session_id) else []
+
+
+# ---- fake live sessions (phase 2): same class names the runner looks for ----
+import asyncio
+
+
+@dataclasses.dataclass
+class TextBlock:
+    text: str
+
+
+@dataclasses.dataclass
+class ToolUseBlock:
+    id: str
+    name: str
+    input: dict
+
+
+@dataclasses.dataclass
+class ToolResultBlock:
+    tool_use_id: str
+    content: str
+    is_error: bool = False
+
+
+@dataclasses.dataclass
+class AssistantMessage:
+    content: list
+
+
+@dataclasses.dataclass
+class UserMessage:
+    content: list
+
+
+@dataclasses.dataclass
+class StreamEvent:
+    event: dict
+
+
+@dataclasses.dataclass
+class ResultMessage:
+    is_error: bool = False
+    result: str = ""
+
+
+@dataclasses.dataclass
+class ClaudeAgentOptions:
+    resume: str = None
+    cwd: str = None
+    include_partial_messages: bool = False
+    permission_mode: str = "default"
+    can_use_tool: object = None
+    cli_path: str = None
+    model: str = None
+
+
+class PermissionResultAllow:
+    behavior = "allow"
+
+
+@dataclasses.dataclass
+class PermissionResultDeny:
+    message: str = ""
+    behavior: str = "deny"
+
+
+class ClaudeSDKClient:
+    """Scripted stand-in: streams a reply; "run" asks to use Bash; "slow" works for 30 s (interruptible)."""
+    def __init__(self, options):
+        self.options, self.prompt, self.interrupted = options, "", False
+
+    async def connect(self):
+        pass
+
+    async def disconnect(self):
+        pass
+
+    async def query(self, text):
+        self.prompt, self.interrupted = text, False
+
+    async def interrupt(self):
+        self.interrupted = True
+
+    async def set_permission_mode(self, mode):
+        self.options.permission_mode = mode
+
+    async def receive_response(self):
+        text = self.prompt
+        for word in "Looking into it.".split(" "):
+            yield StreamEvent({"type": "content_block_delta", "delta": {"type": "text_delta", "text": word + " "}})
+            await asyncio.sleep(0.05)
+        if "run" in text.lower():
+            ok = self.options.permission_mode in ("auto", "bypassPermissions", "acceptEdits") or \
+                isinstance(await self.options.can_use_tool("Bash", {"command": "git status"}, None), PermissionResultAllow)
+            yield AssistantMessage([ToolUseBlock("t1", "Bash", {"command": "git status"})])
+            yield UserMessage([ToolResultBlock("t1", "On branch main, nothing to commit" if ok else "Permission denied", not ok)])
+        if "slow" in text.lower():
+            for _ in range(300):
+                if self.interrupted:
+                    yield ResultMessage(is_error=False, result="interrupted")
+                    return
+                await asyncio.sleep(0.1)
+        yield AssistantMessage([TextBlock(f"Done: {text}")])
+        yield ResultMessage()

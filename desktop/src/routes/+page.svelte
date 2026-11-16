@@ -30,6 +30,61 @@
   let aGroup = $state('');
   let aError = $state('');
 
+  // ---- live sessions (phase 2) ----
+  const lives = new Map<string, api.Live>();
+  let streaming = $state<Record<string, string>>({});
+  let prompts = $state<Record<string, { request_id: string; tool: string; input: any }[]>>({});
+  let draft = $state('');
+  let liveErr = $state('');
+  const LIVE_STATES = ['working', 'waiting', 'ready'];
+
+  $effect(() => {
+    for (const m of machines) if (!lives.has(m.url)) lives.set(m.url, new api.Live(m, (e) => onEvent(e), () => {}));
+    for (const [url, l] of lives) if (!machines.some((m) => m.url === url)) { l.close(); lives.delete(url); }
+  });
+
+  function setEntry(id: string, patch: Partial<Entry>) {
+    for (const t of Object.values(tree)) { const e = t.entries.find((x) => x.id === id); if (e) Object.assign(e, patch); }
+    if (selected?.entry.id === id) Object.assign(selected.entry, patch);
+  }
+  function onEvent(e: api.LiveEvent) {
+    if (e.type === 'state') {
+      setEntry(e.entry, { state: e.state as Entry['state'] });
+      if (e.state !== 'working' && e.state !== 'waiting') streaming[e.entry] = '';
+    } else if (e.type === 'delta') {
+      streaming[e.entry] = (streaming[e.entry] ?? '') + e.text;
+    } else if (e.type === 'message') {
+      if (selected?.entry.id === e.entry) messages = [...messages, e.message];
+      if (e.message.type === 'assistant') streaming[e.entry] = '';
+    } else if (e.type === 'permission_request') {
+      prompts[e.entry] = [...(prompts[e.entry] ?? []), { request_id: e.request_id, tool: e.tool, input: e.input }];
+    } else if (e.type === 'permission_resolved') {
+      prompts[e.entry] = (prompts[e.entry] ?? []).filter((p) => p.request_id !== e.request_id);
+    } else if (e.type === 'mode') {
+      setEntry(e.entry, { mode: e.mode });
+    } else if (e.type === 'error') {
+      if (!e.entry || e.entry === selected?.entry.id) liveErr = e.message;
+    }
+  }
+  const live = () => (selected ? lives.get(selected.machine.url) : undefined);
+  function sendDraft(ev: Event) {
+    ev.preventDefault();
+    if (!selected || !draft.trim()) return;
+    try {
+      live()!.send(selected.entry.id, draft);
+      messages = [...messages, { type: 'user', uuid: crypto.randomUUID(), message: { role: 'user', content: draft } }];
+      draft = ''; liveErr = '';
+    } catch (e) { liveErr = (e as Error).message; }
+  }
+  function act(fn: (l: api.Live, id: string) => void) {
+    if (!selected) return;
+    try { fn(live()!, selected.entry.id); liveErr = ''; } catch (e) { liveErr = (e as Error).message; }
+  }
+  function onKey(ev: KeyboardEvent) {
+    if (ev.key === 'Escape' && selected?.entry.state === 'working' && !dialog) act((l, id) => l.interrupt(id));
+  }
+  const summary = (input: any) => input?.command ?? input?.file_path ?? input?.pattern ?? input?.url ?? JSON.stringify(input).slice(0, 200);
+
   // ---- tree ----
   async function refresh() {
     const next: typeof tree = {};
@@ -76,7 +131,7 @@
   }
 
   const stateLabel: Record<string, string> = {
-    working: 'Working', waiting: 'Waiting for you', stopped: 'Stopped: click to view, resume comes in phase 2',
+    working: 'Working', waiting: 'Waiting for you', stopped: 'Stopped: send a message to resume it', ready: 'Live and ready',
     terminal: 'Open in a terminal (read-only here)', missing: 'Session no longer on this machine', error: 'Error',
   };
 
@@ -145,6 +200,8 @@
   let counts = $derived(Object.values(tree).flatMap((t) => t.entries).reduce((a, e) => ({ ...a, [e.state]: (a[e.state] ?? 0) + 1 }), {} as Record<string, number>));
 </script>
 
+<svelte:window onkeydown={onKey} />
+
 <div class="app">
   <header class="titlebar">
     <div class="brand">
@@ -198,6 +255,7 @@
           <span>{selected.machine.name}:{selected.entry.session?.cwd ?? '?'}</span>
           {#if selected.entry.session?.git_branch}<span>⎇ {selected.entry.session.git_branch}</span>{/if}
           <span class="grow"></span>
+          {#if LIVE_STATES.includes(selected.entry.state)}<button class="tiny" onclick={() => act((l, id) => l.stop(id))} title="Close the live session; it resumes on your next message">Stop</button>{/if}
           <button class="tiny" onclick={togglePin}>{selected.entry.pinned ? 'Unpin' : 'Pin'}</button>
           <button class="tiny" onclick={remove} title="Takes it off the tree; the session stays on its machine">Remove from tree</button>
         </div>
@@ -214,11 +272,26 @@
               {/if}
             {/each}
           {/each}
+          {#if streaming[selected.entry.id]}<div class="streaming"><span class="bullet">⏺ </span>{streaming[selected.entry.id]}<span class="cursor">▌</span></div>{/if}
+          {#each prompts[selected.entry.id] ?? [] as p (p.request_id)}
+            <div class="perm" role="group" aria-label="Permission needed">
+              <div class="permtitle">Permission needed</div>
+              <div>{p.tool}: {summary(p.input)}</div>
+              <div class="permactions">
+                <button class="allow" onclick={() => act((l) => l.answer(p.request_id, true))}>Allow</button>
+                <button class="deny" onclick={() => act((l) => l.answer(p.request_id, false))}>Deny</button>
+              </div>
+            </div>
+          {/each}
         </div>
-        <div class="inputbar mono">
+        {#if liveErr}<div class="liveerr" role="alert">{liveErr}</div>{/if}
+        <form class="inputbar mono" onsubmit={sendDraft}>
           <span class="prompt">❯</span>
-          <input disabled placeholder={selected.entry.state === 'terminal' ? 'Open in a terminal elsewhere' : 'Chatting arrives in phase 2'} />
-        </div>
+          <label class="grow"><span class="sr">Message this session</span>
+            <input bind:value={draft} disabled={selected.entry.state === 'terminal' || selected.entry.state === 'missing'}
+              placeholder={selected.entry.state === 'terminal' ? 'Open in a terminal elsewhere' : selected.entry.state === 'working' ? 'Working… (Esc to interrupt)' : 'Message this session'} /></label>
+          {#if selected.entry.state === 'working'}<button type="button" class="tiny" onclick={() => act((l, id) => l.interrupt(id))}>Esc · interrupt</button>{/if}
+        </form>
       {:else}
         <div class="placeholder">Pick a session from the tree, or <button class="link" disabled={!machines.length} onclick={openAdd}>add one</button>.</div>
       {/if}
@@ -227,8 +300,15 @@
 
   <footer class="status mono">
     <span>{machines.length} machine{machines.length === 1 ? '' : 's'}</span>
+    {#if selected}
+      <label class="modepick">mode
+        <select value={selected.entry.mode ?? 'default'} onchange={(ev) => act((l, id) => l.setMode(id, (ev.target as HTMLSelectElement).value))}>
+          {#each api.MODES as m}<option value={m}>{m}</option>{/each}
+        </select>
+      </label>
+    {/if}
     <span class="grow"></span>
-    <span>{counts.working ?? 0} working · {counts.waiting ?? 0} waiting · {counts.stopped ?? 0} stopped · {counts.terminal ?? 0} in terminal</span>
+    <span>{counts.working ?? 0} working · {counts.waiting ?? 0} waiting · {counts.ready ?? 0} live · {counts.stopped ?? 0} stopped · {counts.terminal ?? 0} in terminal</span>
   </footer>
 </div>
 
@@ -304,6 +384,7 @@
   .body { flex: 1; display: flex; min-height: 0; }
   .tree { width: 290px; flex: 0 0 290px; display: flex; flex-direction: column; background: var(--mantle); border-right: 1px solid var(--s0); }
   .search { display: block; padding: 12px; }
+  input:focus, select:focus { outline: 1px solid var(--mauve); outline-offset: 0; }
   input { width: 100%; box-sizing: border-box; background: var(--base); border: 1px solid var(--s1); border-radius: 8px; padding: 8px 10px; color: var(--text); font: inherit; }
   .scroll { flex: 1; overflow: auto; padding: 0 8px 12px; }
   .empty { color: var(--o2); padding: 8px; }
@@ -319,7 +400,7 @@
   .ename { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pin { color: var(--peach); font-size: 11px; }
   .st { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; box-sizing: border-box; border: 1.5px solid var(--o1); }
-  .st.working { background: var(--green); border: 0; } .st.waiting { border: 2px solid var(--peach); }
+  .st.working { background: var(--green); border: 0; } .st.ready { border: 2px solid var(--green); } .st.waiting { border: 2px solid var(--peach); }
   .st.terminal { background: var(--sky); border: 0; border-radius: 2px; } .st.missing, .st.error { border-color: var(--red); }
   .navfoot { padding: 10px 12px; border-top: 1px solid var(--s0); }
   .btn { width: 100%; background: var(--s0); border: 1px solid var(--s1); color: var(--text); border-radius: 8px; padding: 9px; }
@@ -335,6 +416,16 @@
   .inputbar { display: flex; gap: 10px; align-items: center; padding: 12px 18px; border-top: 1px solid var(--s0); }
   .inputbar input { border: 0; background: none; }
   .placeholder { margin: auto; color: var(--o2); }
+  .streaming { color: var(--text); } .cursor { color: var(--mauve); animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .perm { border: 1px solid rgba(250, 179, 135, 0.45); background: rgba(250, 179, 135, 0.08); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; white-space: normal; }
+  .permtitle { color: var(--peach); font-weight: 600; }
+  .permactions { display: flex; gap: 8px; font-family: Inter, system-ui, sans-serif; }
+  .allow { background: var(--green); color: var(--crust); border: 0; border-radius: 8px; padding: 8px 16px; font-weight: 600; }
+  .deny { background: none; color: var(--red); border: 1px solid rgba(243, 139, 168, 0.45); border-radius: 8px; padding: 8px 16px; }
+  .liveerr { color: var(--red); padding: 6px 18px; font-size: 12px; }
+  .modepick { display: inline-flex; gap: 6px; align-items: center; }
+  .modepick select { appearance: none; -webkit-appearance: none; padding-right: 14px; background: var(--base); color: var(--text); border: 1px solid var(--s1); border-radius: 6px; font: inherit; padding: 1px 4px; }
   .link { background: none; border: 0; color: var(--sky); padding: 0; text-decoration: underline; }
 
   .status { display: flex; gap: 18px; padding: 6px 16px; background: var(--mantle); border-top: 1px solid var(--s0); font-size: 11px; color: var(--o2); }

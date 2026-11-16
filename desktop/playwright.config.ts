@@ -9,6 +9,7 @@ export const DATA = 'e2e/.data';
 export default defineConfig({
   testDir: 'e2e',
   outputDir: 'e2e/.results',
+  workers: 1, // the tests share one demo daemon
   use: { baseURL: 'http://localhost:1421', headless: true, viewport: { width: 1280, height: 820 } },
   webServer: [
     { command: `rm -rf ${DATA} && ${daemon} --data ${DATA} serve --demo --port ${DAEMON_PORT}`, url: `http://127.0.0.1:${DAEMON_PORT}/v1/machine`, reuseExistingServer: false, ignoreHTTPSErrors: true },

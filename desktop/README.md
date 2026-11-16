@@ -27,3 +27,9 @@ read-only history. Tokens sit in localStorage for now; they move to the OS keych
 (`switchboard-daemon serve --demo`: canned sessions, no Claude usage, nothing real touched).
 Screenshots land in `e2e/.results/` (CI uploads them as the `ui-screenshots` artifact).
 Later, the same flows can drive the actual Tauri window through `tauri-driver` on a virtual display (Xvfb).
+
+## Watching the real window
+
+`node e2e-real/watch.mjs "<session search>"` drives the release build through `tauri-driver`
+(WebDriver; needs `webkit2gtk-driver` and `cargo install tauri-driver --version 2.0.6`), visibly and paced
+(`SLOW=ms`), against real Claude (`SWITCHBOARD_MODEL`, default Haiku). Screenshots: `e2e/.results/real-*.png`.

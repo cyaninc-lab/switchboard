@@ -9,7 +9,7 @@ export type Session = {
 export type Entry = {
   id: string; session_id: string; name: string; group: string; pinned: boolean;
   account: string | null; mode: string | null;
-  state: 'working' | 'waiting' | 'stopped' | 'terminal' | 'missing' | 'error';
+  state: 'working' | 'waiting' | 'ready' | 'stopped' | 'terminal' | 'missing' | 'error';
   session: Session | null;
 };
 export type HistoryMessage = { type: 'user' | 'assistant'; uuid: string; message: any };
@@ -75,4 +75,49 @@ export function render(msg: HistoryMessage): Line[] {
     }
     return [];
   });
+}
+
+// ---- live connection (phase 2): one WebSocket per machine ----
+export type LiveEvent =
+  | { type: 'hello'; machine: string }
+  | { type: 'state'; entry: string; state: Entry['state'] | 'ready' }
+  | { type: 'delta'; entry: string; text: string }
+  | { type: 'message'; entry: string; message: HistoryMessage }
+  | { type: 'permission_request'; entry: string; request_id: string; tool: string; input: any }
+  | { type: 'permission_resolved'; entry: string; request_id: string; allow: boolean; by: string }
+  | { type: 'mode'; entry: string; mode: string }
+  | { type: 'error'; entry?: string; code: string; message: string };
+
+export const MODES = ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'] as const;
+
+export class Live {
+  private ws: WebSocket | null = null;
+  private closed = false;
+  constructor(private m: Machine, private onEvent: (e: LiveEvent) => void, private onStatus: (up: boolean) => void) {
+    this.open();
+  }
+  private open() {
+    const ws = new WebSocket(this.m.url.replace(/^http/, 'ws').replace(/\/$/, '') + '/v1/ws');
+    this.ws = ws;
+    ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token: this.m.token }));
+    ws.onmessage = (ev) => {
+      const e = JSON.parse(ev.data) as LiveEvent;
+      if (e.type === 'hello') this.onStatus(true);
+      this.onEvent(e);
+    };
+    ws.onclose = () => {
+      this.onStatus(false);
+      if (!this.closed) setTimeout(() => this.open(), 2000); // reconnect: the daemon may restart
+    };
+  }
+  private sendJson(o: object) {
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(o));
+    else throw new Error('Not connected to ' + this.m.name);
+  }
+  send(entry: string, text: string) { this.sendJson({ type: 'send', entry, text }); }
+  interrupt(entry: string) { this.sendJson({ type: 'interrupt', entry }); }
+  stop(entry: string) { this.sendJson({ type: 'stop', entry }); }
+  setMode(entry: string, mode: string) { this.sendJson({ type: 'set_mode', entry, mode }); }
+  answer(request_id: string, allow: boolean, message?: string) { this.sendJson({ type: 'permission_reply', request_id, allow, message }); }
+  close() { this.closed = true; this.ws?.close(); }
 }
