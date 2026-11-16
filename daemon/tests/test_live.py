@@ -218,3 +218,26 @@ def test_queue_while_working(tmp_path, monkeypatch):
         await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
         await client.close()
     asyncio.run(t())
+
+
+def test_models(tmp_path, monkeypatch):
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        ms = (await (await client.get("/v1/models", headers=h)).json())["models"]
+        assert [m["value"] for m in ms] == ["default", "sonnet", "haiku"]
+        eid = e["id"]
+        await ws.send_json({"type": "set_model", "entry": eid, "model": "sonnet"})
+        await until(ws, lambda m: m["type"] == "model" and m["model"] == "sonnet")
+        assert store.entry(eid)["model"] == "sonnet"
+        await ws.send_json({"type": "send", "entry": eid, "text": "hi"})
+        _, seen = await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        assert any("Done: hi [sonnet]" in str(m) for m in seen)  # the session started on the chosen model
+        await ws.send_json({"type": "set_model", "entry": eid, "model": "haiku"})  # switch mid-session
+        await until(ws, lambda m: m["type"] == "model")
+        await ws.send_json({"type": "send", "entry": eid, "text": "again"})
+        _, seen = await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        assert any("Done: again [haiku]" in str(m) for m in seen)
+        es = (await (await client.get("/v1/entries", headers=h)).json())["entries"]
+        assert es[0]["model"] == "haiku"
+        await client.close()
+    asyncio.run(t())

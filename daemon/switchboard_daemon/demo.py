@@ -151,6 +151,14 @@ class ClaudeSDKClient:
     async def set_permission_mode(self, mode):
         self.options.permission_mode = mode
 
+    async def set_model(self, model):
+        self.options.model = model
+
+    async def get_server_info(self):
+        return {"models": [{"value": "default", "displayName": "Default (recommended)", "description": "Opus 5.5"},
+                           {"value": "sonnet", "displayName": "Sonnet 5.5", "description": "Most efficient for simpler tasks"},
+                           {"value": "haiku", "displayName": "Haiku 5.5", "description": "Fastest"}]}
+
     async def receive_response(self):
         text = self.prompt
         if self.options.session_id and not get_session_info(self.options.session_id):  # a new session now exists on "disk"
@@ -177,5 +185,5 @@ class ClaudeSDKClient:
                     yield ResultMessage(is_error=False, result="interrupted")
                     return
                 await asyncio.sleep(0.1)
-        yield AssistantMessage([TextBlock(f"Done: {text}")])
+        yield AssistantMessage([TextBlock(f"Done: {text}" + (f" [{self.options.model}]" if self.options.model else ""))])
         yield ResultMessage()

@@ -49,7 +49,7 @@ test('chat: stream, approve, deny, interrupt, auto mode, stop', async ({ page })
   await expect(entry).toHaveAttribute('title', 'Live and ready', { timeout: 5000 });
 
   // auto mode: no prompt
-  await page.getByLabel('mode').selectOption('auto');
+  await page.getByRole('contentinfo').getByLabel('Permission mode').selectOption('auto');
   await input.fill('run in auto');
   await input.press('Enter');
   await expect(log).toContainText('Done: run in auto');

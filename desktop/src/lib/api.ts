@@ -8,7 +8,7 @@ export type Session = {
 };
 export type Entry = {
   id: string; session_id: string; name: string; group: string; pinned: boolean;
-  account: string | null; mode: string | null;
+  account: string | null; mode: string | null; model: string | null;
   state: 'new' | 'working' | 'waiting' | 'ready' | 'stopped' | 'terminal' | 'missing' | 'error';
   session: Session | null;
 };
@@ -49,7 +49,9 @@ export async function pair(url: string, code: string, clientName: string): Promi
 export const entries = (m: Machine) => call<{ entries: Entry[] }>(m, '/v1/entries').then((d) => d.entries);
 export const sessions = (m: Machine, q = '', limit = 50) =>
   call<{ total: number; sessions: Session[] }>(m, `/v1/sessions?q=${encodeURIComponent(q)}&limit=${limit}`);
-export const addEntry = (m: Machine, body: { session_id?: string; new?: { cwd: string }; name?: string; group?: string; mode?: string }) =>
+export type Model = { value: string; displayName: string; description?: string };
+export const models = (m: Machine) => call<{ models: Model[] }>(m, '/v1/models').then((d) => d.models);
+export const addEntry = (m: Machine, body: { session_id?: string; new?: { cwd: string }; name?: string; group?: string; mode?: string; model?: string }) =>
   call<Entry>(m, '/v1/entries', { method: 'POST', body: JSON.stringify(body) });
 export const updateEntry = (m: Machine, id: string, body: Partial<{ name: string; group: string; pinned: boolean }>) =>
   call<Entry>(m, `/v1/entries/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
@@ -101,6 +103,7 @@ export type LiveEvent =
   | { type: 'permission_request'; entry: string; request_id: string; tool: string; input: any }
   | { type: 'permission_resolved'; entry: string; request_id: string; allow: boolean; by: string }
   | { type: 'mode'; entry: string; mode: string }
+  | { type: 'model'; entry: string; model: string | null }
   | { type: 'terminal_opened' | 'terminal_closed'; entry: string }
   | { type: 'commands'; entry: string; commands: string[] }
   | { type: 'notice'; entry: string; text: string }
@@ -138,6 +141,7 @@ export class Live {
   interrupt(entry: string) { this.sendJson({ type: 'interrupt', entry }); }
   stop(entry: string) { this.sendJson({ type: 'stop', entry }); }
   setMode(entry: string, mode: string) { this.sendJson({ type: 'set_mode', entry, mode }); }
+  setModel(entry: string, model: string | null) { this.sendJson({ type: 'set_model', entry, model }); }
   answer(request_id: string, allow: boolean, message?: string) { this.sendJson({ type: 'permission_reply', request_id, allow, message }); }
   terminalOpen(entry: string, cols: number, rows: number) { this.sendJson({ type: 'terminal_open', entry, cols, rows }); }
   terminalInput(entry: string, data: string) { this.sendJson({ type: 'terminal_input', entry, data }); }

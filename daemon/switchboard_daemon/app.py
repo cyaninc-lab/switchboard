@@ -65,7 +65,7 @@ async def _off(fn, *a, **kw):
 
 
 def _entry_view(entry, info, live, runner=None):
-    d = {k: entry[k] for k in ("id", "session_id", "name", "pinned", "account", "mode")}
+    d = {k: entry.get(k) for k in ("id", "session_id", "name", "pinned", "account", "mode", "model")}
     d["group"], d["pinned"] = entry["grp"], bool(entry["pinned"])
     held = runner.state(entry["id"]) if runner else None
     if info is None and entry.get("cwd"):  # created here, no message yet
@@ -147,7 +147,7 @@ async def add_entry(request):
         if not os.path.isdir(cwd):
             raise web.HTTPBadRequest(text=json.dumps({"code": "no_such_folder"}), content_type="application/json")
         e = store.add_entry(str(uuid.uuid4()), body.get("name") or "New session", body.get("group") or _default_group(cwd),
-                            body.get("account"), body.get("mode"), cwd=cwd)
+                            body.get("account"), body.get("mode"), cwd=cwd, model=body.get("model") or None)
         return web.json_response(_entry_view(e, None, set(), request.app[RUNNER]), status=201)
     if "session_id" not in body:
         raise web.HTTPBadRequest(text=json.dumps({"code": "session_id_or_new"}), content_type="application/json")
@@ -177,6 +177,13 @@ async def remove_entry(request):
     if not request.app[STORE].remove_entry(request.match_info["id"]):
         raise web.HTTPNotFound()
     return web.Response(status=204)
+
+
+async def models(request):
+    try:
+        return web.json_response({"models": await request.app[RUNNER].models()})
+    except Exception as e:  # e.g. no claude installed: the picker just stays on "default"
+        return web.json_response({"models": [], "error": str(e)[:200]})
 
 
 async def folders(request):
@@ -225,7 +232,7 @@ async def ws_handler(request):
                 m = json.loads(msg.data)
                 t, eid = m.get("type"), m.get("entry")
                 entry = store.entry(eid) if eid else None
-                if t in ("send", "interrupt", "stop", "set_mode") or t.startswith("terminal_"):
+                if t in ("send", "interrupt", "stop", "set_mode", "set_model") or t.startswith("terminal_"):
                     if not entry:
                         raise LookupError("no_such_entry")
                 if t == "terminal_open":
@@ -253,6 +260,9 @@ async def ws_handler(request):
                 elif t == "set_mode":
                     await runner.set_mode(eid, m["mode"])
                     await _broadcast(request.app, {"type": "mode", "entry": eid, "mode": m["mode"]})
+                elif t == "set_model":
+                    await runner.set_model(eid, m.get("model"))
+                    await _broadcast(request.app, {"type": "model", "entry": eid, "model": m.get("model") or None})
                 elif t == "permission_reply":
                     await runner.answer(m["request_id"], m.get("allow"), m.get("message"), by=client)
             except Exception as e:
@@ -336,6 +346,6 @@ def make_app(store: Store, name=None):
         web.post("/v1/pair", pair), web.get("/v1/machine", machine), web.get("/v1/sessions", sessions),
         web.get("/v1/entries", list_entries), web.post("/v1/entries", add_entry),
         web.patch("/v1/entries/{id}", update_entry), web.delete("/v1/entries/{id}", remove_entry),
-        web.get("/v1/entries/{id}/messages", messages), web.get("/v1/ws", ws_handler), web.get("/v1/commands", commands), web.get("/v1/folders", folders),
+        web.get("/v1/entries/{id}/messages", messages), web.get("/v1/ws", ws_handler), web.get("/v1/commands", commands), web.get("/v1/folders", folders), web.get("/v1/models", models),
     ])
     return app

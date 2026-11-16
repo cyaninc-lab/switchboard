@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS entries (
   id TEXT PRIMARY KEY, session_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL, grp TEXT NOT NULL,
   pinned INTEGER NOT NULL DEFAULT 0, account TEXT, mode TEXT, created REAL);
 """
-ENTRY_FIELDS = ("name", "grp", "pinned", "account", "mode")
+ENTRY_FIELDS = ("name", "grp", "pinned", "account", "mode", "model")
 
 
 def default_data_dir():
@@ -33,8 +33,11 @@ class Store:
         self.db = sqlite3.connect(path, isolation_level=None)  # autocommit; the CLI and server share the file
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
-        if "cwd" not in {r["name"] for r in self.db.execute("PRAGMA table_info(entries)")}:
+        cols = {r["name"] for r in self.db.execute("PRAGMA table_info(entries)")}
+        if "cwd" not in cols:
             self.db.execute("ALTER TABLE entries ADD COLUMN cwd TEXT")  # folder of a session created in Switchboard
+        if "model" not in cols:
+            self.db.execute("ALTER TABLE entries ADD COLUMN model TEXT")  # None = Claude Code's default
 
     # pairing
     def new_pair_code(self):
@@ -73,10 +76,10 @@ class Store:
         r = self.db.execute("SELECT * FROM entries WHERE session_id = ?", (session_id,)).fetchone()
         return dict(r) if r else None
 
-    def add_entry(self, session_id, name, grp, account=None, mode=None, cwd=None):
+    def add_entry(self, session_id, name, grp, account=None, mode=None, cwd=None, model=None):
         eid = uuid.uuid4().hex[:12]
-        self.db.execute("INSERT INTO entries (id, session_id, name, grp, pinned, account, mode, created, cwd) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)",
-                        (eid, session_id, name, grp, account, mode, time.time(), cwd))
+        self.db.execute("INSERT INTO entries (id, session_id, name, grp, pinned, account, mode, created, cwd, model) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)",
+                        (eid, session_id, name, grp, account, mode, time.time(), cwd, model))
         return self.entry(eid)
 
     def update_entry(self, entry_id, **changes):

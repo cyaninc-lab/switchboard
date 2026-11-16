@@ -57,16 +57,18 @@
   let nFolders = $state<string[]>([]);
   let nName = $state('');
   let nMode = $state('default');
+  let nModel = $state('default');
   async function newTab() {
     aTab = 'new'; aError = '';
     if (!aMachine) return;
+    loadModels(aMachine);
     try { const f = await api.folders(aMachine); nFolders = f.folders; nFolder ||= f.folders[1] ?? f.home; } catch (e) { aError = (e as Error).message; }
   }
   async function createNew(ev: Event) {
     ev.preventDefault();
     if (!aMachine) return;
     try {
-      const e = await api.addEntry(aMachine, { new: { cwd: nFolder.trim() }, name: nName.trim() || undefined, mode: nMode });
+      const e = await api.addEntry(aMachine, { new: { cwd: nFolder.trim() }, name: nName.trim() || undefined, mode: nMode, model: nModel === 'default' ? undefined : nModel });
       dialog = null; nName = '';
       await refresh();
       open(aMachine, e);
@@ -90,6 +92,8 @@
   // attachments (images) and the slash-command menu
   let attachments = $state<(api.Image & { url: string; name: string })[]>([]);
   let cmdList = $state<Record<string, api.Command[]>>({});
+  let modelList = $state<Record<string, api.Model[]>>({});
+  async function loadModels(m: Machine) { if (!modelList[m.url]) try { modelList[m.url] = await api.models(m); } catch {} }
   let cmdIdx = $state(0);
   let fileInput = $state<HTMLInputElement>();
   const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
@@ -151,6 +155,8 @@
       prompts[e.entry] = (prompts[e.entry] ?? []).filter((p) => p.request_id !== e.request_id);
     } else if (e.type === 'mode') {
       setEntry(e.entry, { mode: e.mode });
+    } else if (e.type === 'model') {
+      setEntry(e.entry, { model: e.model });
     } else if (e.type === 'queued') {
       queued[e.entry] = e.count;
     } else if (e.type === 'commands') {
@@ -228,6 +234,7 @@
     selected = { machine, entry };
     stick = true;
     if (!cmdList[machine.url]) loadCommands(machine);
+    loadModels(machine);
     loadingHistory = true;
     messages = [];
     const mine = ++openSeq;
@@ -445,8 +452,15 @@
   <footer class="status mono">
     <span>{machines.length} machine{machines.length === 1 ? '' : 's'}</span>
     {#if selected}
+      <label class="modepick">model
+        <select aria-label="Model" value={selected.entry.model ?? 'default'} onchange={(ev) => act((l, id) => { const v = (ev.target as HTMLSelectElement).value; l.setModel(id, v === 'default' ? null : v); })}>
+          {#each modelList[selected.machine.url]?.length ? modelList[selected.machine.url] : [{ value: 'default', displayName: 'Default' }] as m (m.value)}
+            <option value={m.value} title={m.description ?? ''}>{m.displayName}</option>
+          {/each}
+        </select>
+      </label>
       <label class="modepick">mode
-        <select value={selected.entry.mode ?? 'default'} onchange={(ev) => act((l, id) => l.setMode(id, (ev.target as HTMLSelectElement).value))}>
+        <select aria-label="Permission mode" value={selected.entry.mode ?? 'default'} onchange={(ev) => act((l, id) => l.setMode(id, (ev.target as HTMLSelectElement).value))}>
           {#each api.MODES as m}<option value={m}>{m}</option>{/each}
         </select>
       </label>
@@ -515,6 +529,9 @@
         <div class="grid2">
           <label>Name in the tree<input bind:value={nName} placeholder="New session" /></label>
           <label>Permission mode<select bind:value={nMode}>{#each api.MODES as m}<option value={m}>{m}</option>{/each}</select></label>
+          <label>Model<select bind:value={nModel}>
+            {#each (aMachine && modelList[aMachine.url]?.length) ? modelList[aMachine.url] : [{ value: 'default', displayName: 'Default' }] as m (m.value)}<option value={m.value}>{m.displayName}</option>{/each}
+          </select></label>
         </div>
         {#if aError}<p class="error">{aError}</p>{/if}
         <div class="actions"><button type="button" class="btn ghost" onclick={() => (dialog = null)}>Cancel</button><button class="btn primary">Create session</button></div>

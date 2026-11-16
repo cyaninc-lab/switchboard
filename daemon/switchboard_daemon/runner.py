@@ -59,6 +59,7 @@ class Runner:
         self.live: dict[str, Live] = {}
         self.cli_path = os.environ.get("SWITCHBOARD_CLAUDE") or shutil.which("claude")
         self.commands: list[str] = []  # slash commands from the last session start (init message)
+        self._models = None
 
     # ---- state ----
     def state(self, entry_id):
@@ -91,7 +92,8 @@ class Runner:
         opts = self.sdk.ClaudeAgentOptions(
             **start, cwd=(info.cwd if info else entry["cwd"]) or None, include_partial_messages=True,
             permission_mode=entry.get("mode") or "default", can_use_tool=can_use_tool,
-            **({"model": os.environ["SWITCHBOARD_MODEL"]} if os.environ.get("SWITCHBOARD_MODEL") else {}),  # ponytail: per-entry model setting later
+            # SWITCHBOARD_MODEL overrides everything (tests run on Haiku); else the entry's choice; else Claude Code's default
+            **({"model": m} if (m := os.environ.get("SWITCHBOARD_MODEL") or entry.get("model")) else {}),
             **({"cli_path": self.cli_path} if self.cli_path else {}))
         client = self.sdk.ClaudeSDKClient(options=opts)
         await client.connect()
@@ -192,6 +194,26 @@ class Runner:
                 if not fut.done():
                     fut.set_result((False, "Interrupted"))
             await lv.client.interrupt()
+
+    async def models(self):
+        """The models this machine's Claude Code offers (names, descriptions, effort levels), asked once and cached."""
+        if self._models is None:
+            client = self.sdk.ClaudeSDKClient(options=self.sdk.ClaudeAgentOptions(
+                **({"cli_path": self.cli_path} if self.cli_path else {})))
+            await client.connect()
+            try:
+                info = await client.get_server_info() or {}
+                self._models = info.get("models") or []
+            finally:
+                await client.disconnect()
+        return self._models
+
+    async def set_model(self, entry_id, model):
+        model = model or None  # "" / None = back to Claude Code's default
+        self.store.update_entry(entry_id, model=model)
+        lv = self.live.get(entry_id)
+        if lv:
+            await lv.client.set_model(model)
 
     async def set_mode(self, entry_id, mode):
         if mode not in MODES:

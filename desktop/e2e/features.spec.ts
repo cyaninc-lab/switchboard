@@ -49,6 +49,12 @@ test('images and slash commands', async ({ page }) => {
   expect(atBottom).toBe(true);
   await page.setViewportSize({ width: 1280, height: 820 });
 
+  // model: the picker lists the machine's models; the choice applies to the session
+  await page.getByRole('contentinfo').getByLabel('Model').selectOption('sonnet');
+  await input.fill('which model');
+  await input.press('Enter');
+  await expect(log).toContainText('Done: which model [sonnet]');
+
   // a non-image file is refused with a message
   await page.locator('input[type=file]').setInputFiles({ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('hi') });
   await expect(page.getByRole('alert')).toContainText("isn't a PNG, JPEG, GIF or WebP");
