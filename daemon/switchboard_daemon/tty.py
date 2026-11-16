@@ -1,6 +1,7 @@
 """Real-terminal toggle: the actual `claude` TUI for a session, in a pseudo-terminal, streamed over the WebSocket.
 Unix: pty.fork. Windows: ConPTY through pywinpty (installed on Windows only)."""
 import asyncio, codecs, os, threading
+from .logs import log
 
 
 class _UnixPty:
@@ -74,6 +75,7 @@ class _WinPty:
                 except EOFError:
                     break
                 except Exception:
+                    log.exception("terminal read failed")
                     break
                 if data:
                     loop.call_soon_threadsafe(on_data, data)
@@ -116,6 +118,7 @@ class Terminals:
                       on_data=lambda d: loop.create_task(self.broadcast({"type": "terminal_output", "entry": entry_id, "data": d})),
                       on_exit=lambda: loop.create_task(self._closed(entry_id)))
         self.open[entry_id] = {"pty": pty, "session_id": session_id}
+        log.info("terminal for entry %s started: %s in %s", entry_id, " ".join(argv[:2]), cwd)
         await self.broadcast({"type": "terminal_opened", "entry": entry_id})
 
     def write(self, entry_id, data):
@@ -136,6 +139,7 @@ class Terminals:
     async def _closed(self, entry_id):
         t = self.open.pop(entry_id, None)
         if t:
+            log.info("terminal for entry %s ended", entry_id)
             t["pty"].reap()
             await self.broadcast({"type": "terminal_closed", "entry": entry_id})
 
