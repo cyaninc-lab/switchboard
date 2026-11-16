@@ -125,3 +125,28 @@ def test_idle_close(tmp_path, monkeypatch):
         assert m["state"] == "stopped" and e["id"] not in runner.live
         await client.close()
     asyncio.run(t())
+
+
+def test_terminal_pty(tmp_path, monkeypatch):
+    """terminal_open runs a real PTY; here a shell stands in for `claude` (cli_path)."""
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        runner = client.server.app[appmod.RUNNER]
+        script = tmp_path / "fake-claude"
+        script.write_text('#!/bin/sh\necho "args: $*"; stty size; read line; echo "got: $line"\n')
+        script.chmod(0o755)
+        runner.cli_path = str(script)
+        await ws.send_json({"type": "terminal_open", "entry": e["id"], "cols": 120, "rows": 40})
+        await until(ws, lambda m: m["type"] == "terminal_opened")
+        out = ""
+        while "40 120" not in out:
+            m = await asyncio.wait_for(ws.receive_json(), 5)
+            out += m.get("data", "")
+        assert "--resume demo-1" in out
+        await ws.send_json({"type": "terminal_input", "entry": e["id"], "data": "hello\r"})
+        while "got: hello" not in out:
+            m = await asyncio.wait_for(ws.receive_json(), 5)
+            out += m.get("data", "")
+        await until(ws, lambda m: m["type"] == "terminal_closed")  # the fake exits after one line
+        await client.close()
+    asyncio.run(t())

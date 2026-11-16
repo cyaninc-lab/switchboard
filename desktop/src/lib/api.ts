@@ -86,6 +86,8 @@ export type LiveEvent =
   | { type: 'permission_request'; entry: string; request_id: string; tool: string; input: any }
   | { type: 'permission_resolved'; entry: string; request_id: string; allow: boolean; by: string }
   | { type: 'mode'; entry: string; mode: string }
+  | { type: 'terminal_opened' | 'terminal_closed'; entry: string }
+  | { type: 'terminal_output'; entry: string; data: string }
   | { type: 'error'; entry?: string; code: string; message: string };
 
 export const MODES = ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'] as const;
@@ -119,5 +121,9 @@ export class Live {
   stop(entry: string) { this.sendJson({ type: 'stop', entry }); }
   setMode(entry: string, mode: string) { this.sendJson({ type: 'set_mode', entry, mode }); }
   answer(request_id: string, allow: boolean, message?: string) { this.sendJson({ type: 'permission_reply', request_id, allow, message }); }
+  terminalOpen(entry: string, cols: number, rows: number) { this.sendJson({ type: 'terminal_open', entry, cols, rows }); }
+  terminalInput(entry: string, data: string) { this.sendJson({ type: 'terminal_input', entry, data }); }
+  terminalResize(entry: string, cols: number, rows: number) { this.sendJson({ type: 'terminal_resize', entry, cols, rows }); }
+  terminalClose(entry: string) { this.sendJson({ type: 'terminal_close', entry }); }
   close() { this.closed = true; this.ws?.close(); }
 }

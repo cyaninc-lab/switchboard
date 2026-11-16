@@ -6,9 +6,11 @@ import claude_agent_sdk as sdk
 from . import __version__
 from .store import Store
 from .runner import Runner, scrub_env
+from .tty import Terminals
 
 STORE, NAME = web.AppKey("store", Store), web.AppKey("name", str)
 RUNNER, SOCKETS, REAPER = web.AppKey("runner", Runner), web.AppKey("sockets", set), web.AppKey("reaper", asyncio.Task)
+TTYS = web.AppKey("ttys", Terminals)
 CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
 
 
@@ -54,7 +56,7 @@ def _plain(obj):
 
 async def _live(request):
     """Sessions a Claude Code process holds, minus the ones this daemon holds itself."""
-    return await _off(open_in_terminal) - request.app[RUNNER].held_sessions()
+    return await _off(open_in_terminal) - request.app[RUNNER].held_sessions() - request.app[TTYS].held_sessions()
 
 
 async def _off(fn, *a, **kw):
@@ -198,9 +200,24 @@ async def ws_handler(request):
                 m = json.loads(msg.data)
                 t, eid = m.get("type"), m.get("entry")
                 entry = store.entry(eid) if eid else None
-                if t in ("send", "interrupt", "stop", "set_mode") and not entry:
-                    raise LookupError("no_such_entry")
-                if t == "send":
+                if t in ("send", "interrupt", "stop", "set_mode") or t.startswith("terminal_"):
+                    if not entry:
+                        raise LookupError("no_such_entry")
+                if t == "terminal_open":
+                    await runner.stop(eid)  # one writer per session: chat closes while the TUI has it
+                    info = await _off(sdk.get_session_info, entry["session_id"])
+                    argv = [runner.cli_path or "claude", "--resume", entry["session_id"]]
+                    if os.environ.get("SWITCHBOARD_MODEL"):
+                        argv += ["--model", os.environ["SWITCHBOARD_MODEL"]]
+                    await request.app[TTYS].start(eid, entry["session_id"], info.cwd if info else None, argv,
+                                                  m.get("cols", 100), m.get("rows", 30))
+                elif t == "terminal_input":
+                    request.app[TTYS].write(eid, m["data"])
+                elif t == "terminal_resize":
+                    request.app[TTYS].resize(eid, m["cols"], m["rows"])
+                elif t == "terminal_close":
+                    await request.app[TTYS].close(eid)
+                elif t == "send":
                     if entry["session_id"] in await _off(open_in_terminal) - runner.held_sessions():
                         raise RuntimeError("open_in_terminal")
                     await runner.send(entry, m["text"])
@@ -234,6 +251,7 @@ def make_app(store: Store, name=None):
     app[STORE], app[NAME] = store, name or socket.gethostname()
     app[SOCKETS] = set()
     app[RUNNER] = Runner(store, sdk, lambda ev: _broadcast(app, ev))
+    app[TTYS] = Terminals(lambda ev: _broadcast(app, ev))
 
     async def start(app):
         scrub_env()
@@ -241,6 +259,7 @@ def make_app(store: Store, name=None):
 
     async def stop(app):
         app[REAPER].cancel()
+        await app[TTYS].close_all()
         await app[RUNNER].close_all()
     async def close_sockets(app):  # open WebSockets would otherwise hold a graceful shutdown for its full timeout
         for ws in list(app[SOCKETS]):

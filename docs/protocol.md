@@ -53,6 +53,7 @@ Daemon → client:
 | `permission_request` | `request_id, entry, tool, input` |
 | `permission_resolved` | `request_id, allow, by` (first answer wins; every client is told) |
 | `inbox` | `item` |
+| `terminal_opened` / `terminal_closed` | `entry` (the TUI started / exited) |
 | `terminal_output` | `entry, data` |
 | `mode` | `entry, mode` (after a `set_mode`) |
 | `error` | `entry?, code, message` |

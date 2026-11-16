@@ -2,6 +2,7 @@
   import * as api from '$lib/api';
   import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell } from '$lib/shell';
   import type { ServiceStatus } from '$lib/shell';
+  import TerminalView from '$lib/Terminal.svelte';
   import type { Machine, Entry, Session, HistoryMessage } from '$lib/api';
 
   // the HTML autofocus attribute only works on page load, not on elements Svelte adds later
@@ -56,6 +57,9 @@
   let draft = $state('');
   let liveErr = $state('');
   const LIVE_STATES = ['working', 'waiting', 'ready'];
+  // real-terminal toggle: which entry shows the claude TUI, and who receives its output
+  let termFor = $state<string | null>(null);
+  let termSink: ((data: string) => void) | null = null;
 
   $effect(() => {
     for (const m of machines) if (!lives.has(m.url)) lives.set(m.url, new api.Live(m, (e) => onEvent(e), () => {}));
@@ -81,6 +85,10 @@
       prompts[e.entry] = (prompts[e.entry] ?? []).filter((p) => p.request_id !== e.request_id);
     } else if (e.type === 'mode') {
       setEntry(e.entry, { mode: e.mode });
+    } else if (e.type === 'terminal_output') {
+      if (e.entry === termFor) termSink?.(e.data);
+    } else if (e.type === 'terminal_closed') {
+      if (e.entry === termFor) { termFor = null; if (selected) open(selected.machine, selected.entry); }  // back to chat, fresh history
     } else if (e.type === 'error') {
       if (!e.entry || e.entry === selected?.entry.id) liveErr = e.message;
     }
@@ -142,6 +150,7 @@
   }
 
   async function open(machine: Machine, entry: Entry) {
+    if (termFor && termFor !== entry.id) termFor = null;
     selected = { machine, entry };
     loadingHistory = true;
     try { messages = await api.history(machine, entry.id); }
@@ -277,10 +286,15 @@
           <span>{selected.machine.name}:{selected.entry.session?.cwd ?? '?'}</span>
           {#if selected.entry.session?.git_branch}<span>⎇ {selected.entry.session.git_branch}</span>{/if}
           <span class="grow"></span>
+          <button class="tiny" class:on={termFor === selected.entry.id} onclick={() => { termFor = termFor === selected!.entry.id ? null : selected!.entry.id; if (!termFor) open(selected!.machine, selected!.entry); }}
+            title="Switch between the chat view and the real claude terminal">{termFor === selected.entry.id ? 'Chat' : 'Terminal'}</button>
           {#if LIVE_STATES.includes(selected.entry.state)}<button class="tiny" onclick={() => act((l, id) => l.stop(id))} title="Close the live session; it resumes on your next message">Stop</button>{/if}
           <button class="tiny" onclick={togglePin}>{selected.entry.pinned ? 'Unpin' : 'Pin'}</button>
           <button class="tiny" onclick={remove} title="Takes it off the tree; the session stays on its machine">Remove from tree</button>
         </div>
+        {#if termFor === selected.entry.id}
+          {#key selected.entry.id}<TerminalView live={live()!} entry={selected.entry.id} listen={(fn) => (termSink = fn)} />{/key}
+        {:else}
         <div class="log mono" role="log" aria-label="Session history">
           {#if loadingHistory}<div class="muted">Loading…</div>{/if}
           {#each messages as msg (msg.uuid)}
@@ -314,6 +328,7 @@
               placeholder={selected.entry.state === 'terminal' ? 'Open in a terminal elsewhere' : selected.entry.state === 'working' ? 'Working… (Esc to interrupt)' : 'Message this session'} /></label>
           {#if selected.entry.state === 'working'}<button type="button" class="tiny" onclick={() => act((l, id) => l.interrupt(id))}>Esc · interrupt</button>{/if}
         </form>
+        {/if}
       {:else}
         <div class="placeholder">Pick a session from the tree, or <button class="link" disabled={!machines.length} onclick={openAdd}>add one</button>.</div>
       {/if}
@@ -440,6 +455,7 @@
   .machine { margin-top: 6px; } .machine.offline { opacity: 0.6; }
   .mhead { display: flex; align-items: center; gap: 6px; padding: 6px 8px; }
   .mname { font-weight: 600; flex: 1; }
+  .tiny.on { border-color: var(--mauve); color: var(--text); }
   .tiny { background: none; border: 1px solid var(--s1); color: var(--sub0); border-radius: 6px; padding: 2px 8px; font-size: 12px; }
   .group { padding: 6px 8px 2px 24px; color: var(--sub0); }
   .entry { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: 0; border-radius: 8px; padding: 6px 8px 6px 36px; background: none; color: var(--sub1); }
