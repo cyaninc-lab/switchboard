@@ -11,7 +11,7 @@ class Terminals:
     def held_sessions(self):
         return {t["session_id"] for t in self.open.values()}
 
-    async def start(self, entry_id, session_id, cwd, argv, cols=100, rows=30):
+    async def start(self, entry_id, session_id, cwd, argv, cols=100, rows=30, env=None):
         if entry_id in self.open:
             return
         pid, fd = pty.fork()
@@ -20,6 +20,7 @@ class Terminals:
                 os.chdir(cwd or os.path.expanduser("~"))
             except OSError:
                 pass
+            os.environ.update(env or {})  # the entry's account
             os.environ["TERM"] = "xterm-256color"
             os.environ["COLORTERM"] = "truecolor"
             os.execvp(argv[0], argv)

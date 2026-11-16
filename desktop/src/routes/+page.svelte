@@ -24,7 +24,12 @@
   let svc = $state<ServiceStatus | null>(null);
   let svcBusy = $state(false);
   let svcError = $state('');
-  async function openSettings() { dialog = 'settings'; svcError = ''; svc = await serviceStatus(); }
+  async function openSettings() {
+    dialog = 'settings'; svcError = '';
+    accMachine = accMachine ?? machines[0] ?? null;
+    if (accMachine) loadAccounts(accMachine);
+    svc = await serviceStatus();
+  }
   async function toggleService() {
     if (!svc) return;
     const liveHere = Object.values(tree).flatMap((t) => t.entries).filter((e) => ['working', 'waiting', 'ready'].includes(e.state)).length;
@@ -58,17 +63,18 @@
   let nName = $state('');
   let nMode = $state('default');
   let nModel = $state('default');
+  let nAccount = $state('');
   async function newTab() {
     aTab = 'new'; aError = '';
     if (!aMachine) return;
-    loadModels(aMachine);
+    loadModels(aMachine); loadAccounts(aMachine);
     try { const f = await api.folders(aMachine); nFolders = f.folders; nFolder ||= f.folders[1] ?? f.home; } catch (e) { aError = (e as Error).message; }
   }
   async function createNew(ev: Event) {
     ev.preventDefault();
     if (!aMachine) return;
     try {
-      const e = await api.addEntry(aMachine, { new: { cwd: nFolder.trim() }, name: nName.trim() || undefined, mode: nMode, model: nModel === 'default' ? undefined : nModel });
+      const e = await api.addEntry(aMachine, { new: { cwd: nFolder.trim() }, name: nName.trim() || undefined, mode: nMode, model: nModel === 'default' ? undefined : nModel, account: nAccount || undefined });
       dialog = null; nName = '';
       await refresh();
       open(aMachine, e);
@@ -93,6 +99,26 @@
   let attachments = $state<(api.Image & { url: string; name: string })[]>([]);
   let cmdList = $state<Record<string, api.Command[]>>({});
   let modelList = $state<Record<string, api.Model[]>>({});
+  let acctList = $state<Record<string, api.Account[]>>({});
+  async function loadAccounts(m: Machine) { try { acctList[m.url] = await api.accounts(m); } catch {} }
+  // settings: accounts on a machine
+  let accMachine = $state<Machine | null>(null);
+  let accName = $state('');
+  let accToken = $state('');
+  let accKind = $state<'oauth' | 'api_key'>('oauth');
+  let accError = $state('');
+  async function addAccount(ev: Event) {
+    ev.preventDefault();
+    if (!accMachine) return;
+    try { acctList[accMachine.url] = await api.addAccount(accMachine, accName.trim(), accToken.trim(), accKind); accName = ''; accToken = ''; accError = ''; }
+    catch (e) { accError = (e as Error).message === 'bad_account' ? 'Give it a name and paste a token' : (e as Error).message; }
+  }
+  async function removeAccount(name: string) {
+    if (!accMachine) return;
+    await api.removeAccount(accMachine, name);
+    loadAccounts(accMachine);
+    refresh();
+  }
   async function loadModels(m: Machine) { if (!modelList[m.url]) try { modelList[m.url] = await api.models(m); } catch {} }
   let cmdIdx = $state(0);
   let fileInput = $state<HTMLInputElement>();
@@ -157,6 +183,8 @@
       setEntry(e.entry, { mode: e.mode });
     } else if (e.type === 'model') {
       setEntry(e.entry, { model: e.model });
+    } else if (e.type === 'account') {
+      setEntry(e.entry, { account: e.account });
     } else if (e.type === 'queued') {
       queued[e.entry] = e.count;
     } else if (e.type === 'commands') {
@@ -235,6 +263,7 @@
     stick = true;
     if (!cmdList[machine.url]) loadCommands(machine);
     loadModels(machine);
+    loadAccounts(machine);
     loadingHistory = true;
     messages = [];
     const mine = ++openSeq;
@@ -452,6 +481,13 @@
   <footer class="status mono">
     <span>{machines.length} machine{machines.length === 1 ? '' : 's'}</span>
     {#if selected}
+      <label class="modepick">account
+        <select aria-label="Account" value={selected.entry.account ?? ''} onchange={(ev) => act((l, id) => { const v = (ev.target as HTMLSelectElement).value; l.setAccount(id, v || null); })}
+          title="Switching closes the live session; your next message resumes it on the new account">
+          <option value="">machine login</option>
+          {#each acctList[selected.machine.url] ?? [] as a (a.name)}<option value={a.name}>{a.name}</option>{/each}
+        </select>
+      </label>
       <label class="modepick">model
         <select aria-label="Model" value={selected.entry.model ?? 'default'} onchange={(ev) => act((l, id) => { const v = (ev.target as HTMLSelectElement).value; l.setModel(id, v === 'default' ? null : v); })}>
           {#each modelList[selected.machine.url]?.length ? modelList[selected.machine.url] : [{ value: 'default', displayName: 'Default' }] as m (m.value)}
@@ -502,6 +538,32 @@
         </p>
       {/if}
       {#if svcError}<p class="error">{svcError}</p>{/if}
+
+      <h3 class="sub">Accounts</h3>
+      {#if machines.length}
+        <div class="pills">
+          {#each machines as m (m.url)}
+            <button type="button" class="pill" class:on={accMachine?.url === m.url} onclick={() => { accMachine = m; loadAccounts(m); }}>{m.name}</button>
+          {/each}
+        </div>
+        <ul class="acclist" aria-label="Accounts on {accMachine?.name}">
+          <li><span>machine login</span><span class="muted small">whoever Claude Code is signed in as on {accMachine?.name}</span></li>
+          {#each accMachine ? acctList[accMachine.url] ?? [] : [] as a (a.name)}
+            <li><span>{a.name}</span><span class="muted small">{a.kind === 'api_key' ? 'API key' : 'setup-token'}</span>
+              <button type="button" class="tiny" aria-label="Remove account {a.name}" onclick={() => removeAccount(a.name)}>Remove</button></li>
+          {/each}
+        </ul>
+        <form class="accform" onsubmit={addAccount} aria-label="Add an account">
+          <label>Name<input bind:value={accName} placeholder="e.g. work" /></label>
+          <label>Token <span class="muted small">(run <code>claude setup-token</code> signed in to that account)</span>
+            <input type="password" bind:value={accToken} autocomplete="off" placeholder="sk-ant-oat…" /></label>
+          <label class="inline"><input type="checkbox" checked={accKind === 'api_key'} onchange={(e) => (accKind = (e.target as HTMLInputElement).checked ? 'api_key' : 'oauth')} /> It's an Anthropic API key</label>
+          {#if accError}<p class="error">{accError}</p>{/if}
+          <div class="actions"><button class="btn primary">Add account</button></div>
+        </form>
+      {:else}
+        <p class="muted">Connect a machine first.</p>
+      {/if}
       <div class="actions"><button class="btn ghost" onclick={() => (dialog = null)}>Close</button></div>
     </div>
   </div>
@@ -529,6 +591,10 @@
         <div class="grid2">
           <label>Name in the tree<input bind:value={nName} placeholder="New session" /></label>
           <label>Permission mode<select bind:value={nMode}>{#each api.MODES as m}<option value={m}>{m}</option>{/each}</select></label>
+          <label>Account<select bind:value={nAccount}>
+            <option value="">machine login</option>
+            {#each aMachine ? acctList[aMachine.url] ?? [] : [] as a (a.name)}<option value={a.name}>{a.name}</option>{/each}
+          </select></label>
           <label>Model<select bind:value={nModel}>
             {#each (aMachine && modelList[aMachine.url]?.length) ? modelList[aMachine.url] : [{ value: 'default', displayName: 'Default' }] as m (m.value)}<option value={m.value}>{m.displayName}</option>{/each}
           </select></label>
@@ -670,6 +736,12 @@
   .tabs button { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--sub0); padding: 6px 12px; }
   .tabs button.on { border-bottom-color: var(--mauve); color: var(--text); font-weight: 600; }
   .dialog select { background: var(--base); border: 1px solid var(--s1); border-radius: 8px; padding: 8px 10px; color: var(--text); font: inherit; appearance: none; }
+  .sub { margin: 8px 0 0; font-size: 13px; }
+  .acclist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .acclist li { display: grid; grid-template-columns: 120px 1fr auto; gap: 10px; align-items: center; padding: 6px 10px; background: var(--mantle); border-radius: 8px; }
+  .accform { display: flex; flex-direction: column; gap: 8px; }
+  .dialog label.inline { flex-direction: row; align-items: center; gap: 8px; } .dialog label.inline input { width: auto; }
+  .dialog { max-height: 90vh; overflow: auto; }
   .pills { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .pill { background: var(--mantle); border: 1px solid var(--s1); color: var(--sub1); border-radius: 999px; padding: 6px 12px; }
   .pill.on { background: var(--s0); border-color: var(--mauve); color: var(--text); }

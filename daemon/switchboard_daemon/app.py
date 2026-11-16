@@ -158,7 +158,7 @@ async def add_entry(request):
         raise web.HTTPConflict(text=json.dumps({"code": "already_in_tree"}), content_type="application/json")
     e = store.add_entry(info.session_id, body.get("name") or info.custom_title or info.summary or "Untitled",
                         body.get("group") or _default_group(info.cwd),
-                        body.get("account"), body.get("mode"))
+                        body.get("account") or None, body.get("mode"))
     return web.json_response(_entry_view(e, info, await _live(request), request.app[RUNNER]), status=201)
 
 
@@ -175,6 +175,29 @@ async def update_entry(request):
 async def remove_entry(request):
     await request.app[RUNNER].stop(request.match_info["id"])
     if not request.app[STORE].remove_entry(request.match_info["id"]):
+        raise web.HTTPNotFound()
+    return web.Response(status=204)
+
+
+async def list_accounts(request):
+    return web.json_response({"accounts": request.app[STORE].accounts()})
+
+
+async def add_account(request):
+    body = await request.json()
+    try:
+        request.app[STORE].add_account(body.get("name", ""), body.get("token", ""), body.get("kind", "oauth"))
+    except ValueError as e:
+        raise web.HTTPBadRequest(text=json.dumps({"code": str(e)}), content_type="application/json")
+    return web.json_response({"accounts": request.app[STORE].accounts()}, status=201)  # the token is never sent back
+
+
+async def remove_account(request):
+    name = request.match_info["name"]
+    for e in request.app[STORE].entries():  # sessions on that account close; they fall back to the machine login
+        if e["account"] == name:
+            await request.app[RUNNER].stop(e["id"])
+    if not request.app[STORE].remove_account(name):
         raise web.HTTPNotFound()
     return web.Response(status=204)
 
@@ -232,7 +255,7 @@ async def ws_handler(request):
                 m = json.loads(msg.data)
                 t, eid = m.get("type"), m.get("entry")
                 entry = store.entry(eid) if eid else None
-                if t in ("send", "interrupt", "stop", "set_mode", "set_model") or t.startswith("terminal_"):
+                if t in ("send", "interrupt", "stop", "set_mode", "set_model", "set_account") or t.startswith("terminal_"):
                     if not entry:
                         raise LookupError("no_such_entry")
                 if t == "terminal_open":
@@ -241,8 +264,9 @@ async def ws_handler(request):
                     argv = [runner.cli_path or "claude", "--resume" if info else "--session-id", entry["session_id"]]
                     if os.environ.get("SWITCHBOARD_MODEL"):
                         argv += ["--model", os.environ["SWITCHBOARD_MODEL"]]
+                    env = store.account_env(entry["account"]) if entry.get("account") else None
                     await request.app[TTYS].start(eid, entry["session_id"], info.cwd if info else entry.get("cwd"), argv,
-                                                  m.get("cols", 100), m.get("rows", 30))
+                                                  m.get("cols", 100), m.get("rows", 30), env)
                 elif t == "terminal_input":
                     request.app[TTYS].write(eid, m["data"])
                 elif t == "terminal_resize":
@@ -260,6 +284,9 @@ async def ws_handler(request):
                 elif t == "set_mode":
                     await runner.set_mode(eid, m["mode"])
                     await _broadcast(request.app, {"type": "mode", "entry": eid, "mode": m["mode"]})
+                elif t == "set_account":
+                    await runner.set_account(eid, m.get("account"))
+                    await _broadcast(request.app, {"type": "account", "entry": eid, "account": m.get("account") or None})
                 elif t == "set_model":
                     await runner.set_model(eid, m.get("model"))
                     await _broadcast(request.app, {"type": "model", "entry": eid, "model": m.get("model") or None})
@@ -347,5 +374,6 @@ def make_app(store: Store, name=None):
         web.get("/v1/entries", list_entries), web.post("/v1/entries", add_entry),
         web.patch("/v1/entries/{id}", update_entry), web.delete("/v1/entries/{id}", remove_entry),
         web.get("/v1/entries/{id}/messages", messages), web.get("/v1/ws", ws_handler), web.get("/v1/commands", commands), web.get("/v1/folders", folders), web.get("/v1/models", models),
+        web.get("/v1/accounts", list_accounts), web.post("/v1/accounts", add_account), web.delete("/v1/accounts/{name}", remove_account),
     ])
     return app

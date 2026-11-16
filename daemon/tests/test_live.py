@@ -241,3 +241,44 @@ def test_models(tmp_path, monkeypatch):
         assert es[0]["model"] == "haiku"
         await client.close()
     asyncio.run(t())
+
+
+def test_accounts(tmp_path, monkeypatch):
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        eid = e["id"]
+        r = await client.post("/v1/accounts", headers=h, json={"name": "work", "token": "sk-ant-oat-secret"})
+        assert r.status == 201
+        listed = (await (await client.get("/v1/accounts", headers=h)).json())["accounts"]
+        assert listed[0]["name"] == "work" and "secret" not in str(listed) and "sk-ant" not in str(listed)
+        assert (await client.post("/v1/accounts", headers=h, json={"name": "x", "token": ""})).status == 400
+        await ws.send_json({"type": "set_account", "entry": eid, "account": "nope"})
+        err, _ = await until(ws, lambda m: m["type"] == "error")
+        assert "no_such_account" in err["message"]
+        await ws.send_json({"type": "send", "entry": eid, "text": "as me"})
+        _, seen = await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        assert any("Done: as me" in str(m) and "token account" not in str(m) for m in seen if m["type"] == "message")
+        # switching account closes the live session; the next message resumes under the new login
+        await ws.send_json({"type": "set_account", "entry": eid, "account": "work"})
+        await until(ws, lambda m: m["type"] == "account" and m["account"] == "work")
+        await ws.send_json({"type": "send", "entry": eid, "text": "as work"})
+        _, seen = await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        assert any("Done: as work (token account)" in str(m) for m in seen)
+        runner = client.server.app[appmod.RUNNER]
+        assert runner.live[eid].client.options.env == {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat-secret"}
+        # removing the account falls the entry back to the machine login
+        assert (await client.delete("/v1/accounts/work", headers=h)).status == 204
+        assert store.entry(eid)["account"] is None and eid not in runner.live
+        await client.close()
+    asyncio.run(t())
+
+
+def test_account_cli(tmp_path):
+    import subprocess
+    exe = [sys.executable, "-m", "switchboard_daemon", "--data", str(tmp_path)]
+    cwd = os.path.join(os.path.dirname(__file__), "..")
+    out = subprocess.run(exe + ["account", "add", "work"], input="sk-ant-oat-xyz\n", capture_output=True, text=True, cwd=cwd)
+    assert "added account work" in out.stdout, out.stderr
+    listed = subprocess.run(exe + ["account", "list"], capture_output=True, text=True, cwd=cwd).stdout
+    assert "work" in listed and "sk-ant" not in listed
+    assert oct(os.stat(tmp_path / "switchboard.db").st_mode & 0o777) == "0o600"

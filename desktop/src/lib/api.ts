@@ -49,9 +49,14 @@ export async function pair(url: string, code: string, clientName: string): Promi
 export const entries = (m: Machine) => call<{ entries: Entry[] }>(m, '/v1/entries').then((d) => d.entries);
 export const sessions = (m: Machine, q = '', limit = 50) =>
   call<{ total: number; sessions: Session[] }>(m, `/v1/sessions?q=${encodeURIComponent(q)}&limit=${limit}`);
+export type Account = { name: string; kind: 'oauth' | 'api_key'; created: number };
+export const accounts = (m: Machine) => call<{ accounts: Account[] }>(m, '/v1/accounts').then((d) => d.accounts);
+export const addAccount = (m: Machine, name: string, token: string, kind: 'oauth' | 'api_key' = 'oauth') =>
+  call<{ accounts: Account[] }>(m, '/v1/accounts', { method: 'POST', body: JSON.stringify({ name, token, kind }) }).then((d) => d.accounts);
+export const removeAccount = (m: Machine, name: string) => call<void>(m, `/v1/accounts/${encodeURIComponent(name)}`, { method: 'DELETE' });
 export type Model = { value: string; displayName: string; description?: string };
 export const models = (m: Machine) => call<{ models: Model[] }>(m, '/v1/models').then((d) => d.models);
-export const addEntry = (m: Machine, body: { session_id?: string; new?: { cwd: string }; name?: string; group?: string; mode?: string; model?: string }) =>
+export const addEntry = (m: Machine, body: { session_id?: string; new?: { cwd: string }; name?: string; group?: string; mode?: string; model?: string; account?: string }) =>
   call<Entry>(m, '/v1/entries', { method: 'POST', body: JSON.stringify(body) });
 export const updateEntry = (m: Machine, id: string, body: Partial<{ name: string; group: string; pinned: boolean }>) =>
   call<Entry>(m, `/v1/entries/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
@@ -104,6 +109,7 @@ export type LiveEvent =
   | { type: 'permission_resolved'; entry: string; request_id: string; allow: boolean; by: string }
   | { type: 'mode'; entry: string; mode: string }
   | { type: 'model'; entry: string; model: string | null }
+  | { type: 'account'; entry: string; account: string | null }
   | { type: 'terminal_opened' | 'terminal_closed'; entry: string }
   | { type: 'commands'; entry: string; commands: string[] }
   | { type: 'notice'; entry: string; text: string }
@@ -142,6 +148,7 @@ export class Live {
   stop(entry: string) { this.sendJson({ type: 'stop', entry }); }
   setMode(entry: string, mode: string) { this.sendJson({ type: 'set_mode', entry, mode }); }
   setModel(entry: string, model: string | null) { this.sendJson({ type: 'set_model', entry, model }); }
+  setAccount(entry: string, account: string | null) { this.sendJson({ type: 'set_account', entry, account }); }
   answer(request_id: string, allow: boolean, message?: string) { this.sendJson({ type: 'permission_reply', request_id, allow, message }); }
   terminalOpen(entry: string, cols: number, rows: number) { this.sendJson({ type: 'terminal_open', entry, cols, rows }); }
   terminalInput(entry: string, data: string) { this.sendJson({ type: 'terminal_input', entry, data }); }

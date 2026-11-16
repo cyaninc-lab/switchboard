@@ -47,6 +47,10 @@ def main():
     sub.add_parser("clients", help="list paired clients")
     r = sub.add_parser("revoke", help="revoke a client by the start of its token hash")
     r.add_argument("prefix")
+    acc = sub.add_parser("account", help="extra Claude accounts for sessions (token read from stdin, never the command line)")
+    acc.add_argument("action", choices=["add", "list", "remove"])
+    acc.add_argument("name", nargs="?")
+    acc.add_argument("--api-key", action="store_true", help="the secret is an Anthropic API key, not a `claude setup-token` token")
     a = p.parse_args()
 
     store = Store(os.path.join(a.data, "switchboard.db"))
@@ -69,6 +73,19 @@ def main():
             print(f"{c['token_hash'][:10]}  {c['name']}  paired {time.strftime('%Y-%m-%d %H:%M', time.localtime(c['created']))}")
     elif a.cmd == "revoke":
         print(f"revoked {store.revoke(a.prefix)} client(s)")
+    elif a.cmd == "account":
+        if a.action == "list":
+            for x in store.accounts():
+                print(f"{x['name']}  ({'API key' if x['kind'] == 'api_key' else 'setup-token'})")
+        elif not a.name:
+            p.error("account add/remove needs a name")
+        elif a.action == "add":
+            import getpass, sys
+            secret = sys.stdin.readline() if not sys.stdin.isatty() else getpass.getpass("Token (from `claude setup-token`): ")
+            store.add_account(a.name, secret, "api_key" if a.api_key else "oauth")
+            print(f"added account {a.name}")
+        else:
+            print("removed" if store.remove_account(a.name) else "no such account")
 
 
 if __name__ == "__main__":

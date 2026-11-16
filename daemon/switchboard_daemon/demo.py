@@ -112,6 +112,7 @@ class ClaudeAgentOptions:
     can_use_tool: object = None
     cli_path: str = None
     model: str = None
+    env: dict = None
 
 
 class PermissionResultAllow:
@@ -185,5 +186,6 @@ class ClaudeSDKClient:
                     yield ResultMessage(is_error=False, result="interrupted")
                     return
                 await asyncio.sleep(0.1)
-        yield AssistantMessage([TextBlock(f"Done: {text}" + (f" [{self.options.model}]" if self.options.model else ""))])
+        acct = " (token account)" if (self.options.env or {}).get("CLAUDE_CODE_OAUTH_TOKEN") else ""
+        yield AssistantMessage([TextBlock(f"Done: {text}" + (f" [{self.options.model}]" if self.options.model else "") + acct)])
         yield ResultMessage()

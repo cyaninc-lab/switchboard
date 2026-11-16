@@ -8,6 +8,7 @@ CODE_TTL = 600
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS clients (token_hash TEXT PRIMARY KEY, name TEXT, created REAL);
 CREATE TABLE IF NOT EXISTS pair_codes (code TEXT PRIMARY KEY, expires REAL);
+CREATE TABLE IF NOT EXISTS accounts (name TEXT PRIMARY KEY, kind TEXT NOT NULL, secret TEXT NOT NULL, created REAL);
 CREATE TABLE IF NOT EXISTS entries (
   id TEXT PRIMARY KEY, session_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL, grp TEXT NOT NULL,
   pinned INTEGER NOT NULL DEFAULT 0, account TEXT, mode TEXT, created REAL);
@@ -31,6 +32,10 @@ class Store:
     def __init__(self, path):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path, isolation_level=None)  # autocommit; the CLI and server share the file
+        try:
+            os.chmod(path, 0o600)  # holds client token hashes and account tokens
+        except OSError:
+            pass
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
         cols = {r["name"] for r in self.db.execute("PRAGMA table_info(entries)")}
@@ -63,6 +68,26 @@ class Store:
 
     def revoke(self, prefix):
         return self.db.execute("DELETE FROM clients WHERE token_hash LIKE ?", (prefix + "%",)).rowcount
+
+    # accounts: extra Claude logins (setup-token tokens or API keys); NULL on an entry = the machine's own login
+    def add_account(self, name, secret, kind="oauth"):
+        if kind not in ("oauth", "api_key") or not name.strip() or not secret.strip():
+            raise ValueError("bad_account")
+        self.db.execute("INSERT OR REPLACE INTO accounts VALUES (?, ?, ?, ?)", (name.strip(), kind, secret.strip(), time.time()))
+
+    def accounts(self):
+        return [dict(r) for r in self.db.execute("SELECT name, kind, created FROM accounts ORDER BY name")]
+
+    def account_env(self, name):
+        """Environment that makes Claude Code use this account, or None if there's no such account."""
+        r = self.db.execute("SELECT kind, secret FROM accounts WHERE name = ?", (name,)).fetchone()
+        if not r:
+            return None
+        return {"CLAUDE_CODE_OAUTH_TOKEN": r["secret"]} if r["kind"] == "oauth" else {"ANTHROPIC_API_KEY": r["secret"]}
+
+    def remove_account(self, name):
+        self.db.execute("UPDATE entries SET account = NULL WHERE account = ?", (name,))
+        return self.db.execute("DELETE FROM accounts WHERE name = ?", (name,)).rowcount > 0
 
     # tree entries
     def entries(self):

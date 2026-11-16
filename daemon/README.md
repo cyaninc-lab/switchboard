@@ -7,6 +7,8 @@ pip install ./daemon            # or: pip install -e ./daemon for development
 switchboard-daemon serve        # 127.0.0.1:7878 by default; --host/--port/--name
 switchboard-daemon pair         # one-time code (10 min) for a client
 switchboard-daemon clients      # list paired clients; revoke <hash prefix> to remove one
+switchboard-daemon account add work < token.txt   # extra Claude account (token from `claude setup-token`, read from stdin)
+switchboard-daemon account list | remove work
 ```
 
 Data (paired clients, the tree) lives in one SQLite file in the platform data dir

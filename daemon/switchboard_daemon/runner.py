@@ -82,6 +82,11 @@ class Runner:
         info = self.sdk.get_session_info(entry["session_id"])
         if info is None and not entry.get("cwd"):
             raise LookupError("no_such_session")
+        acct = {}
+        if entry.get("account"):
+            acct = self.store.account_env(entry["account"])
+            if acct is None:
+                raise LookupError("no_such_account")
         # a session created in Switchboard doesn't exist on disk until its first message: start it with its own id
         start = {"resume": entry["session_id"]} if info else {"session_id": entry["session_id"]}
         holder = {}
@@ -92,6 +97,7 @@ class Runner:
         opts = self.sdk.ClaudeAgentOptions(
             **start, cwd=(info.cwd if info else entry["cwd"]) or None, include_partial_messages=True,
             permission_mode=entry.get("mode") or "default", can_use_tool=can_use_tool,
+            **({"env": acct} if acct else {}),
             # SWITCHBOARD_MODEL overrides everything (tests run on Haiku); else the entry's choice; else Claude Code's default
             **({"model": m} if (m := os.environ.get("SWITCHBOARD_MODEL") or entry.get("model")) else {}),
             **({"cli_path": self.cli_path} if self.cli_path else {}))
@@ -214,6 +220,13 @@ class Runner:
         lv = self.live.get(entry_id)
         if lv:
             await lv.client.set_model(model)
+
+    async def set_account(self, entry_id, account):
+        """The login can't change under a running process: close it; the next message resumes under the new account."""
+        if account and self.store.account_env(account) is None:
+            raise LookupError("no_such_account")
+        self.store.update_entry(entry_id, account=account or None)
+        await self.stop(entry_id)
 
     async def set_mode(self, entry_id, mode):
         if mode not in MODES:

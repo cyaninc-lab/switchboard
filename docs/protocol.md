@@ -21,6 +21,7 @@ Tauri-specific code. Everything is under `/v1`; breaking changes get `/v2`.
 | `GET /v1/sessions?q=&limit=&offset=` | this machine's sessions from `list_sessions()`, each with `entry_id` if it's in the tree |
 | `GET /v1/entries` | tree entries stored here: id, session_id, name, group, pinned, account, mode, state, watch ids |
 | `POST /v1/entries` | add: `{session_id}` (existing) or `{new: {cwd}}` (a new session: the daemon picks its id up front and starts it with that id on the first message or terminal), plus name, group, account?, mode? |
+| `GET /v1/accounts` · `POST /v1/accounts` · `DELETE /v1/accounts/{name}` | extra Claude logins on this machine (`{name, token, kind: oauth|api_key}`); tokens are stored by the daemon and never returned |
 | `GET /v1/models` | the models this machine's Claude Code offers (value, displayName, description, effort levels) |
 | `GET /v1/folders` | folder suggestions for a new session (where sessions have run, newest first) |
 | `PATCH /v1/entries/{id}` | rename, regroup, pin, change account or default mode |
@@ -43,6 +44,7 @@ Client → daemon:
 | `send` | `entry, text, images?` (starts or resumes the session if stopped; images = `[{media_type, data(base64)}]`, PNG/JPEG/GIF/WebP, ≤5 MB each, ≤10) |
 | `interrupt` / `stop` | `entry` |
 | `set_mode` | `entry, mode` (default, acceptEdits, plan, auto, dontAsk, bypassPermissions) |
+| `set_account` | `entry, account` (null = the machine's own login; closes a live session, which resumes on the new account at the next message) |
 | `set_model` | `entry, model` (a value from `/v1/models`; null = Claude Code's default; switches a live session) |
 | `permission_reply` | `request_id, allow, message?, remember?` |
 | `terminal_open` / `terminal_input` / `terminal_resize` / `terminal_close` | real-terminal toggle: PTY running `claude --resume` (the SDK session is closed first) |
@@ -59,7 +61,7 @@ Daemon → client:
 | `inbox` | `item` |
 | `terminal_opened` / `terminal_closed` | `entry` (the TUI started / exited) |
 | `terminal_output` | `entry, data` |
-| `mode` / `model` | `entry, mode` / `entry, model` (after a change) |
+| `mode` / `model` / `account` | the new value (after a change) |
 | `commands` | `entry, commands` (slash commands the session reported at start) |
 | `notice` | `entry, text` (e.g. conversation compacted) |
 | `queued` | `entry, count` (a message sent while working waits for the turn to end; interrupt drops the queue) |
