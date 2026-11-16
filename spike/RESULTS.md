@@ -9,7 +9,7 @@ model claude-haiku-5-5, signed in with a Claude subscription. Scripts: `spike.py
 | Live multi-turn session (`ClaudeSDKClient`) | pass | context kept between turns |
 | `can_use_tool` allow | pass | only fires for tools not auto-approved; read-only Bash like `echo` never asks |
 | `can_use_tool` deny | pass | denied command not run |
-| `interrupt()` mid-command | pass | stopped at once, the running `sleep` was killed (its `touch` never happened); session usable after draining |
+| `interrupt()` mid-command | pass | `spike_interrupt.py`: a 30 s Python command confirmed running, interrupted, killed (its file never appeared), returned in 1.5 s; session usable after draining. The first version used `sleep 25 &&`, which Claude Code blocks outright, so it passed without testing anything (found by reading the session in the Switchboard UI) |
 | Close, then resume in a new client | pass | same session id, full context |
 | `get_session_messages()` without resuming | pass | |
 | Partial streaming (`include_partial_messages`) | pass | token-level deltas for the live view |

@@ -63,6 +63,24 @@ def _entry_view(entry, info, live):
     return d
 
 
+CORS = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Authorization, Content-Type",
+        "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS"}
+
+
+@web.middleware
+async def cors(request, handler):
+    """Clients are web UIs (the Tauri webview, later maybe a browser). Bearer-token auth, no cookies, so * is safe."""
+    if request.method == "OPTIONS":
+        return web.Response(status=204, headers=CORS)
+    try:
+        resp = await handler(request)
+    except web.HTTPException as e:
+        e.headers.update(CORS)
+        raise
+    resp.headers.update(CORS)
+    return resp
+
+
 @web.middleware
 async def auth(request, handler):
     if request.path == "/v1/pair":
@@ -148,7 +166,7 @@ async def messages(request):
 
 
 def make_app(store: Store, name=None):
-    app = web.Application(middlewares=[auth])
+    app = web.Application(middlewares=[cors, auth])
     app[STORE], app[NAME] = store, name or socket.gethostname()
     app.add_routes([
         web.post("/v1/pair", pair), web.get("/v1/machine", machine), web.get("/v1/sessions", sessions),

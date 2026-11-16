@@ -81,8 +81,8 @@ async def main():
         await turn(c, "Use the Bash tool to run exactly: touch denied.txt . If it is refused, reply REFUSED.")
         check("deny via can_use_tool", len(asked) > before and not os.path.exists(os.path.join(WORK, "denied.txt")))
 
-        # interrupt mid-task: start a slow command, interrupt after a few seconds, drain the buffer
-        await c.query("Use the Bash tool to run exactly: sleep 25 && touch late-file . Then report the output.")
+        # interrupt mid-task (not `sleep N &&`: Claude Code blocks long foreground sleeps, which fakes a pass): start a slow command, interrupt after a few seconds, drain the buffer
+        await c.query("Use the Bash tool to run exactly: python3 -c \"import time,pathlib; time.sleep(25); pathlib.Path('late-file').touch()\" . Then report the output.")
         t0 = time.time()
         await asyncio.sleep(6)
         await c.interrupt()

@@ -55,7 +55,9 @@ def test_auth_and_pairing(env):
     store, _ = env
 
     async def t(c):
-        assert (await c.get("/v1/machine")).status == 401
+        r = await c.get("/v1/machine")
+        assert r.status == 401 and r.headers["Access-Control-Allow-Origin"] == "*"
+        assert (await c.options("/v1/entries")).status == 204  # CORS preflight needs no token
         code = store.new_pair_code()
         ok = await c.post("/v1/pair", json={"code": code, "client_name": "laptop"})
         assert ok.status == 200
