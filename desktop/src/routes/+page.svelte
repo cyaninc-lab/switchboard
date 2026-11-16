@@ -16,6 +16,7 @@
   let selected = $state<{ machine: Machine; entry: Entry } | null>(null);
   let messages = $state<HistoryMessage[]>([]);
   let loadingHistory = $state(false);
+  let openSeq = 0;
   let filter = $state('');
   let dialog = $state<'connect' | 'add' | 'settings' | null>(null);
 
@@ -51,10 +52,31 @@
   let aName = $state('');
   let aGroup = $state('');
   let aError = $state('');
+  let aTab = $state<'existing' | 'new'>('existing');
+  let nFolder = $state('');
+  let nFolders = $state<string[]>([]);
+  let nName = $state('');
+  let nMode = $state('default');
+  async function newTab() {
+    aTab = 'new'; aError = '';
+    if (!aMachine) return;
+    try { const f = await api.folders(aMachine); nFolders = f.folders; nFolder ||= f.folders[1] ?? f.home; } catch (e) { aError = (e as Error).message; }
+  }
+  async function createNew(ev: Event) {
+    ev.preventDefault();
+    if (!aMachine) return;
+    try {
+      const e = await api.addEntry(aMachine, { new: { cwd: nFolder.trim() }, name: nName.trim() || undefined, mode: nMode });
+      dialog = null; nName = '';
+      await refresh();
+      open(aMachine, e);
+    } catch (e) { aError = (e as Error).message === 'no_such_folder' ? `No folder ${nFolder} on ${aMachine.name}` : (e as Error).message; }
+  }
 
   // ---- live sessions (phase 2) ----
   const lives = new Map<string, api.Live>();
   let streaming = $state<Record<string, string>>({});
+  let queued = $state<Record<string, number>>({});
   let prompts = $state<Record<string, { request_id: string; tool: string; input: any }[]>>({});
   let draft = $state('');
   // follow new output while the view is at the bottom; leave it alone once the user scrolls up to read
@@ -117,7 +139,7 @@
   function onEvent(e: api.LiveEvent) {
     if (e.type === 'state') {
       setEntry(e.entry, { state: e.state as Entry['state'] });
-      if (e.state !== 'working' && e.state !== 'waiting') streaming[e.entry] = '';
+      if (e.state !== 'working' && e.state !== 'waiting') { streaming[e.entry] = ''; queued[e.entry] = 0; }
     } else if (e.type === 'delta') {
       streaming[e.entry] = (streaming[e.entry] ?? '') + e.text;
     } else if (e.type === 'message') {
@@ -129,6 +151,8 @@
       prompts[e.entry] = (prompts[e.entry] ?? []).filter((p) => p.request_id !== e.request_id);
     } else if (e.type === 'mode') {
       setEntry(e.entry, { mode: e.mode });
+    } else if (e.type === 'queued') {
+      queued[e.entry] = e.count;
     } else if (e.type === 'commands') {
       if (selected) loadCommands(selected.machine);
     } else if (e.type === 'notice') {
@@ -205,13 +229,17 @@
     stick = true;
     if (!cmdList[machine.url]) loadCommands(machine);
     loadingHistory = true;
-    try { messages = await api.history(machine, entry.id); }
-    catch (e) { messages = []; }
+    messages = [];
+    const mine = ++openSeq;
+    let hist: HistoryMessage[] = [];
+    try { hist = await api.history(machine, entry.id); } catch {}
+    if (mine !== openSeq) return;  // the user already opened something else
+    messages = [...hist, ...messages];  // keep anything sent or streamed in while the history was loading
     loadingHistory = false;
   }
 
   const stateLabel: Record<string, string> = {
-    working: 'Working', waiting: 'Waiting for you', stopped: 'Stopped: send a message to resume it', ready: 'Live and ready',
+    working: 'Working', waiting: 'Waiting for you', new: 'New: send a message to start it', stopped: 'Stopped: send a message to resume it', ready: 'Live and ready',
     terminal: 'Open in a terminal (read-only here)', missing: 'Session no longer on this machine', error: 'Error',
   };
 
@@ -379,6 +407,7 @@
           {/each}
         </div>
         {#if liveErr}<div class="liveerr" role="alert">{liveErr}</div>{/if}
+        {#if queued[selected.entry.id]}<div class="queued muted small" aria-live="polite">{queued[selected.entry.id]} queued: sends when Claude finishes</div>{/if}
         {#if menu.length}
           <div class="cmdmenu" role="listbox" aria-label="Slash commands">
             {#each menu as c, i (c.name)}
@@ -399,7 +428,7 @@
           <span class="prompt">❯</span>
           <label class="grow"><span class="sr">Message this session</span>
             <input bind:value={draft} onpaste={onPaste} onkeydown={onInputKey} disabled={selected.entry.state === 'terminal' || selected.entry.state === 'missing'}
-              placeholder={selected.entry.state === 'terminal' ? 'Open in a terminal elsewhere' : selected.entry.state === 'working' ? 'Working… (Esc to interrupt)' : 'Message this session'} /></label>
+              placeholder={selected.entry.state === 'terminal' ? 'Open in a terminal elsewhere' : selected.entry.state === 'working' ? 'Working… messages are queued (Esc to interrupt)' : 'Message this session'} /></label>
           <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden bind:this={fileInput} onchange={(e) => { addFiles((e.target as HTMLInputElement).files ?? []); (e.target as HTMLInputElement).value = ''; }} />
           <button type="button" class="tiny" aria-label="Attach images" title="Attach images (or paste / drop them)" onclick={() => fileInput?.click()}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" /></svg>
@@ -466,14 +495,30 @@
 
 {#if dialog === 'add'}
   <div class="backdrop" role="presentation" onclick={(e) => e.target === e.currentTarget && (dialog = null)}>
-    <form class="dialog wide" aria-label="Add to Switchboard" onsubmit={add}>
+    <form class="dialog wide" aria-label="Add to Switchboard" onsubmit={(e) => (aTab === 'new' ? createNew(e) : add(e))}>
       <h2>Add to Switchboard</h2>
+      <div class="tabs" role="tablist" aria-label="Add from">
+        <button type="button" role="tab" aria-selected={aTab === 'existing'} class:on={aTab === 'existing'} onclick={() => (aTab = 'existing')}>Existing session</button>
+        <button type="button" role="tab" aria-selected={aTab === 'new'} class:on={aTab === 'new'} onclick={newTab}>New session</button>
+      </div>
       <div class="pills">
         <span class="muted small">Machine</span>
         {#each machines as m (m.url)}
-          <button type="button" class="pill" class:on={aMachine?.url === m.url} onclick={() => { aMachine = m; aPick = null; search(); }}>{m.name}</button>
+          <button type="button" class="pill" class:on={aMachine?.url === m.url} onclick={() => { aMachine = m; aPick = null; aTab === 'new' ? newTab() : search(); }}>{m.name}</button>
         {/each}
       </div>
+      {#if aTab === 'new'}
+        <label>Folder on {aMachine?.name}
+          <input bind:value={nFolder} list="folder-list" required placeholder="/path/to/project" />
+          <datalist id="folder-list">{#each nFolders as f}<option value={f}></option>{/each}</datalist>
+        </label>
+        <div class="grid2">
+          <label>Name in the tree<input bind:value={nName} placeholder="New session" /></label>
+          <label>Permission mode<select bind:value={nMode}>{#each api.MODES as m}<option value={m}>{m}</option>{/each}</select></label>
+        </div>
+        {#if aError}<p class="error">{aError}</p>{/if}
+        <div class="actions"><button type="button" class="btn ghost" onclick={() => (dialog = null)}>Cancel</button><button class="btn primary">Create session</button></div>
+      {:else}
       <label class="search"><span class="sr">Search</span><input type="search" placeholder="Search sessions on {aMachine?.name}…" bind:value={aQuery} oninput={search} /></label>
       <div class="slist" role="radiogroup" aria-label="Sessions">
         {#each aSessions as s (s.session_id)}
@@ -493,6 +538,7 @@
       {/if}
       {#if aError}<p class="error">{aError}</p>{/if}
       <div class="actions"><button type="button" class="btn ghost" onclick={() => (dialog = null)}>Cancel</button><button class="btn primary" disabled={!aPick}>Add to tree</button></div>
+      {/if}
     </form>
   </div>
 {/if}
@@ -544,6 +590,7 @@
   .pin { color: var(--peach); font-size: 11px; }
   .st { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; box-sizing: border-box; border: 1.5px solid var(--o1); }
   .st.working { background: var(--green); border: 0; } .st.ready { border: 2px solid var(--green); } .st.waiting { border: 2px solid var(--peach); }
+  .st.new { border: 1.5px dashed var(--mauve); }
   .st.terminal { background: var(--sky); border: 0; border-radius: 2px; } .st.missing, .st.error { border-color: var(--red); }
   .navfoot { padding: 10px 12px; border-top: 1px solid var(--s0); }
   .btn { width: 100%; background: var(--s0); border: 1px solid var(--s1); color: var(--text); border-radius: 8px; padding: 9px; }
@@ -586,6 +633,7 @@
   .attach { display: flex; gap: 8px; padding: 8px 18px 0; flex-wrap: wrap; }
   .thumb { position: relative; } .thumb img { height: 56px; border-radius: 6px; border: 1px solid var(--s1); display: block; }
   .thumb button { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; border: 0; background: var(--s1); color: var(--text); font-size: 12px; line-height: 18px; padding: 0; }
+  .queued { padding: 4px 18px 0; }
   .liveerr { color: var(--red); padding: 6px 18px; font-size: 12px; }
   .modepick { display: inline-flex; gap: 6px; align-items: center; }
   .modepick select { appearance: none; -webkit-appearance: none; padding-right: 14px; background: var(--base); color: var(--text); border: 1px solid var(--s1); border-radius: 6px; font: inherit; padding: 1px 4px; }
@@ -601,6 +649,10 @@
   .dialog .search { padding: 0; }
   .actions { display: flex; justify-content: flex-end; gap: 8px; }
   .error { color: var(--red); margin: 0; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--s0); }
+  .tabs button { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--sub0); padding: 6px 12px; }
+  .tabs button.on { border-bottom-color: var(--mauve); color: var(--text); font-weight: 600; }
+  .dialog select { background: var(--base); border: 1px solid var(--s1); border-radius: 8px; padding: 8px 10px; color: var(--text); font: inherit; appearance: none; }
   .pills { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .pill { background: var(--mantle); border: 1px solid var(--s1); color: var(--sub1); border-radius: 999px; padding: 6px 12px; }
   .pill.on { background: var(--s0); border-color: var(--mauve); color: var(--text); }

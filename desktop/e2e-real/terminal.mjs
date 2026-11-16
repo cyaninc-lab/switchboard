@@ -8,7 +8,7 @@ import { Builder, By, Key, until } from 'selenium-webdriver';
 const APP = new URL('../src-tauri/target/release/switchboard', import.meta.url).pathname;
 const search = process.argv[2] ?? 'Sleep-and-touch';
 const SLOW = Number(process.env.SLOW ?? 1500);
-try { _x("pkill -f '[t]auri-driver'; pkill -f '[W]ebKitWebDriver'"); } catch {} // stale
+try { _x('pkill -x tauri-driver; pkill -x WebKitWebDriver'); } catch {} // stale
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('CLAUDE')));
 env.SWITCHBOARD_MODEL ??= 'claude-haiku-5-5';
 const step = async (m) => { console.log('·', m); await sleep(SLOW); };

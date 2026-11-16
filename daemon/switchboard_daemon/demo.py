@@ -105,6 +105,7 @@ class ResultMessage:
 @dataclasses.dataclass
 class ClaudeAgentOptions:
     resume: str = None
+    session_id: str = None
     cwd: str = None
     include_partial_messages: bool = False
     permission_mode: str = "default"
@@ -152,6 +153,8 @@ class ClaudeSDKClient:
 
     async def receive_response(self):
         text = self.prompt
+        if self.options.session_id and not get_session_info(self.options.session_id):  # a new session now exists on "disk"
+            SESSIONS.append(DemoSession(self.options.session_id, text[:40] or "New session", int(time.time() * 1000), self.options.cwd))
         if not self.started:
             self.started = True
             yield SystemMessage("init", {"slash_commands": ["compact", "clear", "usage", "deploy", "yt-add"]})

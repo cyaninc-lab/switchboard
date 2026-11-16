@@ -9,7 +9,7 @@ export type Session = {
 export type Entry = {
   id: string; session_id: string; name: string; group: string; pinned: boolean;
   account: string | null; mode: string | null;
-  state: 'working' | 'waiting' | 'ready' | 'stopped' | 'terminal' | 'missing' | 'error';
+  state: 'new' | 'working' | 'waiting' | 'ready' | 'stopped' | 'terminal' | 'missing' | 'error';
   session: Session | null;
 };
 export type HistoryMessage = { type: 'user' | 'assistant'; uuid: string; message: any };
@@ -49,11 +49,12 @@ export async function pair(url: string, code: string, clientName: string): Promi
 export const entries = (m: Machine) => call<{ entries: Entry[] }>(m, '/v1/entries').then((d) => d.entries);
 export const sessions = (m: Machine, q = '', limit = 50) =>
   call<{ total: number; sessions: Session[] }>(m, `/v1/sessions?q=${encodeURIComponent(q)}&limit=${limit}`);
-export const addEntry = (m: Machine, body: { session_id: string; name?: string; group?: string }) =>
+export const addEntry = (m: Machine, body: { session_id?: string; new?: { cwd: string }; name?: string; group?: string; mode?: string }) =>
   call<Entry>(m, '/v1/entries', { method: 'POST', body: JSON.stringify(body) });
 export const updateEntry = (m: Machine, id: string, body: Partial<{ name: string; group: string; pinned: boolean }>) =>
   call<Entry>(m, `/v1/entries/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
 export const removeEntry = (m: Machine, id: string) => call<void>(m, `/v1/entries/${id}`, { method: 'DELETE' });
+export const folders = (m: Machine) => call<{ home: string; folders: string[] }>(m, '/v1/folders');
 export const commands = (m: Machine) => call<{ commands: Command[] }>(m, '/v1/commands').then((d) => d.commands);
 export const history = (m: Machine, id: string, limit = 400) =>
   call<{ messages: HistoryMessage[] }>(m, `/v1/entries/${id}/messages?limit=${limit}`).then((d) => d.messages);
@@ -103,6 +104,7 @@ export type LiveEvent =
   | { type: 'terminal_opened' | 'terminal_closed'; entry: string }
   | { type: 'commands'; entry: string; commands: string[] }
   | { type: 'notice'; entry: string; text: string }
+  | { type: 'queued'; entry: string; count: number }
   | { type: 'terminal_output'; entry: string; data: string }
   | { type: 'error'; entry?: string; code: string; message: string };
 

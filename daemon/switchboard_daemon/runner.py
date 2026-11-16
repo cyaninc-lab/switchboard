@@ -50,6 +50,7 @@ class Live:
     last_active: float = dataclasses.field(default_factory=time.time)
     pending: dict = dataclasses.field(default_factory=dict)  # request id -> Future
     said: bool = False  # did this turn produce any assistant text (built-in commands may only return a result)
+    queue: list = dataclasses.field(default_factory=list)  # messages sent while working, sent in order afterwards
 
 
 class Runner:
@@ -78,15 +79,17 @@ class Runner:
         if lv:
             return lv
         info = self.sdk.get_session_info(entry["session_id"])
-        if info is None:
+        if info is None and not entry.get("cwd"):
             raise LookupError("no_such_session")
+        # a session created in Switchboard doesn't exist on disk until its first message: start it with its own id
+        start = {"resume": entry["session_id"]} if info else {"session_id": entry["session_id"]}
         holder = {}
 
         async def can_use_tool(tool, inp, ctx):
             return await self._ask(holder["lv"], tool, inp)
 
         opts = self.sdk.ClaudeAgentOptions(
-            resume=entry["session_id"], cwd=info.cwd or None, include_partial_messages=True,
+            **start, cwd=(info.cwd if info else entry["cwd"]) or None, include_partial_messages=True,
             permission_mode=entry.get("mode") or "default", can_use_tool=can_use_tool,
             **({"model": os.environ["SWITCHBOARD_MODEL"]} if os.environ.get("SWITCHBOARD_MODEL") else {}),  # ponytail: per-entry model setting later
             **({"cli_path": self.cli_path} if self.cli_path else {}))
@@ -105,8 +108,10 @@ class Runner:
             if len(im.get("data", "")) > MAX_IMAGE_B64:
                 raise ValueError("image_too_large")
         lv = await self._open(entry)
-        if lv.working:
-            raise RuntimeError("busy")
+        if lv.working:  # like Claude Code: a message typed while it works goes out when the turn ends
+            lv.queue.append((entry, text, images))
+            await self.broadcast({"type": "queued", "entry": entry["id"], "count": len(lv.queue)})
+            return
         lv.working, lv.last_active, lv.said = True, time.time(), False
         await self._emit_state(entry["id"])
         if images:
@@ -149,7 +154,11 @@ class Runner:
             await self.broadcast({"type": "error", "entry": lv.entry_id, "code": "session_error", "message": str(e)[:500]})
         finally:
             lv.working = False
-            await self._emit_state(lv.entry_id)
+            if lv.queue and self.live.get(lv.entry_id) is lv:
+                entry, text, images = lv.queue.pop(0)
+                asyncio.get_running_loop().create_task(self.send(entry, text, images))
+            else:
+                await self._emit_state(lv.entry_id)
 
     async def _ask(self, lv, tool, inp):
         rid = uuid.uuid4().hex[:12]
@@ -176,6 +185,8 @@ class Runner:
 
     async def interrupt(self, entry_id):
         lv = self.live.get(entry_id)
+        if lv:
+            lv.queue.clear()  # interrupting drops what was queued behind the current turn, as in Claude Code
         if lv and lv.working:
             for fut in list(lv.pending.values()):  # a pending prompt is moot once interrupted
                 if not fut.done():

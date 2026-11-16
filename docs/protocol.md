@@ -20,7 +20,8 @@ Tauri-specific code. Everything is under `/v1`; breaking changes get `/v2`.
 | `GET /v1/machine` | name, daemon + SDK versions, accounts (labels only), default account and mode |
 | `GET /v1/sessions?q=&limit=&offset=` | this machine's sessions from `list_sessions()`, each with `entry_id` if it's in the tree |
 | `GET /v1/entries` | tree entries stored here: id, session_id, name, group, pinned, account, mode, state, watch ids |
-| `POST /v1/entries` | add: `{session_id}` or `{new: {cwd}}`, plus name, group, account?, mode? |
+| `POST /v1/entries` | add: `{session_id}` (existing) or `{new: {cwd}}` (a new session: the daemon picks its id up front and starts it with that id on the first message or terminal), plus name, group, account?, mode? |
+| `GET /v1/folders` | folder suggestions for a new session (where sessions have run, newest first) |
 | `PATCH /v1/entries/{id}` | rename, regroup, pin, change account or default mode |
 | `DELETE /v1/entries/{id}` | off the tree only; the session stays on disk |
 | `GET /v1/entries/{id}/messages?offset=&limit=` | history via `get_session_messages()`, no resume needed |
@@ -48,7 +49,7 @@ Daemon → client:
 
 | type | fields |
 | --- | --- |
-| `state` | `entry, state` (working, waiting, ready = live and idle, stopped, terminal, error) |
+| `state` | `entry, state` (new, working, waiting, ready = live and idle, stopped, terminal, error) |
 | `delta` | `entry, text` (partial streaming) |
 | `message` | `entry, message` (full assistant/user/tool message, same shape as history) |
 | `permission_request` | `request_id, entry, tool, input` |
@@ -59,6 +60,7 @@ Daemon → client:
 | `mode` | `entry, mode` (after a `set_mode`) |
 | `commands` | `entry, commands` (slash commands the session reported at start) |
 | `notice` | `entry, text` (e.g. conversation compacted) |
+| `queued` | `entry, count` (a message sent while working waits for the turn to end; interrupt drops the queue) |
 | `error` | `entry?, code, message` |
 
 Every subscribed client receives every event, so several clients stay live on one session.

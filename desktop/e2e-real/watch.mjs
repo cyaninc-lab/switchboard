@@ -12,7 +12,7 @@ const APP = new URL('../src-tauri/target/release/switchboard', import.meta.url).
 const [search = 'Sleep-and-touch', expectDir = ''] = process.argv.slice(2);
 const SLOW = Number(process.env.SLOW ?? 1200);
 // a run that crashed can leave a WebDriver session holding the only slot
-try { _x("pkill -f '[t]auri-driver'; pkill -f '[W]ebKitWebDriver'"); } catch {} // stale
+try { _x('pkill -x tauri-driver; pkill -x WebKitWebDriver'); } catch {} // stale
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('CLAUDE')));
 env.SWITCHBOARD_MODEL ??= 'claude-haiku-5-5';
 

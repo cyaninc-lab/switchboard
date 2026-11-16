@@ -33,6 +33,8 @@ class Store:
         self.db = sqlite3.connect(path, isolation_level=None)  # autocommit; the CLI and server share the file
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
+        if "cwd" not in {r["name"] for r in self.db.execute("PRAGMA table_info(entries)")}:
+            self.db.execute("ALTER TABLE entries ADD COLUMN cwd TEXT")  # folder of a session created in Switchboard
 
     # pairing
     def new_pair_code(self):
@@ -71,10 +73,10 @@ class Store:
         r = self.db.execute("SELECT * FROM entries WHERE session_id = ?", (session_id,)).fetchone()
         return dict(r) if r else None
 
-    def add_entry(self, session_id, name, grp, account=None, mode=None):
+    def add_entry(self, session_id, name, grp, account=None, mode=None, cwd=None):
         eid = uuid.uuid4().hex[:12]
-        self.db.execute("INSERT INTO entries VALUES (?, ?, ?, ?, 0, ?, ?, ?)",
-                        (eid, session_id, name, grp, account, mode, time.time()))
+        self.db.execute("INSERT INTO entries (id, session_id, name, grp, pinned, account, mode, created, cwd) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)",
+                        (eid, session_id, name, grp, account, mode, time.time(), cwd))
         return self.entry(eid)
 
     def update_entry(self, entry_id, **changes):

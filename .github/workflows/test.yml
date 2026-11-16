@@ -38,3 +38,4 @@ jobs:
         with:
           name: ui-screenshots
           path: desktop/e2e/.results
+          include-hidden-files: true

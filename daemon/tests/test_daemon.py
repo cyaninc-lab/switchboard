@@ -95,7 +95,7 @@ def test_tree_flow(env):
         assert (await c.post("/v1/entries", headers=h, json={"session_id": "s2"})).status == 409
         assert appmod._default_group(os.path.expanduser("~")) == "home"
         assert (await c.post("/v1/entries", headers=h, json={"session_id": "nope"})).status == 404
-        assert (await c.post("/v1/entries", headers=h, json={"new": {"cwd": "/w"}})).status == 501
+        assert (await c.post("/v1/entries", headers=h, json={"new": {"cwd": "/no/such/dir"}})).status == 400
 
         s = await (await c.get("/v1/sessions", headers=h)).json()
         assert [x["entry_id"] is not None for x in s["sessions"]] == [False, True, False]

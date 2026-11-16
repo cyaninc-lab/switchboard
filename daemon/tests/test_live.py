@@ -82,9 +82,6 @@ def test_deny_interrupt_mode_stop(tmp_path, monkeypatch):
         # busy while working
         await ws.send_json({"type": "send", "entry": eid, "text": "slow job"})
         await until(ws, lambda m: m["type"] == "state" and m["state"] == "working")
-        await ws.send_json({"type": "send", "entry": eid, "text": "again"})
-        err, _ = await until(ws, lambda m: m["type"] == "error")
-        assert "busy" in err["message"]
         t0 = asyncio.get_running_loop().time()
         await ws.send_json({"type": "interrupt", "entry": eid})
         await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
@@ -173,5 +170,51 @@ def test_images_commands_and_result_only_output(tmp_path, monkeypatch):
         await ws.send_json({"type": "send", "entry": eid, "text": "x", "images": [{"media_type": "image/tiff", "data": png}]})
         err, _ = await until(ws, lambda m: m["type"] == "error")
         assert "unsupported_image_type" in err["message"]
+        await client.close()
+    asyncio.run(t())
+
+
+def test_new_session(tmp_path, monkeypatch):
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        work = tmp_path / "proj"
+        work.mkdir()
+        r = await client.post("/v1/entries", headers=h, json={"new": {"cwd": str(work)}, "name": "Fresh start"})
+        assert r.status == 201
+        n = await r.json()
+        assert n["state"] == "new" and n["group"] == "proj" and n["session"]["cwd"] == str(work)
+        assert (await (await client.get(f"/v1/entries/{n['id']}/messages", headers=h)).json())["messages"] == []
+        folders = (await (await client.get("/v1/folders", headers=h)).json())
+        assert folders["home"]
+        # first message starts it with its own id; afterwards it's an ordinary session that resumes
+        await ws.send_json({"type": "send", "entry": n["id"], "text": "hello new"})
+        _, seen = await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        assert any("Done: hello new" in str(m) for m in seen)
+        runner = client.server.app[appmod.RUNNER]
+        assert runner.live[n["id"]].client.options.session_id == n["session_id"]
+        await ws.send_json({"type": "stop", "entry": n["id"]})
+        await until(ws, lambda m: m["type"] == "state" and m["state"] == "stopped")
+        es = {x["id"]: x for x in (await (await client.get("/v1/entries", headers=h)).json())["entries"]}
+        assert es[n["id"]]["state"] == "stopped"
+        await ws.send_json({"type": "send", "entry": n["id"], "text": "again"})
+        await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        assert runner.live[n["id"]].client.options.resume == n["session_id"]
+        await client.close()
+    asyncio.run(t())
+
+
+def test_queue_while_working(tmp_path, monkeypatch):
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        eid = e["id"]
+        await ws.send_json({"type": "send", "entry": eid, "text": "first"})
+        await until(ws, lambda m: m["type"] == "state" and m["state"] == "working")
+        await ws.send_json({"type": "send", "entry": eid, "text": "second"})
+        q, _ = await until(ws, lambda m: m["type"] == "queued")
+        assert q["count"] == 1
+        _, seen = await until(ws, lambda m: m["type"] == "message" and "Done: second" in str(m))
+        texts = [str(m) for m in seen if m["type"] == "message"]
+        assert any("Done: first" in t for t in texts)  # first finished before second started
+        await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
         await client.close()
     asyncio.run(t())

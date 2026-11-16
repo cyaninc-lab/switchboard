@@ -1,5 +1,5 @@
 """HTTP API v1 (phase 1: pairing, machine, sessions, tree entries, history). See docs/protocol.md."""
-import asyncio, dataclasses, glob, itertools, json, os, platform, socket
+import asyncio, dataclasses, glob, itertools, json, os, platform, socket, uuid
 from pathlib import Path
 from aiohttp import web
 import claude_agent_sdk as sdk
@@ -68,6 +68,11 @@ def _entry_view(entry, info, live, runner=None):
     d = {k: entry[k] for k in ("id", "session_id", "name", "pinned", "account", "mode")}
     d["group"], d["pinned"] = entry["grp"], bool(entry["pinned"])
     held = runner.state(entry["id"]) if runner else None
+    if info is None and entry.get("cwd"):  # created here, no message yet
+        d["state"] = held or "new"
+        d["session"] = {"session_id": entry["session_id"], "summary": entry["name"], "cwd": entry["cwd"], "git_branch": None,
+                        "last_modified": int(entry["created"] * 1000), "custom_title": None}
+        return d
     d["state"] = held or ("missing" if info is None else ("terminal" if entry["session_id"] in live else "stopped"))
     d["session"] = _plain(info)
     return d
@@ -137,8 +142,15 @@ async def list_entries(request):
 
 async def add_entry(request):
     body, store = await request.json(), request.app[STORE]
+    if "new" in body:
+        cwd = os.path.abspath(os.path.expanduser(body["new"].get("cwd") or "~"))
+        if not os.path.isdir(cwd):
+            raise web.HTTPBadRequest(text=json.dumps({"code": "no_such_folder"}), content_type="application/json")
+        e = store.add_entry(str(uuid.uuid4()), body.get("name") or "New session", body.get("group") or _default_group(cwd),
+                            body.get("account"), body.get("mode"), cwd=cwd)
+        return web.json_response(_entry_view(e, None, set(), request.app[RUNNER]), status=201)
     if "session_id" not in body:
-        raise web.HTTPNotImplemented(text=json.dumps({"code": "new_session_needs_phase_2"}), content_type="application/json")
+        raise web.HTTPBadRequest(text=json.dumps({"code": "session_id_or_new"}), content_type="application/json")
     info = await _off(sdk.get_session_info, body["session_id"])
     if info is None:
         raise web.HTTPNotFound(text=json.dumps({"code": "no_such_session"}), content_type="application/json")
@@ -167,11 +179,24 @@ async def remove_entry(request):
     return web.Response(status=204)
 
 
+async def folders(request):
+    """Folder suggestions for a new session: where sessions on this machine have run, most recent first."""
+    seen, out = set(), []
+    for s in await _off(sdk.list_sessions):
+        if s.cwd and s.cwd not in seen and os.path.isdir(s.cwd) and not s.cwd.startswith("/tmp/"):
+            seen.add(s.cwd)
+            out.append(s.cwd)
+    home = str(Path.home())
+    return web.json_response({"home": home, "folders": ([home] if home not in seen else []) + out[:30]})
+
+
 async def messages(request):
     e = request.app[STORE].entry(request.match_info["id"])
     if not e:
         raise web.HTTPNotFound()
     limit, offset = int(request.query.get("limit", 200)), int(request.query.get("offset", 0))
+    if e.get("cwd") and await _off(sdk.get_session_info, e["session_id"]) is None:
+        return web.json_response({"messages": []})  # new, nothing said yet
     msgs = await _off(sdk.get_session_messages, e["session_id"], limit=limit, offset=offset)
     return web.json_response({"messages": [_plain(m) for m in msgs]}, dumps=lambda o: json.dumps(o, default=str))
 
@@ -206,10 +231,10 @@ async def ws_handler(request):
                 if t == "terminal_open":
                     await runner.stop(eid)  # one writer per session: chat closes while the TUI has it
                     info = await _off(sdk.get_session_info, entry["session_id"])
-                    argv = [runner.cli_path or "claude", "--resume", entry["session_id"]]
+                    argv = [runner.cli_path or "claude", "--resume" if info else "--session-id", entry["session_id"]]
                     if os.environ.get("SWITCHBOARD_MODEL"):
                         argv += ["--model", os.environ["SWITCHBOARD_MODEL"]]
-                    await request.app[TTYS].start(eid, entry["session_id"], info.cwd if info else None, argv,
+                    await request.app[TTYS].start(eid, entry["session_id"], info.cwd if info else entry.get("cwd"), argv,
                                                   m.get("cols", 100), m.get("rows", 30))
                 elif t == "terminal_input":
                     request.app[TTYS].write(eid, m["data"])
@@ -311,6 +336,6 @@ def make_app(store: Store, name=None):
         web.post("/v1/pair", pair), web.get("/v1/machine", machine), web.get("/v1/sessions", sessions),
         web.get("/v1/entries", list_entries), web.post("/v1/entries", add_entry),
         web.patch("/v1/entries/{id}", update_entry), web.delete("/v1/entries/{id}", remove_entry),
-        web.get("/v1/entries/{id}/messages", messages), web.get("/v1/ws", ws_handler), web.get("/v1/commands", commands),
+        web.get("/v1/entries/{id}/messages", messages), web.get("/v1/ws", ws_handler), web.get("/v1/commands", commands), web.get("/v1/folders", folders),
     ])
     return app
