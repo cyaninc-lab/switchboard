@@ -61,7 +61,7 @@ def main():
         app = make_app(store, a.name or ("demo" if a.demo else None))
         if a.exit_with:
             app.on_startup.append(lambda _app: _watch(a.exit_with))
-        web.run_app(app, host=a.host, port=a.port)
+        web.run_app(app, host=a.host, port=a.port, shutdown_timeout=2)  # stop promptly; clients reconnect
     elif a.cmd == "pair":
         print(store.new_pair_code())
     elif a.cmd == "clients":

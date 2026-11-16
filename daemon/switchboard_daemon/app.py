@@ -242,7 +242,11 @@ def make_app(store: Store, name=None):
     async def stop(app):
         app[REAPER].cancel()
         await app[RUNNER].close_all()
+    async def close_sockets(app):  # open WebSockets would otherwise hold a graceful shutdown for its full timeout
+        for ws in list(app[SOCKETS]):
+            await ws.close(code=1001, message=b"daemon stopping")
     app.on_startup.append(start)
+    app.on_shutdown.append(close_sockets)
     app.on_cleanup.append(stop)
     app.add_routes([
         web.post("/v1/pair", pair), web.get("/v1/machine", machine), web.get("/v1/sessions", sessions),

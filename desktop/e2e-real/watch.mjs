@@ -2,6 +2,7 @@
 // watch, against real Claude. No mouse or keyboard of the user's is used.
 // Usage: node e2e-real/watch.mjs "<session search text>" "<dir to expect the agent to create>"
 // Env: SWITCHBOARD_MODEL (default claude-haiku-5-5), SLOW (ms between steps, default 1200)
+import { execSync as _x } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -10,6 +11,8 @@ import { Builder, By, Key, until } from 'selenium-webdriver';
 const APP = new URL('../src-tauri/target/release/switchboard', import.meta.url).pathname;
 const [search = 'Sleep-and-touch', expectDir = ''] = process.argv.slice(2);
 const SLOW = Number(process.env.SLOW ?? 1200);
+// a run that crashed can leave a WebDriver session holding the only slot
+try { _x("pkill -f '[t]auri-driver'; pkill -f '[W]ebKitWebDriver'"); } catch {} // stale
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('CLAUDE')));
 env.SWITCHBOARD_MODEL ??= 'claude-haiku-5-5';
 

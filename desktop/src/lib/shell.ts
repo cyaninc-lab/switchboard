@@ -12,3 +12,14 @@ export async function pairLocal(): Promise<Machine | null> {
   const d = await invoke<{ url: string; code: string; embedded: boolean }>('local_daemon');
   return api.pair(d.url, d.code, 'Switchboard desktop (this machine)');
 }
+
+export type ServiceStatus = { supported: boolean; installed: boolean; active: boolean; embedded: boolean };
+
+async function call<T>(cmd: string): Promise<T> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<T>(cmd);
+}
+/** Background service: keeps agents running while the app is closed (null outside the desktop app). */
+export const serviceStatus = () => (inShell() ? call<ServiceStatus>('service_status') : Promise.resolve(null));
+export const serviceInstall = () => call<void>('service_install');
+export const serviceUninstall = () => call<void>('service_uninstall');

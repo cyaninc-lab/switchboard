@@ -1,6 +1,7 @@
 <script lang="ts">
   import * as api from '$lib/api';
-  import { pairLocal } from '$lib/shell';
+  import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell } from '$lib/shell';
+  import type { ServiceStatus } from '$lib/shell';
   import type { Machine, Entry, Session, HistoryMessage } from '$lib/api';
 
   // the HTML autofocus attribute only works on page load, not on elements Svelte adds later
@@ -13,7 +14,25 @@
   let messages = $state<HistoryMessage[]>([]);
   let loadingHistory = $state(false);
   let filter = $state('');
-  let dialog = $state<'connect' | 'add' | null>(null);
+  let dialog = $state<'connect' | 'add' | 'settings' | null>(null);
+
+  // settings: background service
+  let svc = $state<ServiceStatus | null>(null);
+  let svcBusy = $state(false);
+  let svcError = $state('');
+  async function openSettings() { dialog = 'settings'; svcError = ''; svc = await serviceStatus(); }
+  async function toggleService() {
+    if (!svc) return;
+    const liveHere = Object.values(tree).flatMap((t) => t.entries).filter((e) => ['working', 'waiting', 'ready'].includes(e.state)).length;
+    if (liveHere && svc.embedded && !svc.installed) svcError = `${liveHere} live session(s) will stop during the switch; they resume on your next message.`;
+    svcBusy = true;
+    try {
+      await (svc.installed ? serviceUninstall() : serviceInstall());
+      await ensureLocal(); await refresh();
+    } catch (e) { svcError = String(e); }
+    svc = await serviceStatus();
+    svcBusy = false;
+  }
 
   // connect dialog
   let cUrl = $state('http://127.0.0.1:7878');
@@ -214,6 +233,9 @@
           <span class="muted">{tree[m.url]?.error ? 'offline' : 'online'}</span></span>
       {/each}
       <button class="chip dashed" onclick={() => (dialog = 'connect')}>+ Connect a machine</button>
+      <button class="chip icon" aria-label="Settings" title="Settings" onclick={openSettings}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></svg>
+      </button>
     </div>
   </header>
 
@@ -325,6 +347,30 @@
   </div>
 {/if}
 
+{#if dialog === 'settings'}
+  <div class="backdrop" role="presentation" onclick={(e) => e.target === e.currentTarget && (dialog = null)}>
+    <div class="dialog" role="dialog" aria-label="Settings">
+      <h2>Settings</h2>
+      {#if !inShell()}
+        <p class="muted">Settings for this machine are available in the desktop app.</p>
+      {:else if svc && !svc.supported}
+        <p class="muted">Keeping agents running in the background is Linux-only for now.</p>
+      {:else if svc}
+        <label class="toggle">
+          <input type="checkbox" checked={svc.installed} disabled={svcBusy} onchange={toggleService} />
+          <span><b>Keep agents running when Switchboard is closed</b><br />
+            <span class="muted small">Runs this machine's daemon as a background service (systemd user service) instead of inside the app.</span></span>
+        </label>
+        <p class="muted small" aria-live="polite">
+          {svcBusy ? 'Switching…' : svc.installed ? (svc.active ? 'Background service: running' : 'Background service: installed but not running') : svc.embedded ? "Daemon: running inside the app" : 'Daemon: running elsewhere on this machine'}
+        </p>
+      {/if}
+      {#if svcError}<p class="error">{svcError}</p>{/if}
+      <div class="actions"><button class="btn ghost" onclick={() => (dialog = null)}>Close</button></div>
+    </div>
+  </div>
+{/if}
+
 {#if dialog === 'add'}
   <div class="backdrop" role="presentation" onclick={(e) => e.target === e.currentTarget && (dialog = null)}>
     <form class="dialog wide" aria-label="Add to Switchboard" onsubmit={add}>
@@ -377,6 +423,9 @@
   .brand { display: flex; gap: 8px; align-items: center; font-weight: 600; font-size: 14px; }
   .chips { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
   .chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--s0); border: 1px solid var(--s1); color: var(--text); }
+  .chip.icon { padding: 4px 8px; cursor: pointer; }
+  .toggle { display: flex !important; flex-direction: row !important; gap: 10px; align-items: flex-start; color: var(--text) !important; font-size: 13px !important; }
+  .toggle input { width: auto; margin-top: 3px; }
   .chip.dashed { background: none; border-style: dashed; border-color: var(--s2); color: var(--sub0); }
   .dot { width: 8px; height: 8px; border-radius: 50%; box-sizing: border-box; }
   .dot.on { background: var(--green); } .dot.off { border: 1.5px solid var(--o1); }
