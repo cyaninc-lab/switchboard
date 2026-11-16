@@ -31,12 +31,15 @@ fn sidecar() -> PathBuf {
 }
 
 /// The daemon must not inherit CLAUDE* vars (e.g. when the app is started from inside a Claude session).
+/// On Windows it also must not flash a console window: it's a console program started from a GUI app.
 fn clean(cmd: &mut Command) -> &mut Command {
     for (k, _) in std::env::vars() {
         if k.starts_with("CLAUDE") {
             cmd.env_remove(k);
         }
     }
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(cmd, 0x0800_0000); // CREATE_NO_WINDOW
     cmd
 }
 
@@ -169,6 +172,14 @@ fn stop_embedded(state: &Embedded) {
                 std::thread::sleep(Duration::from_millis(100));
             }
             let _ = Command::new("kill").args(["-KILL", "--", &group]).stderr(Stdio::null()).status();
+        }
+        #[cfg(windows)]
+        {
+            // the launcher and the real daemon: stop the whole tree
+            let mut tk = Command::new("taskkill");
+            tk.args(["/T", "/F", "/PID", &c.id().to_string()]).stdout(Stdio::null()).stderr(Stdio::null());
+            std::os::windows::process::CommandExt::creation_flags(&mut tk, 0x0800_0000);
+            let _ = tk.status();
         }
         let _ = c.kill();
         let _ = c.wait();

@@ -7,6 +7,7 @@ from . import __version__
 from .store import Store
 from .runner import Runner, scrub_env
 from .tty import Terminals
+from .procs import alive
 from . import logs
 from .logs import log
 
@@ -16,31 +17,13 @@ TTYS = web.AppKey("ttys", Terminals)
 CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
 
 
-def _alive(pid, start):
-    """True if pid is still the process that started at `start` (a reused pid doesn't count)."""
-    try:
-        with open(f"/proc/{pid}/stat") as f:
-            stat = f.read().rsplit(")", 1)[1].split()
-        return stat[0] != "Z" and stat[19] == str(start)
-    except FileNotFoundError:
-        if not os.path.exists("/proc/self"):  # ponytail: macOS/Windows get a bare pid check; port cs's GetProcessTimes for Windows if pid reuse bites
-            try:
-                os.kill(pid, 0) if os.name != "nt" else None
-                return os.name != "nt"
-            except OSError:
-                return False
-        return False
-    except (OSError, IndexError):
-        return False
-
-
 def open_in_terminal():
     """{session id} of sessions a live Claude Code process holds (CLI, IDE, Remote Control)."""
     live = set()
     for path in glob.glob(str(CLAUDE_DIR / "sessions" / "*.json")):
         try:
             d = json.loads(Path(path).read_text(encoding="utf-8"))
-            if _alive(d["pid"], d.get("procStart")):
+            if alive(d["pid"], d.get("procStart")):
                 live.add(d["sessionId"])
         except (OSError, ValueError, KeyError):
             continue

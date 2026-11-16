@@ -108,8 +108,8 @@ def test_tree_flow(env):
 
         # a live Claude Code process holding the session -> "terminal"
         (tmp / "claude" / "sessions").mkdir(parents=True)
-        with open(f"/proc/{os.getpid()}/stat") as f:
-            start = f.read().rsplit(")", 1)[1].split()[19]
+        from switchboard_daemon.procs import start_time
+        start = start_time(os.getpid())
         (tmp / "claude" / "sessions" / "1.json").write_text(json.dumps({"pid": os.getpid(), "procStart": start, "sessionId": "s2"}))
         (tmp / "claude" / "sessions" / "2.json").write_text(json.dumps({"pid": os.getpid(), "procStart": "1", "sessionId": "s1"}))  # stale pid reuse
         es = (await (await c.get("/v1/entries", headers=h)).json())["entries"]
@@ -125,7 +125,7 @@ def test_exit_with_alive_check():
     import subprocess
     from switchboard_daemon.__main__ import _alive
     assert _alive(os.getpid())
-    p = subprocess.Popen(["true"]); p.wait()
+    p = subprocess.Popen([sys.executable, "-c", "pass"]); p.wait()
     assert not _alive(p.pid)
 
 

@@ -10,6 +10,8 @@ OUT=../desktop/src-tauri/binaries
   --exclude-module claude_agent_sdk._bundled --collect-submodules switchboard_daemon \
   --distpath build/dist --workpath build/work --specpath build \
   sidecar_entry.py
+EXT=""
+case "$TRIPLE" in *windows*) EXT=".exe" ;; esac
 mkdir -p "$OUT"
-cp build/dist/switchboard-daemon "$OUT/switchboard-daemon-$TRIPLE"
+cp "build/dist/switchboard-daemon$EXT" "$OUT/switchboard-daemon-$TRIPLE$EXT"
 ls -la "$OUT"

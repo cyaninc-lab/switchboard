@@ -5,23 +5,7 @@ from .app import make_app
 from .store import Store, default_data_dir
 
 
-def _alive(pid):
-    if os.name == "nt":  # never os.kill(pid, 0) on Windows: it sends a real ctrl-C
-        import ctypes
-        k = ctypes.WinDLL("kernel32")
-        h = k.OpenProcess(0x101000, False, pid)  # QUERY_LIMITED_INFORMATION | SYNCHRONIZE
-        if not h:
-            return False
-        running = k.WaitForSingleObject(h, 0) == 258  # WAIT_TIMEOUT
-        k.CloseHandle(h)
-        return running
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
+from .procs import alive as _alive  # noqa: E402  (kept as _alive: tests import it)
 
 
 async def _watch(pid):

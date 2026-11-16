@@ -1,0 +1,44 @@
+name: windows
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e "./daemon[test]" pyinstaller
+      - name: daemon tests on Windows
+        run: python -m pytest -q daemon/tests
+      - name: freeze the daemon (sidecar)
+        run: PY=python daemon/build-sidecar.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - name: build the app
+        working-directory: desktop
+        run: npm ci && npx tauri build --no-bundle
+      - name: tauri-driver for driving the real window
+        run: cargo install tauri-driver --version 2.0.6 --locked
+      - name: collect
+        run: |
+          mkdir out
+          cp desktop/src-tauri/target/release/switchboard.exe out/
+          cp desktop/src-tauri/target/release/switchboard-daemon.exe out/
+          cp ~/.cargo/bin/tauri-driver.exe out/
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: switchboard-windows
+          path: out

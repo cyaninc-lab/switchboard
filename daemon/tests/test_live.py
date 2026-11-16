@@ -129,9 +129,16 @@ def test_terminal_pty(tmp_path, monkeypatch):
     async def t():
         client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
         runner = client.server.app[appmod.RUNNER]
-        script = tmp_path / "fake-claude"
-        script.write_text('#!/bin/sh\necho "args: $*"; stty size; read line; echo "got: $line"\n')
-        script.chmod(0o755)
+        body = tmp_path / "fake_claude.py"  # stands in for `claude`: shows its args and window size, echoes a line
+        body.write_text('import os, sys\nprint("args:", " ".join(sys.argv[1:]))\nsz = os.get_terminal_size()\n'
+                        'print(sz.lines, sz.columns)\nprint("got:", input())\n')
+        if os.name == "nt":
+            script = tmp_path / "fake-claude.cmd"
+            script.write_text(f'@"{sys.executable}" "{body}" %*\r\n')
+        else:
+            script = tmp_path / "fake-claude"
+            script.write_text(f'#!{sys.executable}\n' + body.read_text())
+            script.chmod(0o755)
         runner.cli_path = str(script)
         await ws.send_json({"type": "terminal_open", "entry": e["id"], "cols": 120, "rows": 40})
         await until(ws, lambda m: m["type"] == "terminal_opened")
@@ -281,4 +288,5 @@ def test_account_cli(tmp_path):
     assert "added account work" in out.stdout, out.stderr
     listed = subprocess.run(exe + ["account", "list"], capture_output=True, text=True, cwd=cwd).stdout
     assert "work" in listed and "sk-ant" not in listed
-    assert oct(os.stat(tmp_path / "switchboard.db").st_mode & 0o777) == "0o600"
+    if os.name != "nt":  # Windows has no Unix mode bits; the file sits in the user's own profile
+        assert oct(os.stat(tmp_path / "switchboard.db").st_mode & 0o777) == "0o600"
