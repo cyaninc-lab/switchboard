@@ -7,6 +7,8 @@ from . import __version__
 from .store import Store
 from .runner import Runner, scrub_env
 from .tty import Terminals
+from . import logs
+from .logs import log
 
 STORE, NAME = web.AppKey("store", Store), web.AppKey("name", str)
 RUNNER, SOCKETS, REAPER = web.AppKey("runner", Runner), web.AppKey("sockets", set), web.AppKey("reaper", asyncio.Task)
@@ -109,6 +111,7 @@ async def auth(request, handler):
 async def pair(request):
     body = await request.json()
     token = request.app[STORE].redeem(body.get("code"), body.get("client_name"))
+    log.info("pairing %s: %s", "accepted" if token else "rejected", body.get("client_name"))
     if not token:
         raise web.HTTPForbidden(text=json.dumps({"code": "bad_code"}), content_type="application/json")
     return web.json_response({"token": token, "machine": request.app[NAME]})
@@ -179,6 +182,10 @@ async def remove_entry(request):
     return web.Response(status=204)
 
 
+async def get_logs(request):
+    return web.json_response({"log": logs.tail(int(request.query.get("lines", 300)))})
+
+
 async def list_accounts(request):
     return web.json_response({"accounts": request.app[STORE].accounts()})
 
@@ -246,6 +253,7 @@ async def ws_handler(request):
         await ws.close(code=4001, message=b"unauthorized")
         return ws
     request.app[SOCKETS].add(ws)
+    log.info("client connected: %s", client)
     await ws.send_json({"type": "hello", "machine": request.app[NAME]})
     try:
         async for msg in ws:
@@ -293,6 +301,7 @@ async def ws_handler(request):
                 elif t == "permission_reply":
                     await runner.answer(m["request_id"], m.get("allow"), m.get("message"), by=client)
             except Exception as e:
+                log.warning("ws %s failed: %s: %s", m.get("type") if isinstance(m, dict) else "?", type(e).__name__, logs.scrub(str(e)))
                 await ws.send_json({"type": "error", "entry": m.get("entry") if isinstance(m, dict) else None,
                                     "code": type(e).__name__, "message": str(e)})
     finally:
@@ -373,7 +382,7 @@ def make_app(store: Store, name=None):
         web.post("/v1/pair", pair), web.get("/v1/machine", machine), web.get("/v1/sessions", sessions),
         web.get("/v1/entries", list_entries), web.post("/v1/entries", add_entry),
         web.patch("/v1/entries/{id}", update_entry), web.delete("/v1/entries/{id}", remove_entry),
-        web.get("/v1/entries/{id}/messages", messages), web.get("/v1/ws", ws_handler), web.get("/v1/commands", commands), web.get("/v1/folders", folders), web.get("/v1/models", models),
+        web.get("/v1/entries/{id}/messages", messages), web.get("/v1/ws", ws_handler), web.get("/v1/commands", commands), web.get("/v1/folders", folders), web.get("/v1/models", models), web.get("/v1/logs", get_logs),
         web.get("/v1/accounts", list_accounts), web.post("/v1/accounts", add_account), web.delete("/v1/accounts/{name}", remove_account),
     ])
     return app

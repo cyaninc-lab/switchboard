@@ -55,6 +55,8 @@ def main():
 
     store = Store(os.path.join(a.data, "switchboard.db"))
     if a.cmd == "serve":
+        from .logs import setup as setup_logs
+        setup_logs(a.data)
         if a.host not in ("127.0.0.1", "localhost", "::1"):
             # ponytail: TLS lands before any non-localhost use is recommended; until then, a private network only
             print(f"warning: listening on {a.host} without TLS; use a private network (LAN/VPN) only")

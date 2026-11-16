@@ -3,6 +3,7 @@
 Events (docs/protocol.md): state, delta, message, permission_request, permission_resolved, error.
 """
 import asyncio, dataclasses, os, shutil, time, uuid
+from .logs import log, scrub
 
 IDLE_CLOSE = int(os.environ.get("SWITCHBOARD_IDLE_CLOSE", 600))
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
@@ -103,6 +104,7 @@ class Runner:
             **({"cli_path": self.cli_path} if self.cli_path else {}))
         client = self.sdk.ClaudeSDKClient(options=opts)
         await client.connect()
+        log.info("session %s live (entry %s, model %s, account %s)", entry["session_id"], entry["id"], entry.get("model") or "default", entry.get("account") or "machine")
         lv = holder["lv"] = self.live[entry["id"]] = Live(entry["id"], client)
         return lv
 
@@ -153,12 +155,14 @@ class Runner:
                         await self.broadcast({"type": "notice", "entry": lv.entry_id, "text": "Conversation compacted"})
                 elif type(m).__name__ == "ResultMessage":
                     if m.is_error:
+                        log.warning("entry %s turn ended with an error: %s", lv.entry_id, scrub(str(m.result))[:300])
                         await self.broadcast({"type": "error", "entry": lv.entry_id, "code": "result_error", "message": str(m.result)[:500]})
                     elif m.result and not lv.said:  # e.g. /usage, /context: output arrives only as the result
                         await self.broadcast({"type": "message", "entry": lv.entry_id, "message": {
                             "type": "assistant", "uuid": uuid.uuid4().hex,
                             "message": {"role": "assistant", "content": [{"type": "text", "text": str(m.result)}]}}})
         except Exception as e:  # a dead CLI process must not take the daemon down
+            log.exception("session for entry %s failed", lv.entry_id)
             await self.broadcast({"type": "error", "entry": lv.entry_id, "code": "session_error", "message": str(e)[:500]})
         finally:
             lv.working = False
@@ -240,6 +244,7 @@ class Runner:
         lv = self.live.pop(entry_id, None)
         if not lv:
             return
+        log.info("session for entry %s closed", entry_id)
         for fut in lv.pending.values():
             if not fut.done():
                 fut.set_result((False, "Session stopped"))

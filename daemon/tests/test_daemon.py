@@ -127,3 +127,14 @@ def test_exit_with_alive_check():
     assert _alive(os.getpid())
     p = subprocess.Popen(["true"]); p.wait()
     assert not _alive(p.pid)
+
+
+def test_log_scrub_and_tail(tmp_path):
+    from switchboard_daemon import logs
+    assert "sk-ant-[redacted]" in logs.scrub("token sk-ant-oat01-abcdefghijklmnop leaked")
+    assert "abcdefghijklmnopqrstuv" not in logs.scrub("Authorization: Bearer abcdefghijklmnopqrstuv")
+    assert "hunter2pass" not in logs.scrub('{"password": "hunter2pass"}')
+    logs.setup(tmp_path)
+    logs.log.info("hello with sk-ant-api03-SECRETSECRET1234")
+    t = logs.tail()
+    assert "hello with sk-ant-[redacted]" in t and "SECRETSECRET" not in t

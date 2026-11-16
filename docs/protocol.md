@@ -22,6 +22,7 @@ Tauri-specific code. Everything is under `/v1`; breaking changes get `/v2`.
 | `GET /v1/entries` | tree entries stored here: id, session_id, name, group, pinned, account, mode, state, watch ids |
 | `POST /v1/entries` | add: `{session_id}` (existing) or `{new: {cwd}}` (a new session: the daemon picks its id up front and starts it with that id on the first message or terminal), plus name, group, account?, mode? |
 | `GET /v1/accounts` · `POST /v1/accounts` · `DELETE /v1/accounts/{name}` | extra Claude logins on this machine (`{name, token, kind: oauth|api_key}`); tokens are stored by the daemon and never returned |
+| `GET /v1/logs?lines=` | the daemon's recent log, secrets scrubbed (for bug reports) |
 | `GET /v1/models` | the models this machine's Claude Code offers (value, displayName, description, effort levels) |
 | `GET /v1/folders` | folder suggestions for a new session (where sessions have run, newest first) |
 | `PATCH /v1/entries/{id}` | rename, regroup, pin, change account or default mode |

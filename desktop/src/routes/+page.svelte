@@ -1,6 +1,7 @@
 <script lang="ts">
   import * as api from '$lib/api';
-  import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell } from '$lib/shell';
+  import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell, openExternal, appVersion } from '$lib/shell';
+  import { captureAppLog, buildReport, issueUrl } from '$lib/report';
   import type { ServiceStatus } from '$lib/shell';
   import TerminalView from '$lib/Terminal.svelte';
   import { md } from '$lib/markdown';
@@ -18,7 +19,26 @@
   let loadingHistory = $state(false);
   let openSeq = 0;
   let filter = $state('');
-  let dialog = $state<'connect' | 'add' | 'settings' | null>(null);
+  let dialog = $state<'connect' | 'add' | 'settings' | 'report' | null>(null);
+  if (typeof window !== 'undefined') captureAppLog();
+
+  // report a bug
+  let rDesc = $state('');
+  let rLogs = $state(true);
+  let rBusy = $state(false);
+  let rDone = $state('');
+  let rReport = $state('');
+  async function sendReport(ev: Event) {
+    ev.preventDefault();
+    rBusy = true; rDone = '';
+    rReport = await buildReport(rDesc, machines, rLogs, await appVersion());
+    let copied = true;
+    try { await navigator.clipboard.writeText(rReport); } catch { copied = false; }
+    await openExternal(issueUrl(rDesc));
+    rDone = copied ? 'Report copied. A new GitHub issue opened in your browser: paste (Ctrl+V) and submit.'
+                   : "Couldn't copy automatically: select the report below, copy it, and paste it into the issue that opened.";
+    rBusy = false;
+  }
 
   // settings: background service
   let svc = $state<ServiceStatus | null>(null);
@@ -358,6 +378,9 @@
           <span class="muted">{tree[m.url]?.error ? 'offline' : 'online'}</span></span>
       {/each}
       <button class="chip dashed" onclick={() => (dialog = 'connect')}>+ Connect a machine</button>
+      <button class="chip icon" aria-label="Report a bug" title="Report a bug" onclick={() => { dialog = 'report'; rDone = ''; rReport = ''; }}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="8" y="6" width="8" height="14" rx="4" /><path d="M19 7l-3 2M5 7l3 2M19 19l-3-2M5 19l3-2M20 13h-4M4 13h4M10 4l1 2M14 4l-1 2" /></svg>
+      </button>
       <button class="chip icon" aria-label="Settings" title="Settings" onclick={openSettings}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></svg>
       </button>
@@ -515,6 +538,24 @@
       <label>One-time code<input bind:value={cCode} required autocomplete="off" placeholder="e.g. K7QM2XRA" use:focusOnMount /></label>
       {#if cError}<p class="error">{cError}</p>{/if}
       <div class="actions"><button type="button" class="btn ghost" onclick={() => (dialog = null)}>Cancel</button><button class="btn primary">Connect</button></div>
+    </form>
+  </div>
+{/if}
+
+{#if dialog === 'report'}
+  <div class="backdrop" role="presentation" onclick={(e) => e.target === e.currentTarget && (dialog = null)}>
+    <form class="dialog" aria-label="Report a bug" onsubmit={sendReport}>
+      <h2>Report a bug</h2>
+      <label>What happened, and what did you expect?
+        <textarea bind:value={rDesc} required rows="6" placeholder="First line becomes the title"></textarea>
+      </label>
+      <label class="inline"><input type="checkbox" bind:checked={rLogs} /> Include recent app and daemon logs (tokens are removed)</label>
+      {#if rDone}<p class="muted" role="status">{rDone}</p>{/if}
+      {#if rReport}<details><summary class="muted small">Report</summary><textarea class="mono small" readonly rows="10">{rReport}</textarea></details>{/if}
+      <div class="actions">
+        <button type="button" class="btn ghost" onclick={() => (dialog = null)}>Close</button>
+        <button class="btn primary" disabled={rBusy || !rDesc.trim()}>{rBusy ? 'Collecting…' : 'Copy report & open GitHub'}</button>
+      </div>
     </form>
   </div>
 {/if}
@@ -737,6 +778,7 @@
   .tabs button.on { border-bottom-color: var(--mauve); color: var(--text); font-weight: 600; }
   .dialog select { background: var(--base); border: 1px solid var(--s1); border-radius: 8px; padding: 8px 10px; color: var(--text); font: inherit; appearance: none; }
   .sub { margin: 8px 0 0; font-size: 13px; }
+  .dialog textarea { width: 100%; box-sizing: border-box; background: var(--base); border: 1px solid var(--s1); border-radius: 8px; padding: 8px 10px; color: var(--text); font: inherit; resize: vertical; }
   .acclist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
   .acclist li { display: grid; grid-template-columns: 120px 1fr auto; gap: 10px; align-items: center; padding: 6px 10px; background: var(--mantle); border-radius: 8px; }
   .accform { display: flex; flex-direction: column; gap: 8px; }

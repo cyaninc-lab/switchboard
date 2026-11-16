@@ -23,3 +23,18 @@ async function call<T>(cmd: string): Promise<T> {
 export const serviceStatus = () => (inShell() ? call<ServiceStatus>('service_status') : Promise.resolve(null));
 export const serviceInstall = () => call<void>('service_install');
 export const serviceUninstall = () => call<void>('service_uninstall');
+
+/** Open a URL in the user's browser (the system one in the desktop app). */
+export async function openExternal(url: string) {
+  if (inShell()) {
+    const { openUrl } = await import('@tauri-apps/plugin-opener');
+    await openUrl(url);
+  } else {
+    window.open(url, '_blank', 'noopener');
+  }
+}
+export async function appVersion() {
+  if (!inShell()) return 'dev (browser)';
+  const { getVersion } = await import('@tauri-apps/api/app');
+  return getVersion();
+}
