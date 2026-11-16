@@ -25,3 +25,16 @@ jobs:
           node-version: "24"
       - run: npm ci
       - run: npm run check
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ../daemon
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+        env:
+          SB_DAEMON: switchboard-daemon
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-screenshots
+          path: desktop/e2e/.results

@@ -15,3 +15,10 @@ Linux build deps: `libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev l
 
 Phase 1: connect machines (one-time code), the tree (add from a machine's sessions, pin, remove),
 read-only history. Tokens sit in localStorage for now; they move to the OS keychain before release.
+
+## Testing without a screen
+
+`npm run test:e2e` runs the real UI in headless Chromium against a daemon in demo mode
+(`switchboard-daemon serve --demo`: canned sessions, no Claude usage, nothing real touched).
+Screenshots land in `e2e/.results/` (CI uploads them as the `ui-screenshots` artifact).
+Later, the same flows can drive the actual Tauri window through `tauri-driver` on a virtual display (Xvfb).

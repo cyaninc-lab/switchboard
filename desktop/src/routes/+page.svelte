@@ -2,6 +2,9 @@
   import * as api from '$lib/api';
   import type { Machine, Entry, Session, HistoryMessage } from '$lib/api';
 
+  // the HTML autofocus attribute only works on page load, not on elements Svelte adds later
+  const focusOnMount = (node: HTMLElement) => { node.focus(); };
+
   // ---- state ----
   let machines = $state<Machine[]>(api.loadMachines());
   let tree = $state<Record<string, { entries: Entry[]; error?: string }>>({});
@@ -215,8 +218,7 @@
       <h2>Connect a machine</h2>
       <p class="muted">On that machine run <code>switchboard-daemon pair</code> and enter the code it prints.</p>
       <label>Daemon address<input bind:value={cUrl} required /></label>
-      <label>One-time code<!-- svelte-ignore a11y_autofocus -->
-      <input bind:value={cCode} required autocomplete="off" placeholder="e.g. K7QM2XRA" autofocus /></label>
+      <label>One-time code<input bind:value={cCode} required autocomplete="off" placeholder="e.g. K7QM2XRA" use:focusOnMount /></label>
       {#if cError}<p class="error">{cError}</p>{/if}
       <div class="actions"><button type="button" class="btn ghost" onclick={() => (dialog = null)}>Cancel</button><button class="btn primary">Connect</button></div>
     </form>

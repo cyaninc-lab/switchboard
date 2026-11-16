@@ -13,6 +13,7 @@ def main():
     s.add_argument("--host", default="127.0.0.1", help="listen address (localhost by default)")
     s.add_argument("--port", type=int, default=7878)
     s.add_argument("--name", help="machine name shown in clients (default: hostname)")
+    s.add_argument("--demo", action="store_true", help="serve canned demo sessions instead of this machine's (UI tests, screenshots)")
     sub.add_parser("pair", help="print a one-time pairing code (10 minutes, single use)")
     sub.add_parser("clients", help="list paired clients")
     r = sub.add_parser("revoke", help="revoke a client by the start of its token hash")
@@ -24,7 +25,11 @@ def main():
         if a.host not in ("127.0.0.1", "localhost", "::1"):
             # ponytail: TLS lands before any non-localhost use is recommended; until then, a private network only
             print(f"warning: listening on {a.host} without TLS; use a private network (LAN/VPN) only")
-        web.run_app(make_app(store, a.name), host=a.host, port=a.port)
+        if a.demo:
+            from . import app as appmod, demo
+            appmod.sdk = demo  # ponytail: swaps only the session readers the API uses; phase 2 running sessions will need a demo runner too
+            appmod.open_in_terminal = lambda: {"demo-2"}
+        web.run_app(make_app(store, a.name or ("demo" if a.demo else None)), host=a.host, port=a.port)
     elif a.cmd == "pair":
         print(store.new_pair_code())
     elif a.cmd == "clients":
