@@ -27,7 +27,7 @@ SESSIONS = [Info("s1", "Deploy rolled back", 3, "/w/shorts-app", git_branch="fix
 def env(tmp_path, monkeypatch):
     monkeypatch.setattr(appmod.sdk, "list_sessions", lambda: list(SESSIONS))
     monkeypatch.setattr(appmod.sdk, "get_session_info", lambda sid: next((s for s in SESSIONS if s.session_id == sid), None))
-    monkeypatch.setattr(appmod.sdk, "get_session_messages", lambda sid, limit, offset: [{"type": "user", "uuid": "u1", "message": "hi"}])
+    monkeypatch.setattr(appmod.sdk, "get_session_messages", lambda sid, limit=None, offset=0: [{"type": "user", "uuid": "u1", "message": "hi"}])
     monkeypatch.setattr(appmod, "CLAUDE_DIR", tmp_path / "claude")
     store = Store(str(tmp_path / "sb.db"))
     return store, tmp_path
@@ -138,3 +138,18 @@ def test_log_scrub_and_tail(tmp_path):
     logs.log.info("hello with sk-ant-api03-SECRETSECRET1234")
     t = logs.tail()
     assert "hello with sk-ant-[redacted]" in t and "SECRETSECRET" not in t
+
+
+def test_history_is_the_latest_messages(env, monkeypatch):
+    """A long session opens at its end, not its beginning (the "rolled back" view after a restart)."""
+    store, _ = env
+    many = [{"type": "user", "uuid": f"u{i}", "message": str(i)} for i in range(1000)]
+    monkeypatch.setattr(appmod.sdk, "get_session_messages", lambda sid, limit=None, offset=0: many)
+    e = store.add_entry("s2", "long", "g")
+
+    async def t(c):
+        h = await paired(c, store)
+        d = await (await c.get(f"/v1/entries/{e['id']}/messages?limit=400", headers=h)).json()
+        assert d["total"] == 1000 and len(d["messages"]) == 400
+        assert d["messages"][0]["uuid"] == "u600" and d["messages"][-1]["uuid"] == "u999"
+    run(store, t)

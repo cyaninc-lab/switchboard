@@ -327,11 +327,14 @@ async def messages(request):
     e = request.app[STORE].entry(request.match_info["id"])
     if not e:
         raise web.HTTPNotFound()
-    limit, offset = int(request.query.get("limit", 200)), int(request.query.get("offset", 0))
+    limit = max(1, int(request.query.get("limit", 200)))
     if e.get("cwd") and await _off(sdk.get_session_info, e["session_id"]) is None:
-        return web.json_response({"messages": []})  # new, nothing said yet
-    msgs = await _off(sdk.get_session_messages, e["session_id"], limit=limit, offset=offset)
-    return web.json_response({"messages": [_plain(m) for m in msgs]}, dumps=lambda o: json.dumps(o, default=str))
+        return web.json_response({"messages": [], "total": 0})  # new, nothing said yet
+    # the most recent `limit` messages: the SDK's offset counts from the start, which showed long sessions only their
+    # beginning (it parses the whole file either way, so reading everything costs nothing extra)
+    msgs = await _off(sdk.get_session_messages, e["session_id"])
+    return web.json_response({"messages": [_plain(m) for m in msgs[-limit:]], "total": len(msgs)},
+                             dumps=lambda o: json.dumps(o, default=str))
 
 
 async def ws_handler(request):

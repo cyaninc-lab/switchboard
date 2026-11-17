@@ -1,3 +1,4 @@
-## Switchboard 0.1.3
+## Switchboard 0.1.4
 
-- **Fix: running sessions showed "open in terminal" after an update.** When the app closed without its usual shutdown (updating, a crash, being killed), the sessions' Claude processes kept running on their own and held on to their sessions. The background helper now takes them with it. (The update *to* 0.1.3 still runs the old shutdown code, so it's from the next update on.)
+- **Fix: long sessions opened at their beginning.** Opening a session (or the app restarting, e.g. after an update) showed only its first few hundred messages and looked as if it had rolled back and stopped updating. It now opens at the latest messages.
+- (from 0.1.3) Sessions' Claude processes no longer outlive the app after an update or crash.
