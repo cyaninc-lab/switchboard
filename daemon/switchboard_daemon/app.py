@@ -8,12 +8,15 @@ from .store import Store
 from .runner import Runner, scrub_env
 from .tty import Terminals
 from .procs import alive
+from .watches import Watches, KINDS, ACTIONS
+from .runner import MODES
 from . import logs
 from .logs import log
 
 STORE, NAME = web.AppKey("store", Store), web.AppKey("name", str)
 RUNNER, SOCKETS, REAPER = web.AppKey("runner", Runner), web.AppKey("sockets", set), web.AppKey("reaper", asyncio.Task)
 TTYS = web.AppKey("ttys", Terminals)
+WATCHES, WATCH_TASK = web.AppKey("watches", Watches), web.AppKey("watch_task", asyncio.Task)
 CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
 
 
@@ -162,6 +165,89 @@ async def remove_entry(request):
     await request.app[RUNNER].stop(request.match_info["id"])
     if not request.app[STORE].remove_entry(request.match_info["id"]):
         raise web.HTTPNotFound()
+    return web.Response(status=204)
+
+
+def _bad(code):
+    return web.HTTPBadRequest(text=json.dumps({"code": code}), content_type="application/json")
+
+
+def _check_watch(body, store, partial=False):
+    """Validate a watch definition (all of it on create; what's present on update)."""
+    if not partial or "name" in body:
+        if not str(body.get("name", "")).strip():
+            raise _bad("name_required")
+    if not partial or "kind" in body or "config" in body:
+        kind, cfg = body.get("kind"), body.get("config") or {}
+        if kind not in KINDS:
+            raise _bad("bad_kind")
+        if kind == "schedule" and not (cfg.get("every_minutes") or cfg.get("daily_at")):
+            raise _bad("schedule_needs_every_minutes_or_daily_at")
+        if cfg.get("daily_at"):
+            hh, _, mm = str(cfg["daily_at"]).partition(":")
+            if not (hh.isdigit() and mm.isdigit() and int(hh) < 24 and int(mm) < 60):
+                raise _bad("daily_at_must_be_HH:MM")
+        if kind == "command" and not str(cfg.get("command", "")).strip():
+            raise _bad("command_required")
+        if kind == "http" and not str(cfg.get("url", "")).startswith(("http://", "https://")):
+            raise _bad("url_must_be_http")
+        if kind == "github" and str(cfg.get("repo", "")).count("/") != 1:
+            raise _bad("repo_must_be_owner/name")
+    if "action" in body and body["action"] not in ACTIONS:
+        raise _bad("bad_action")
+    if body.get("action") == "wake" and not (body.get("entry_id") and store.entry(body["entry_id"])):
+        raise _bad("wake_needs_an_entry")
+    if body.get("mode") and body["mode"] not in MODES:
+        raise _bad("bad_mode")
+
+
+async def list_watches(request):
+    return web.json_response({"watches": request.app[STORE].watches()})
+
+
+async def add_watch(request):
+    body, store = await request.json(), request.app[STORE]
+    _check_watch(body, store)
+    w = store.add_watch(body["name"].strip(), body["kind"], body.get("config") or {}, body.get("action", "notify"),
+                        body.get("entry_id"), body.get("instructions"), body.get("mode"))
+    return web.json_response(w, status=201)
+
+
+async def update_watch(request):
+    body, store, wid = await request.json(), request.app[STORE], request.match_info["id"]
+    w = store.watch(wid)
+    if not w:
+        raise web.HTTPNotFound()
+    _check_watch({**w, **body}, store, partial=True)
+    if "config" in body or "kind" in body:
+        body["state"] = None  # a changed check starts from a fresh baseline
+        request.app[WATCHES].due.pop(wid, None)
+    return web.json_response(store.update_watch(wid, **body))
+
+
+async def remove_watch(request):
+    if not request.app[STORE].remove_watch(request.match_info["id"]):
+        raise web.HTTPNotFound()
+    return web.Response(status=204)
+
+
+async def test_watch(request):
+    """Run the check now and fire it even if nothing changed: to try a watch out."""
+    w = request.app[STORE].watch(request.match_info["id"])
+    if not w:
+        raise web.HTTPNotFound()
+    fired = await request.app[WATCHES].check_one(w, force_fire=True)
+    return web.json_response({"fired": fired})
+
+
+async def list_inbox(request):
+    return web.json_response({"items": request.app[STORE].inbox(int(request.query.get("limit", 100)))})
+
+
+async def read_inbox(request):
+    iid = request.match_info.get("id")
+    request.app[STORE].mark_read(int(iid) if iid else None)
+    await _broadcast(request.app, {"type": "inbox_read", "id": int(iid) if iid else None})
     return web.Response(status=204)
 
 
@@ -346,13 +432,16 @@ def make_app(store: Store, name=None):
     app[SOCKETS] = set()
     app[RUNNER] = Runner(store, sdk, lambda ev: _broadcast(app, ev))
     app[TTYS] = Terminals(lambda ev: _broadcast(app, ev))
+    app[WATCHES] = Watches(store, app[RUNNER], lambda ev: _broadcast(app, ev))
 
     async def start(app):
         scrub_env()
         app[REAPER] = asyncio.get_running_loop().create_task(app[RUNNER].reap_idle())
+        app[WATCH_TASK] = asyncio.get_running_loop().create_task(app[WATCHES].run())
 
     async def stop(app):
         app[REAPER].cancel()
+        app[WATCH_TASK].cancel()
         await app[TTYS].close_all()
         await app[RUNNER].close_all()
     async def close_sockets(app):  # open WebSockets would otherwise hold a graceful shutdown for its full timeout
@@ -366,6 +455,9 @@ def make_app(store: Store, name=None):
         web.get("/v1/entries", list_entries), web.post("/v1/entries", add_entry),
         web.patch("/v1/entries/{id}", update_entry), web.delete("/v1/entries/{id}", remove_entry),
         web.get("/v1/entries/{id}/messages", messages), web.get("/v1/ws", ws_handler), web.get("/v1/commands", commands), web.get("/v1/folders", folders), web.get("/v1/models", models), web.get("/v1/logs", get_logs),
+        web.get("/v1/watches", list_watches), web.post("/v1/watches", add_watch), web.patch("/v1/watches/{id}", update_watch),
+        web.delete("/v1/watches/{id}", remove_watch), web.post("/v1/watches/{id}/test", test_watch),
+        web.get("/v1/inbox", list_inbox), web.post("/v1/inbox/read", read_inbox), web.post("/v1/inbox/{id}/read", read_inbox),
         web.get("/v1/accounts", list_accounts), web.post("/v1/accounts", add_account), web.delete("/v1/accounts/{name}", remove_account),
     ])
     return app
