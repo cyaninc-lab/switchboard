@@ -1,4 +1,4 @@
-## Switchboard 0.1.5
+## Switchboard 0.1.6
 
-- **Fix: replies one message behind.** When Claude replied on its own (for example when a background command finished), that reply wasn't shown, and every message after it got the previous message's answer. Switchboard now listens all the time, so replies Claude starts by itself appear as they happen.
-- (from 0.1.4) Long sessions open at their latest messages.
+- **Background work keeps its session open.** Switchboard closes sessions after 10 quiet minutes (they reopen on your next message). A session with a background subagent or command still running is no longer closed, since closing it would stop that work.
+- (from 0.1.5) Replies Claude starts on its own appear as they happen; fixes replies arriving one message behind.

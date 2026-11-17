@@ -61,6 +61,7 @@ class Live:
     last_usage: dict = None  # usage of the latest main-thread API call: how full the context is now
     cost: float = 0.0  # API-equivalent cost of this live session so far
     restart: bool = False  # close after this turn (a setting that only applies at start changed)
+    tasks: set = dataclasses.field(default_factory=set)  # background subagents/commands still running: never reap then
 
 
 class Runner:
@@ -158,7 +159,15 @@ class Runner:
         try:
             async for m in lv.client.receive_messages():
                 lv.last_active = time.time()
-                if not lv.working:  # a turn Claude started on its own
+                sub, data = getattr(m, "subtype", None), getattr(m, "data", None) or {}
+                if sub in ("task_started", "task_notification", "task_updated") and data.get("task_id"):
+                    status = (data.get("patch") or {}).get("status") if sub == "task_updated" else None
+                    if sub == "task_started":
+                        lv.tasks.add(data["task_id"])
+                    elif sub == "task_notification" or status in ("completed", "failed", "stopped", "killed"):
+                        lv.tasks.discard(data["task_id"])
+                    continue
+                if not lv.working and type(m).__name__ in ("AssistantMessage", "UserMessage", "StreamEvent"):  # a turn Claude started on its own
                     lv.working, lv.said, lv.origin, lv.turn_text = True, False, None, []
                     await self._emit_state(lv.entry_id)
                 if type(m).__name__ == "StreamEvent":
@@ -350,7 +359,8 @@ class Runner:
             await asyncio.sleep(min(30, IDLE_CLOSE))
             now = time.time()
             for eid, lv in list(self.live.items()):
-                if not lv.working and not lv.pending and now - lv.last_active > IDLE_CLOSE:
+                if not lv.working and not lv.pending and not lv.tasks and now - lv.last_active > IDLE_CLOSE:
+                    # ponytail: a background shell that never ends (a dev server) keeps its session open until stopped by hand
                     await self.stop(eid)
 
     async def close_all(self):

@@ -392,3 +392,27 @@ def test_turns_claude_takes_on_its_own(tmp_path, monkeypatch):
         assert "Done: next question" in str(m)
         await client.close()
     asyncio.run(t())
+
+
+def test_background_work_keeps_the_session_open(tmp_path, monkeypatch):
+    """Idle-close skips a session whose background subagent/command is still running (closing would kill it)."""
+    async def t():
+        monkeypatch.setenv("SB_DEMO_BG_SECONDS", "3")
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        runner, eid = client.server.app[appmod.RUNNER], e["id"]
+        monkeypatch.setattr("switchboard_daemon.runner.IDLE_CLOSE", 1)
+        await ws.send_json({"type": "send", "entry": eid, "text": "start the background build"})
+        await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        assert runner.live[eid].tasks == {"bg1"}
+        runner.live[eid].last_active -= 10_000
+        reaper = asyncio.get_running_loop().create_task(runner.reap_idle())
+        await asyncio.sleep(1.5)
+        assert eid in runner.live  # not closed while the task runs
+        await until(ws, lambda m: m["type"] == "message" and "Done: background task finished" in str(m))
+        await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        assert runner.live[eid].tasks == set()
+        runner.live[eid].last_active -= 10_000
+        await until(ws, lambda m: m["type"] == "state" and m["state"] == "stopped")  # then it closes as usual
+        reaper.cancel()
+        await client.close()
+    asyncio.run(t())

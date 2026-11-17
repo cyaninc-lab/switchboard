@@ -1,6 +1,6 @@
 """Demo mode (`serve --demo`): canned sessions and history instead of this machine's real ones.
 For UI tests (repeatable, no Claude usage, nothing real touched), screenshots and trying the app."""
-import dataclasses, time
+import dataclasses, os, time
 
 __version__ = "demo"
 
@@ -260,11 +260,15 @@ class ClaudeSDKClient:
             yield AssistantMessage([ToolUseBlock("t1", "Bash", {"command": "git status"})])
             yield UserMessage([ToolResultBlock("t1", "On branch main, nothing to commit" if ok else "Permission denied", not ok)])
         if "background" in text.lower():  # a background command: Claude reports back later, unprompted
+            yield SystemMessage("task_started", {"task_id": "bg1", "task_type": "local_bash"})
+
             async def later():
-                await asyncio.sleep(1)
+                await asyncio.sleep(float(os.environ.get("SB_DEMO_BG_SECONDS", 1)))
                 self.prompt = "background task finished"
                 self.go.set()
             asyncio.get_running_loop().create_task(later())
+        if text == "background task finished":
+            yield SystemMessage("task_notification", {"task_id": "bg1", "status": "completed"})
         if "slow" in text.lower():
             for _ in range(300):
                 if self.interrupted:
