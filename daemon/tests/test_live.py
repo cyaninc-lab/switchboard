@@ -416,3 +416,34 @@ def test_background_work_keeps_the_session_open(tmp_path, monkeypatch):
         reaper.cancel()
         await client.close()
     asyncio.run(t())
+
+
+def test_subagent_tree_from_sidecars(tmp_path, monkeypatch):
+    """Nested subagents come from Claude Code's meta sidecars, at any depth; their messages are served read-only."""
+    import json
+    d = tmp_path / "claude" / "projects" / "-p" / "sess-1" / "subagents"
+    (d / "workflows" / "r1").mkdir(parents=True)
+    for folder, aid, meta in [(d, "aa", {"description": "Top", "agentType": "general-purpose", "toolUseId": "tu1", "finished": True}),
+                              (d, "bb", {"description": "Child", "agentType": "Explore", "toolUseId": "tu2", "parentAgentId": "aa"}),
+                              (d / "workflows" / "r1", "cc", {"description": "Grandchild", "toolUseId": "tu3", "parentAgentId": "bb"})]:
+        (folder / f"agent-{aid}.meta.json").write_text(json.dumps(meta))
+        (folder / f"agent-{aid}.jsonl").write_text("")
+    (d / "agent-broken.meta.json").write_text("{not json")
+    monkeypatch.setattr(appmod, "CLAUDE_DIR", tmp_path / "claude")
+    t = {a["id"]: a for a in appmod.subagent_tree("sess-1")}
+    assert set(t) == {"aa", "bb", "cc"}
+    assert t["aa"]["parent"] is None and t["aa"]["finished"] and t["bb"]["parent"] == "aa" and t["cc"]["parent"] == "bb"
+    assert t["cc"]["description"] == "Grandchild" and not t["cc"]["finished"]
+    assert appmod.subagent_tree("no-such-session") == []
+
+    async def t2():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        monkeypatch.setattr(appmod, "subagent_tree", demo.subagent_tree)
+        entries = (await (await client.get("/v1/entries", headers=h)).json())["entries"]
+        assert sorted(a["id"] for a in next(x for x in entries if x["id"] == e["id"])["subagents"]) == ["a1", "a2", "a3", "a4"]
+        m = await (await client.get(f"/v1/entries/{e['id']}/subagents/a2/messages", headers=h)).json()
+        assert m["messages"][0]["message"]["content"] == "Read the feed handler"
+        assert all(x["parent_tool_use_id"] is None for x in m["messages"])  # its own conversation in the view
+        assert any("Check which videos lack dash_url" in json.dumps(x) for x in m["messages"])  # its nested Agent call
+        await client.close()
+    asyncio.run(t2())

@@ -35,6 +35,23 @@ def open_in_terminal():
     return live
 
 
+def subagent_tree(session_id):
+    """The session's subagents, from Claude Code's sidecars (projects/<p>/<session>/subagents/**/agent-<id>.meta.json).
+    parent is the subagent that spawned it (nested), None for ones the session spawned itself."""
+    out = []
+    for meta in glob.glob(str(CLAUDE_DIR / "projects" / "*" / session_id / "subagents" / "**" / "agent-*.meta.json"), recursive=True):
+        try:
+            d = json.loads(Path(meta).read_text(encoding="utf-8"))
+            log_file = Path(meta[: -len(".meta.json")] + ".jsonl")
+            updated = log_file.stat().st_mtime
+        except (OSError, ValueError):
+            continue
+        out.append({"id": Path(meta).name[len("agent-"): -len(".meta.json")], "description": d.get("description") or d.get("name") or "subagent",
+                    "type": d.get("agentType"), "parent": d.get("parentAgentId"), "tool_use_id": d.get("toolUseId"),
+                    "finished": bool(d.get("finished")), "stopped": bool(d.get("stoppedByUser")), "updated": int(updated * 1000)})
+    return sorted(out, key=lambda x: x["updated"])
+
+
 def _default_group(cwd):
     p = Path(cwd or Path.home())
     return "home" if p == Path.home() or not p.name else p.name
@@ -128,7 +145,9 @@ async def list_entries(request):
     live, runner = await _live(request), request.app[RUNNER]
     out = []
     for e in request.app[STORE].entries():
-        out.append(_entry_view(e, await _off(sdk.get_session_info, e["session_id"]), live, runner))
+        v = _entry_view(e, await _off(sdk.get_session_info, e["session_id"]), live, runner)
+        v["subagents"] = await _off(subagent_tree, e["session_id"])
+        out.append(v)
     return web.json_response({"entries": out})
 
 
@@ -337,6 +356,18 @@ async def messages(request):
                              dumps=lambda o: json.dumps(o, default=str))
 
 
+async def subagent_messages(request):
+    """What a subagent did (read-only: subagents can't be messaged). Latest `limit` messages, like a session's history."""
+    e = request.app[STORE].entry(request.match_info["id"])
+    if not e:
+        raise web.HTTPNotFound()
+    limit = max(1, int(request.query.get("limit", 400)))
+    msgs = [_plain(m) for m in await _off(sdk.get_subagent_messages, e["session_id"], request.match_info["agent"])]
+    for m in msgs:  # shown as its own conversation, not nested under the parent's Agent call
+        m["parent_tool_use_id"] = None
+    return web.json_response({"messages": msgs[-limit:], "total": len(msgs)}, dumps=lambda o: json.dumps(o, default=str))
+
+
 async def ws_handler(request):
     """One socket per client. First message must be {"type":"auth","token":...} (browsers can't set headers on a WebSocket)."""
     ws = web.WebSocketResponse(heartbeat=30, max_msg_size=80 * 1024 * 1024)  # image attachments
@@ -489,7 +520,7 @@ def make_app(store: Store, name=None):
         web.post("/v1/pair", pair), web.get("/v1/machine", machine), web.get("/v1/sessions", sessions),
         web.get("/v1/entries", list_entries), web.post("/v1/entries", add_entry),
         web.patch("/v1/entries/{id}", update_entry), web.delete("/v1/entries/{id}", remove_entry),
-        web.get("/v1/entries/{id}/messages", messages), web.get("/v1/ws", ws_handler), web.get("/v1/commands", commands), web.get("/v1/folders", folders), web.get("/v1/models", models), web.get("/v1/logs", get_logs),
+        web.get("/v1/entries/{id}/messages", messages), web.get("/v1/entries/{id}/subagents/{agent}/messages", subagent_messages), web.get("/v1/ws", ws_handler), web.get("/v1/commands", commands), web.get("/v1/folders", folders), web.get("/v1/models", models), web.get("/v1/logs", get_logs),
         web.get("/v1/network", get_network), web.put("/v1/network", set_network), web.post("/v1/pair_code", pair_code),
         web.get("/v1/watches", list_watches), web.post("/v1/watches", add_watch), web.patch("/v1/watches/{id}", update_watch),
         web.delete("/v1/watches/{id}", remove_watch), web.post("/v1/watches/{id}/test", test_watch),

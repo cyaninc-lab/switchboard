@@ -18,7 +18,7 @@
   // ---- state ----
   let machines = $state<Machine[]>(api.loadMachines());
   let tree = $state<Record<string, { entries: Entry[]; error?: string }>>({});
-  let selected = $state<{ machine: Machine; entry: Entry } | null>(null);
+  let selected = $state<{ machine: Machine; entry: Entry; sub?: api.Sub } | null>(null);
   let messages = $state<HistoryMessage[]>([]);
   let loadingHistory = $state(false);
   let openSeq = 0;
@@ -291,6 +291,7 @@
       return;
     }
     if (e.type === 'inbox_read' && m) { loadInbox(m); return; }
+    if (e.type === 'subagents') { refresh(); if (selected?.sub && selected.entry.id === e.entry) loadSub(); return; }
     if (e.type === 'state') {
       setEntry(e.entry, { state: e.state as Entry['state'] });
       if (e.state !== 'working' && e.state !== 'waiting') { streaming[e.entry] = ''; thinkingLive[e.entry] = ''; queued[e.entry] = 0; }
@@ -298,7 +299,7 @@
       if (e.kind === 'thinking') thinkingLive[e.entry] = (thinkingLive[e.entry] ?? '') + e.text;
       else streaming[e.entry] = (streaming[e.entry] ?? '') + e.text;
     } else if (e.type === 'message') {
-      if (selected?.entry.id === e.entry) messages = [...messages, e.message];
+      if (selected?.entry.id === e.entry && !selected.sub) messages = [...messages, e.message];
       if (e.message.type === 'assistant') { streaming[e.entry] = ''; thinkingLive[e.entry] = ''; }
     } else if (e.type === 'permission_request') {
       prompts[e.entry] = [...(prompts[e.entry] ?? []), { request_id: e.request_id, tool: e.tool, kind: e.kind ?? 'tool', input: e.input, remember: e.remember ?? [] }];
@@ -325,7 +326,7 @@
     } else if (e.type === 'commands') {
       if (selected) loadCommands(selected.machine);
     } else if (e.type === 'notice') {
-      if (selected?.entry.id === e.entry) messages = [...messages, { type: 'assistant', uuid: crypto.randomUUID(), message: { content: [{ type: 'text', text: `— ${e.text} —` }] } }];
+      if (selected?.entry.id === e.entry && !selected.sub) messages = [...messages, { type: 'assistant', uuid: crypto.randomUUID(), message: { content: [{ type: 'text', text: `— ${e.text} —` }] } }];
     } else if (e.type === 'terminal_output') {
       if (e.entry === termFor) termSink?.(e.data);
     } else if (e.type === 'terminal_closed') {
@@ -408,6 +409,43 @@
     messages = [...hist, ...messages];  // keep anything sent or streamed in while the history was loading
     loadingHistory = false;
   }
+
+  // ---- subagents: nested under their session in the tree, opened read-only ----
+  const subRunning = (e: Entry, a: api.Sub) => !a.finished && !a.stopped && LIVE_STATES.includes(e.state);
+  let subOpen = $state<Record<string, boolean>>({});
+  function kids(e: Entry, parent: string | null) {
+    const all = e.subagents ?? [];
+    const ids = new Set(all.map((a) => a.id));
+    // a subagent whose parent isn't listed still shows, at the top
+    return all.filter((a) => (parent === null ? !a.parent || !ids.has(a.parent) : a.parent === parent));
+  }
+  async function openSub(machine: Machine, entry: Entry, sub: api.Sub) {
+    if (termFor) termFor = null;
+    selected = { machine, entry, sub };
+    stick = true;
+    messages = [];
+    loadingHistory = true;
+    await loadSub();
+    loadingHistory = false;
+  }
+  async function loadSub() {
+    const s = selected;
+    if (!s?.sub) return;
+    const mine = ++openSeq;
+    try { const h = await api.subagentHistory(s.machine, s.entry.id, s.sub.id); if (mine === openSeq) messages = h; } catch {}
+  }
+  $effect(() => {  // a running subagent's view follows along (its steps are written to its own transcript)
+    const s = selected;
+    if (!s?.sub || !subRunning(s.entry, s.sub)) return;
+    const t = setInterval(loadSub, 2500);
+    return () => clearInterval(t);
+  });
+  $effect(() => {  // keep the open subagent's status current after a tree refresh
+    const s = selected;
+    if (!s?.sub) return;
+    const fresh = tree[s.machine.url]?.entries.find((x) => x.id === s.entry.id)?.subagents?.find((a) => a.id === s.sub!.id);
+    if (fresh && (fresh.finished !== s.sub.finished || fresh.stopped !== s.sub.stopped)) { s.sub.finished = fresh.finished; s.sub.stopped = fresh.stopped; loadSub(); }
+  });
 
   const stateLabel: Record<string, string> = {
     working: 'Working', waiting: 'Waiting for you', new: 'New: send a message to start it', stopped: 'Stopped: send a message to resume it', ready: 'Live and ready',
@@ -520,6 +558,17 @@
   </header>
 
   <div class="body">
+    {#snippet subs(m: Machine, e: Entry, parent: string | null, depth: number)}
+      {#each kids(e, parent) as a (a.id)}
+        <button class="entry sub" style="padding-left: {36 + depth * 14}px" class:sel={selected?.sub?.id === a.id && selected.entry.id === e.id}
+          title="{a.type ?? 'subagent'}: {subRunning(e, a) ? 'running' : a.stopped ? 'stopped' : 'finished'}" onclick={() => openSub(m, e, a)}>
+          <span class="st {subRunning(e, a) ? 'working' : 'stopped'}"></span>
+          <span class="ename">↳ {a.description}</span>
+          <span class="muted small">{ago(a.updated)}</span>
+        </button>
+        {@render subs(m, e, a.id, depth + 1)}
+      {/each}
+    {/snippet}
     <nav class="tree" aria-label="Sessions">
       <label class="search"><span class="sr">Filter</span><input type="search" placeholder="Filter…" bind:value={filter} /></label>
       <div class="scroll">
@@ -536,12 +585,20 @@
             {#each groups(m) as [g, es] (g)}
               <div class="group">{g}</div>
               {#each es as e (e.id)}
-                <button class="entry" class:sel={selected?.entry.id === e.id} class:waiting={e.state === 'waiting'} title={stateLabel[e.state]} onclick={() => open(m, e)}>
+                <button class="entry" class:sel={selected?.entry.id === e.id && !selected.sub} class:waiting={e.state === 'waiting'} title={stateLabel[e.state]} onclick={() => open(m, e)}>
                   <span class="st {e.state}"></span>
                   {#if e.pinned}<span class="pin" aria-label="pinned">★</span>{/if}
                   <span class="ename">{e.name}</span>
                   <span class="muted small">{e.session ? ago(e.session.last_modified) : ''}</span>
                 </button>
+                {#if e.subagents?.length}
+                  {@const running = e.subagents.filter((a) => subRunning(e, a)).length}
+                  {@const shown = subOpen[e.id] ?? running > 0}
+                  <button class="subtoggle small" aria-expanded={shown} onclick={() => (subOpen[e.id] = !shown)}>
+                    {shown ? '▾' : '▸'} {e.subagents.length} subagent{e.subagents.length === 1 ? '' : 's'}{running ? ` · ${running} running` : ''}
+                  </button>
+                  {#if shown}<div role="group" aria-label="Subagents of {e.name}">{@render subs(m, e, null, 1)}</div>{/if}
+                {/if}
               {/each}
             {/each}
             {#if tree[m.url] && tree[m.url].entries.length === 0 && !tree[m.url].error}<p class="empty small">Nothing added yet.</p>{/if}
@@ -556,6 +613,13 @@
 
     <main class="term">
       {#if selected}
+        {#if selected.sub}
+        <div class="termhead mono">
+          <span>subagent · {selected.sub.description}{selected.sub.type ? ` (${selected.sub.type})` : ''} · {subRunning(selected.entry, selected.sub) ? 'running' : selected.sub.stopped ? 'stopped' : 'finished'}</span>
+          <span class="grow"></span>
+          <button class="tiny" onclick={() => open(selected!.machine, selected!.entry)}>← {selected.entry.name}</button>
+        </div>
+        {:else}
         <div class="termhead mono">
           <span>{selected.machine.name}:{selected.entry.session?.cwd ?? '?'}</span>
           {#if selected.entry.session?.git_branch}<span>⎇ {selected.entry.session.git_branch}</span>{/if}
@@ -566,6 +630,7 @@
           <button class="tiny" onclick={togglePin}>{selected.entry.pinned ? 'Unpin' : 'Pin'}</button>
           <button class="tiny" onclick={remove} title="Takes it off the tree; the session stays on its machine">Remove from tree</button>
         </div>
+        {/if}
         {#if termFor === selected.entry.id}
           {#key selected.entry.id}<TerminalView live={live()!} entry={selected.entry.id} listen={(fn) => (termSink = fn)} />{/key}
         {:else}
@@ -589,10 +654,15 @@
                 <details class="thinking"><summary>Thinking</summary><div class="thinktext">{line.text}</div></details>
               {:else if line.kind === 'tool' && AGENT_TOOLS.includes(line.name)}
                 {@const kids = byParent[line.id] ?? []}
+                {@const sa = selected?.entry.subagents?.find((x) => x.tool_use_id === line.id)}
+                {#if sa && !kids.length}
+                  <div><span class="bullet">⏺ </span>Agent: {line.input?.description ?? sa.description} <button class="link small" onclick={() => openSub(selected!.machine, selected!.entry, sa)}>open subagent →</button></div>
+                {:else}
                 <details class="agent" open={!!expanded['agent' + line.id]} ontoggle={(e) => (expanded['agent' + line.id] = (e.currentTarget as HTMLDetailsElement).open)}>
-                  <summary><span class="bullet">⏺ </span>Agent: {line.input?.description ?? line.input?.subagent_type ?? 'subagent'}<span class="muted small"> · {kids.length} step{kids.length === 1 ? '' : 's'}</span></summary>
+                  <summary><span class="bullet">⏺ </span>Agent: {line.input?.description ?? line.input?.subagent_type ?? 'subagent'}<span class="muted small"> · {kids.length} step{kids.length === 1 ? '' : 's'}</span>{#if sa} <button class="link small" onclick={(ev) => { ev.preventDefault(); openSub(selected!.machine, selected!.entry, sa); }}>open subagent →</button>{/if}</summary>
                   <div class="agentbody">{#each kids as k (k.uuid)}{@render lines(k)}{/each}</div>
                 </details>
+                {/if}
               {:else if line.kind === 'tool'}
                 <div><span class="bullet">⏺ </span><span class="tool">{line.text}</span></div>
               {:else if line.kind === 'diff'}
@@ -613,13 +683,18 @@
             {/each}
           {/snippet}
           {#each mainMsgs as msg (msg.uuid)}{@render lines(msg)}{/each}
+          {#if !selected.sub}
           {#if thinkingLive[selected.entry.id] && !streaming[selected.entry.id]}<div class="thinking live"><span class="muted">Thinking… </span><span class="thinktext">{thinkingLive[selected.entry.id].slice(-240)}</span></div>{/if}
           {#if streaming[selected.entry.id]}<div class="streaming"><span class="bullet">⏺ </span>{streaming[selected.entry.id]}<span class="cursor">▌</span></div>{/if}
           {#each prompts[selected.entry.id] ?? [] as p (p.request_id)}
             <PromptCard {p} live={live()!} />
           {/each}
+          {/if}
           </div>
         </div>
+        {#if selected.sub}
+          <div class="subnote muted small">Read-only: a subagent can't be messaged. Talk to <button class="link" onclick={() => open(selected!.machine, selected!.entry)}>{selected.entry.name}</button> instead.</div>
+        {:else}
         {#if liveErr}<div class="liveerr" role="alert">{liveErr}</div>{/if}
         {#if queued[selected.entry.id]}<div class="queued muted small" aria-live="polite">{queued[selected.entry.id]} queued: sends when Claude finishes</div>{/if}
         {#if menu.length}
@@ -649,6 +724,7 @@
           </button>
           {#if selected.entry.state === 'working'}<button type="button" class="tiny" onclick={() => act((l, id) => l.interrupt(id))}>Esc · interrupt</button>{/if}
         </form>
+        {/if}
         {/if}
       {:else}
         <div class="placeholder">Pick a session from the tree, or <button class="link" disabled={!machines.length} onclick={openAdd}>add one</button>.</div>
@@ -919,6 +995,10 @@
   .entry { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: 0; border-radius: 8px; padding: 6px 8px 6px 36px; background: none; color: var(--sub1); }
   .entry:hover { background: var(--base); }
   .entry.sel { background: var(--s0); color: var(--text); box-shadow: inset 2px 0 0 var(--mauve); }
+  .entry.sub { font-size: 12.5px; padding-top: 4px; padding-bottom: 4px; }
+  .subtoggle { display: block; border: 0; background: none; color: var(--ov1, #7f849c); padding: 2px 8px 2px 50px; cursor: pointer; text-align: left; }
+  .subtoggle:hover { color: var(--text); }
+  .subnote { padding: 10px 16px; border-top: 1px solid var(--s0); }
   .entry.waiting { font-weight: 600; }
   .ename { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pin { color: var(--peach); font-size: 11px; }

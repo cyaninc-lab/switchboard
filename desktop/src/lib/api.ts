@@ -12,7 +12,10 @@ export type Entry = {
   usage?: Usage | null;
   state: 'new' | 'working' | 'waiting' | 'ready' | 'stopped' | 'terminal' | 'missing' | 'error';
   session: Session | null;
+  subagents?: Sub[];
 };
+/** A subagent of a session; parent is the subagent that spawned it (null: the session itself did). */
+export type Sub = { id: string; description: string; type: string | null; parent: string | null; tool_use_id: string | null; finished: boolean; stopped: boolean; updated: number };
 export type HistoryMessage = { type: 'user' | 'assistant'; uuid: string; message: any; parent_tool_use_id?: string | null };
 
 const KEY = 'switchboard.machines';
@@ -89,6 +92,8 @@ export const updateEntry = (m: Machine, id: string, body: Partial<{ name: string
 export const removeEntry = (m: Machine, id: string) => call<void>(m, `/v1/entries/${id}`, { method: 'DELETE' });
 export const folders = (m: Machine) => call<{ home: string; folders: string[] }>(m, '/v1/folders');
 export const commands = (m: Machine) => call<{ commands: Command[] }>(m, '/v1/commands').then((d) => d.commands);
+export const subagentHistory = (m: Machine, id: string, agent: string, limit = 400) =>
+  call<{ messages: HistoryMessage[] }>(m, `/v1/entries/${id}/subagents/${encodeURIComponent(agent)}/messages?limit=${limit}`).then((d) => d.messages);
 export const history = (m: Machine, id: string, limit = 400) =>
   call<{ messages: HistoryMessage[] }>(m, `/v1/entries/${id}/messages?limit=${limit}`).then((d) => d.messages);
 
@@ -163,6 +168,7 @@ export function render(msg: HistoryMessage): Line[] {
 // ---- live connection (phase 2): one WebSocket per machine ----
 export type LiveEvent =
   | { type: 'hello'; machine: string }
+  | { type: 'subagents'; entry: string }
   | { type: 'state'; entry: string; state: Entry['state'] | 'ready' }
   | { type: 'delta'; entry: string; text: string; kind?: 'thinking' }
   | { type: 'message'; entry: string; message: HistoryMessage }

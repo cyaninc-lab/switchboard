@@ -58,6 +58,40 @@ def list_sessions():
     return list(SESSIONS)
 
 
+# subagents of demo-1: one spawned another, which spawned a third (still running)
+SUBAGENTS = {
+    "demo-1": [
+        {"id": "a1", "description": "Investigate the failed deploy", "type": "general-purpose", "parent": None, "tool_use_id": "t9", "finished": True, "stopped": False, "updated": NOW - 5 * 60 * 1000},
+        {"id": "a2", "description": "Read the feed handler", "type": "Explore", "parent": "a1", "tool_use_id": "t10", "finished": True, "stopped": False, "updated": NOW - 4 * 60 * 1000},
+        {"id": "a3", "description": "Check which videos lack dash_url", "type": "general-purpose", "parent": "a2", "tool_use_id": "t11", "finished": False, "stopped": False, "updated": NOW - 60 * 1000},
+        {"id": "a4", "description": "Summarise the logs", "type": "Explore", "parent": None, "tool_use_id": "t12", "finished": True, "stopped": False, "updated": NOW - 3 * 60 * 1000},
+    ],
+}
+
+
+def subagent_tree(session_id):
+    return list(SUBAGENTS.get(session_id, []))
+
+
+def get_subagent_messages(session_id, agent_id, limit=None, offset=0):
+    sa = next((a for a in SUBAGENTS.get(session_id, []) if a["id"] == agent_id), None)
+    if not sa:
+        return []
+    kids = [a for a in SUBAGENTS[session_id] if a["parent"] == agent_id]
+    msgs = [{"type": "user", "uuid": f"{agent_id}-1", "parent_tool_use_id": sa["tool_use_id"], "message": {"role": "user", "content": sa["description"]}},
+            {"type": "assistant", "uuid": f"{agent_id}-2", "parent_tool_use_id": sa["tool_use_id"], "message": {"role": "assistant", "content": [
+                {"type": "tool_use", "id": f"{agent_id}-g", "name": "Grep", "input": {"pattern": "dash_url"}}]}},
+            {"type": "user", "uuid": f"{agent_id}-3", "parent_tool_use_id": sa["tool_use_id"], "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": f"{agent_id}-g", "content": "server/app.py:212"}]}}]
+    for k in kids:
+        msgs.append({"type": "assistant", "uuid": f"{agent_id}-k{k['id']}", "parent_tool_use_id": sa["tool_use_id"], "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": k["tool_use_id"], "name": "Agent", "input": {"description": k["description"], "prompt": k["description"]}}]}})
+    if sa["finished"]:
+        msgs.append({"type": "assistant", "uuid": f"{agent_id}-9", "parent_tool_use_id": sa["tool_use_id"], "message": {"role": "assistant", "content": [
+            {"type": "text", "text": f"Finished: {sa['description']}."}]}})
+    return msgs
+
+
 def get_session_info(session_id):
     return next((s for s in SESSIONS if s.session_id == session_id), None)
 

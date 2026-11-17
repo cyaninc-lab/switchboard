@@ -166,6 +166,7 @@ class Runner:
                         lv.tasks.add(data["task_id"])
                     elif sub == "task_notification" or status in ("completed", "failed", "stopped", "killed"):
                         lv.tasks.discard(data["task_id"])
+                    await self.broadcast({"type": "subagents", "entry": lv.entry_id})  # the tree re-reads its subagents
                     continue
                 if not lv.working and type(m).__name__ in ("AssistantMessage", "UserMessage", "StreamEvent"):  # a turn Claude started on its own
                     lv.working, lv.said, lv.origin, lv.turn_text = True, False, None, []

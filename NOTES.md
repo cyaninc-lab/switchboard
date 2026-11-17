@@ -1,4 +1,5 @@
-## Switchboard 0.1.6
+## Switchboard 0.1.7
 
-- **Background work keeps its session open.** Switchboard closes sessions after 10 quiet minutes (they reopen on your next message). A session with a background subagent or command still running is no longer closed, since closing it would stop that work.
-- (from 0.1.5) Replies Claude starts on its own appear as they happen; fixes replies arriving one message behind.
+- **Subagents in the tree.** When a session starts subagents, they appear nested under it, and subagents they start appear under them, to any depth. Running ones show live, and the list opens by itself while any are running. Click one to see what it's doing (read-only, since subagents can't be messaged). An Agent call in a session also has an "open subagent →" link.
+- **Updating on Windows** no longer stops with "Error opening file for writing: switchboard-daemon.exe" (the installer now closes the background helper first).
+- **New session:** a folder suggestion that loads late no longer gets mixed into the folder you're typing.

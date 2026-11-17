@@ -81,6 +81,7 @@ def main():
             from . import app as appmod, demo
             appmod.sdk = demo  # ponytail: swaps only the session readers the API uses; phase 2 running sessions will need a demo runner too
             appmod.open_in_terminal = lambda: {"demo-2"}
+            appmod.subagent_tree = demo.subagent_tree
             from . import net
             net.tailscale_info = lambda: {"name": "demo-box", "dns": "demo-box.tail.ts.net", "ips": ["127.0.0.2"]}  # never the real tailnet
         app = make_app(store, a.name or ("demo" if a.demo else None))
