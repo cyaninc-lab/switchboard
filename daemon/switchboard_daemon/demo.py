@@ -37,6 +37,20 @@ HISTORY = [
         {"type": "tool_result", "tool_use_id": "t1", "content": "health.sh: GET /api/feed -> 500\nKeyError: 'dash_url'"}]}},
     {"type": "assistant", "uuid": "m4", "message": {"role": "assistant", "content": [
         {"type": "text", "text": "The new /api/feed handler expects dash_url, but older videos don't have it. The rollback worked; live is healthy."}]}},
+    {"type": "assistant", "uuid": "m5", "message": {"role": "assistant", "content": [
+        {"type": "tool_use", "id": "t2", "name": "TodoWrite", "input": {"todos": [
+            {"content": "Find the cause", "status": "completed", "activeForm": "Finding the cause"},
+            {"content": "Fix the handler", "status": "in_progress", "activeForm": "Fixing the handler"},
+            {"content": "Add a test", "status": "pending", "activeForm": "Adding a test"}]}}]}},
+    {"type": "user", "uuid": "m6", "message": {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "t2", "content": "Todos have been modified successfully."}]}},
+    {"type": "assistant", "uuid": "m7", "message": {"role": "assistant", "content": [
+        {"type": "tool_use", "id": "t3", "name": "Edit", "input": {"file_path": "server/app.py",
+            "old_string": "def feed(v):\n    dash = v['dash_url']\n    return dash", "new_string": "def feed(v):\n    dash = v.get('dash_url')\n    return dash"}}]}},
+    {"type": "assistant", "uuid": "m8", "message": {"role": "assistant", "content": [
+        {"type": "tool_use", "id": "t4", "name": "Bash", "input": {"command": "pytest -q"}}]}},
+    {"type": "user", "uuid": "m9", "message": {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "t4", "content": "\n".join(f"test_{n} PASSED" for n in range(1, 21))}]}},
 ]
 
 
@@ -78,6 +92,8 @@ class ToolResultBlock:
 @dataclasses.dataclass
 class AssistantMessage:
     content: list
+    usage: dict = None
+    parent_tool_use_id: str = None
 
 
 @dataclasses.dataclass
@@ -100,6 +116,8 @@ class SystemMessage:
 class ResultMessage:
     is_error: bool = False
     result: str = ""
+    total_cost_usd: float = 0.0123
+    model_usage: dict = dataclasses.field(default_factory=lambda: {"demo-model": {"contextWindow": 200000}})
 
 
 @dataclasses.dataclass
@@ -216,5 +234,6 @@ class ClaudeSDKClient:
                     return
                 await asyncio.sleep(0.1)
         acct = " (token account)" if (self.options.env or {}).get("CLAUDE_CODE_OAUTH_TOKEN") else ""
-        yield AssistantMessage([TextBlock(f"Done: {text}" + (f" [{self.options.model}]" if self.options.model else "") + acct)])
+        yield AssistantMessage([TextBlock(f"Done: {text}" + (f" [{self.options.model}]" if self.options.model else "") + acct)],
+                               usage={"input_tokens": 1200, "cache_read_input_tokens": 50000, "cache_creation_input_tokens": 800})
         yield ResultMessage()

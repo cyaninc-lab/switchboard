@@ -56,6 +56,7 @@ def _entry_view(entry, info, live, runner=None):
     d = {k: entry.get(k) for k in ("id", "session_id", "name", "pinned", "account", "mode", "model")}
     d["group"], d["pinned"] = entry["grp"], bool(entry["pinned"])
     held = runner.state(entry["id"]) if runner else None
+    d["usage"] = runner.usage.get(entry["id"]) if runner else None
     if info is None and entry.get("cwd"):  # created here, no message yet
         d["state"] = held or "new"
         d["session"] = {"session_id": entry["session_id"], "summary": entry["name"], "cwd": entry["cwd"], "git_branch": None,

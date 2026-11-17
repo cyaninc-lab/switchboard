@@ -153,15 +153,35 @@
   const lives = new Map<string, api.Live>();
   let streaming = $state<Record<string, string>>({});
   let queued = $state<Record<string, number>>({});
+  let expanded = $state<Record<string, boolean>>({});  // tool output shown in full
+  const RESULT_LINES = 6;
   let prompts = $state<Record<string, { request_id: string; tool: string; kind: 'tool' | 'question' | 'plan'; input: any; remember: string[] }[]>>({});
   let draft = $state('');
   // follow new output while the view is at the bottom; leave it alone once the user scrolls up to read
   let logEl = $state<HTMLDivElement>();
   let stick = true;
-  const onLogScroll = () => { if (logEl) stick = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 80; };
+  // only the user's own scrolling (wheel, touch, keys, scrollbar drag) can unstick; resizes and new content can't
+  let userScroll = 0;
+  const markUser = () => { userScroll = Date.now(); };
+  const onLogScroll = () => {
+    if (!logEl) return;
+    const atBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 80;
+    if (atBottom) stick = true;
+    else if (Date.now() - userScroll < 600) stick = false;
+    else if (stick) logEl.scrollTop = logEl.scrollHeight;
+  };
   $effect(() => {
     messages.length; selected && streaming[selected.entry.id]; selected && prompts[selected.entry.id]?.length;
     if (stick) tick().then(() => logEl && (logEl.scrollTop = logEl.scrollHeight));
+  });
+  // content can also grow after rendering (an image loading, a diff expanding): keep following while at the bottom
+  let logBody = $state<HTMLDivElement>();
+  $effect(() => {
+    if (!logBody) return;
+    const ro = new ResizeObserver(() => { if (stick && logEl) logEl.scrollTop = logEl.scrollHeight; });
+    ro.observe(logBody);
+    if (logEl) ro.observe(logEl);  // the window resizing too
+    return () => ro.disconnect();
   });
   // attachments (images) and the slash-command menu
   let attachments = $state<(api.Image & { url: string; name: string })[]>([]);
@@ -265,6 +285,8 @@
       setEntry(e.entry, { model: e.model });
     } else if (e.type === 'account') {
       setEntry(e.entry, { account: e.account });
+    } else if (e.type === 'usage') {
+      setEntry(e.entry, { usage: e });
     } else if (e.type === 'queued') {
       queued[e.entry] = e.count;
     } else if (e.type === 'commands') {
@@ -514,10 +536,14 @@
         {#if termFor === selected.entry.id}
           {#key selected.entry.id}<TerminalView live={live()!} entry={selected.entry.id} listen={(fn) => (termSink = fn)} />{/key}
         {:else}
-        <div class="log mono" role="log" aria-label="Session history" bind:this={logEl} onscroll={onLogScroll}>
+        <!-- focusable so keyboard users can scroll it (a scrollable region should be); the listeners only notice scrolling -->
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+        <div class="log mono" role="log" aria-label="Session history" bind:this={logEl} onscroll={onLogScroll}
+          onwheel={markUser} ontouchmove={markUser} onpointerdown={markUser} onkeydown={markUser} tabindex="0">
+          <div class="logbody" bind:this={logBody}>
           {#if loadingHistory}<div class="muted">Loading…</div>{/if}
           {#each messages as msg (msg.uuid)}
-            {#each api.render(msg) as line}
+            {#each api.render(msg) as line, li}
               {#if line.kind === 'image'}
                 <img class="shot" src={line.text} alt="Attachment" />
               {:else if line.kind === 'text'}
@@ -528,8 +554,20 @@
                 {/if}
               {:else if line.kind === 'tool'}
                 <div><span class="bullet">⏺ </span><span class="tool">{line.text}</span></div>
+              {:else if line.kind === 'diff'}
+                <div class="diff" aria-label="{line.text}">
+                  <div class="diffhead"><span class="bullet">⏺ </span>{line.text}{#if line.note}<span class="muted small"> · {line.note}</span>{/if}</div>
+                  {#each expanded[msg.uuid + li] ? line.lines : line.lines.slice(0, 40) as d}<div class="dl {d.t === '+' ? 'add' : d.t === '-' ? 'del' : ''}"><span class="sign">{d.t}</span>{d.s}</div>{/each}
+                  {#if line.lines.length > 40}<button class="link small" onclick={() => (expanded[msg.uuid + li] = !expanded[msg.uuid + li])}>{expanded[msg.uuid + li] ? 'Show less' : `Show all ${line.lines.length} lines`}</button>{/if}
+                </div>
+              {:else if line.kind === 'todos'}
+                <ul class="todos" aria-label="To-dos">
+                  {#each line.items as t}<li class={t.status}><span class="box">{t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '▸' : ''}</span>{t.status === 'in_progress' && t.activeForm ? t.activeForm : t.content}</li>{/each}
+                </ul>
               {:else}
-                <div class="result">⎿ {line.text}</div>
+                {@const rows = line.text.split('\n')}
+                <div class="result">⎿ {expanded[msg.uuid + li] ? line.text : rows.slice(0, RESULT_LINES).join('\n')}</div>
+                {#if rows.length > RESULT_LINES}<button class="link small more" onclick={() => (expanded[msg.uuid + li] = !expanded[msg.uuid + li])}>{expanded[msg.uuid + li] ? 'Show less' : `Show all ${rows.length} lines`}</button>{/if}
               {/if}
             {/each}
           {/each}
@@ -537,6 +575,7 @@
           {#each prompts[selected.entry.id] ?? [] as p (p.request_id)}
             <PromptCard {p} live={live()!} />
           {/each}
+          </div>
         </div>
         {#if liveErr}<div class="liveerr" role="alert">{liveErr}</div>{/if}
         {#if queued[selected.entry.id]}<div class="queued muted small" aria-live="polite">{queued[selected.entry.id]} queued: sends when Claude finishes</div>{/if}
@@ -601,6 +640,12 @@
       </label>
     {/if}
     <span class="grow"></span>
+    {#if selected?.entry.usage}
+      {@const u = selected.entry.usage}
+      <span title="Context used by the latest request{u.context_window ? ` of a ${Math.round(u.context_window / 1000)}k window` : ''}; cost is the API-equivalent for this session (plans aren't billed per token)">
+        ctx {u.context_window ? `${Math.round((u.context_used / u.context_window) * 100)}%` : `${Math.round(u.context_used / 1000)}k`} · ≈${u.session_cost.toFixed(2)}
+      </span>
+    {/if}
     <span>{counts.working ?? 0} working · {counts.waiting ?? 0} waiting · {counts.ready ?? 0} live · {counts.stopped ?? 0} stopped · {counts.terminal ?? 0} in terminal</span>
   </footer>
 </div>
@@ -812,6 +857,7 @@
 
   .term { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--base); }
   .termhead { display: flex; gap: 16px; align-items: center; padding: 8px 18px; font-size: 12px; color: var(--o2); border-bottom: 1px solid var(--s0); }
+  .logbody { display: flex; flex-direction: column; gap: 8px; }
   .log { flex: 1; overflow: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; white-space: pre-wrap; word-break: break-word; }
   .you { color: var(--text); }
   .reply { display: flex; gap: 8px; white-space: normal; }
@@ -827,6 +873,16 @@
   .md :global(a) { color: var(--sky); }
   .md :global(ul), .md :global(ol) { margin: 4px 0 8px; padding-left: 20px; } .prompt { color: var(--mauve); font-weight: 600; } .bullet { color: var(--mauve); }
   .tool { color: var(--sub1); } .result { color: var(--o2); padding-left: 18px; }
+  .more { align-self: flex-start; margin-left: 30px; }
+  .diff { display: flex; flex-direction: column; border: 1px solid var(--s0); border-radius: 8px; overflow: hidden; }
+  .diffhead { padding: 4px 10px; background: var(--mantle); color: var(--sub1); }
+  .dl { padding: 0 10px; white-space: pre-wrap; font-size: 12px; } .dl .sign { display: inline-block; width: 14px; color: var(--o1); }
+  .dl.add { background: rgba(166, 227, 161, 0.12); color: var(--green); } .dl.del { background: rgba(243, 139, 168, 0.12); color: var(--red); }
+  .diff .link { align-self: flex-start; margin: 4px 10px; }
+  .todos { list-style: none; margin: 0; padding: 6px 10px; border: 1px solid var(--s0); border-radius: 8px; display: flex; flex-direction: column; gap: 2px; font-family: Inter, system-ui, sans-serif; white-space: normal; }
+  .todos .box { display: inline-block; width: 14px; height: 14px; border: 1px solid var(--s2); border-radius: 3px; margin-right: 8px; text-align: center; line-height: 13px; font-size: 11px; vertical-align: -2px; }
+  .todos li.completed { color: var(--o2); text-decoration: line-through; } .todos li.completed .box { color: var(--green); border-color: var(--green); }
+  .todos li.in_progress { color: var(--text); font-weight: 600; } .todos li.in_progress .box { color: var(--peach); border-color: var(--peach); }
   .inputbar { display: flex; gap: 10px; align-items: center; padding: 12px 18px; border-top: 1px solid var(--s0); }
   .inputbar input { border: 0; background: none; }
   .placeholder { margin: auto; color: var(--o2); }
