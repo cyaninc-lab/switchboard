@@ -115,8 +115,21 @@ class ClaudeAgentOptions:
     env: dict = None
 
 
+@dataclasses.dataclass
 class PermissionResultAllow:
-    behavior = "allow"
+    updated_input: dict = None
+    updated_permissions: list = None
+    behavior: str = "allow"
+
+
+@dataclasses.dataclass
+class _Suggestion:
+    destination: str
+    type: str = "addRules"
+
+
+class _Ctx:
+    suggestions = [_Suggestion("session"), _Suggestion("localSettings")]
 
 
 @dataclasses.dataclass
@@ -175,9 +188,25 @@ class ClaudeSDKClient:
         for word in "Looking into it.".split(" "):
             yield StreamEvent({"type": "content_block_delta", "delta": {"type": "text_delta", "text": word + " "}})
             await asyncio.sleep(0.05)
+        if "ask me" in text.lower():  # a clarifying question (AskUserQuestion)
+            q = {"question": "Which database should I use?", "header": "Database", "multiSelect": False,
+                 "options": [{"label": "SQLite", "description": "One file, no server"}, {"label": "Postgres", "description": "A real server"}]}
+            r = await self.options.can_use_tool("AskUserQuestion", {"questions": [q]}, _Ctx())
+            got = (r.updated_input or {}) if isinstance(r, PermissionResultAllow) else {}
+            yield AssistantMessage([TextBlock(f"You picked: {got.get('answers') or got.get('response') or 'nothing (' + r.message + ')'}")])
+            yield ResultMessage()
+            return
+        if "plan" in text.lower():  # plan mode: propose a plan for approval (ExitPlanMode)
+            r = await self.options.can_use_tool("ExitPlanMode", {"plan": "## Plan\n1. Add the table\n2. Write the migration\n3. Test it"}, _Ctx())
+            yield AssistantMessage([TextBlock("Plan approved, starting." if isinstance(r, PermissionResultAllow) else f"Revising the plan. ({r.message})")])
+            yield ResultMessage()
+            return
         if "run" in text.lower():
-            ok = self.options.permission_mode in ("auto", "bypassPermissions", "acceptEdits") or \
-                isinstance(await self.options.can_use_tool("Bash", {"command": "git status"}, None), PermissionResultAllow)
+            r = None if self.options.permission_mode in ("auto", "bypassPermissions", "acceptEdits") else \
+                await self.options.can_use_tool("Bash", {"command": "git status"}, _Ctx())
+            ok = r is None or isinstance(r, PermissionResultAllow)
+            if isinstance(r, PermissionResultAllow) and r.updated_permissions:
+                yield AssistantMessage([TextBlock(f"(remembered for: {r.updated_permissions[0].destination})")])
             yield AssistantMessage([ToolUseBlock("t1", "Bash", {"command": "git status"})])
             yield UserMessage([ToolResultBlock("t1", "On branch main, nothing to commit" if ok else "Permission denied", not ok)])
         if "slow" in text.lower():

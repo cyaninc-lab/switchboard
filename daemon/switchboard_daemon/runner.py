@@ -96,7 +96,7 @@ class Runner:
         holder = {}
 
         async def can_use_tool(tool, inp, ctx):
-            return await self._ask(holder["lv"], tool, inp)
+            return await self._ask(holder["lv"], tool, inp, ctx)
 
         opts = self.sdk.ClaudeAgentOptions(
             **start, cwd=(info.cwd if info else entry["cwd"]) or None, include_partial_messages=True,
@@ -187,25 +187,45 @@ class Runner:
             else:
                 await self._emit_state(lv.entry_id)
 
-    async def _ask(self, lv, tool, inp):
+    async def _ask(self, lv, tool, inp, ctx=None):
+        """Three kinds of request, all through can_use_tool: Claude's questions (AskUserQuestion), plan approval
+        (ExitPlanMode) and ordinary tool permission, which can be remembered for the session or for good."""
         rid = uuid.uuid4().hex[:12]
         fut = asyncio.get_running_loop().create_future()
         lv.pending[rid] = fut
-        await self.broadcast({"type": "permission_request", "entry": lv.entry_id, "request_id": rid, "tool": tool, "input": inp})
+        kind = {"AskUserQuestion": "question", "ExitPlanMode": "plan"}.get(tool, "tool")
+        suggestions = list(getattr(ctx, "suggestions", None) or [])
+        remember = sorted({s.destination for s in suggestions if getattr(s, "destination", None) in ("session", "localSettings")})
+        await self.broadcast({"type": "permission_request", "entry": lv.entry_id, "request_id": rid, "tool": tool,
+                              "kind": kind, "input": inp, "remember": remember if kind == "tool" else []})
         await self._emit_state(lv.entry_id)
         try:
-            allow, message = await fut
+            a = await fut
         finally:
             lv.pending.pop(rid, None)
         await self._emit_state(lv.entry_id)
-        return self.sdk.PermissionResultAllow() if allow else self.sdk.PermissionResultDeny(message=message or "Denied in Switchboard")
+        Allow, Deny = self.sdk.PermissionResultAllow, self.sdk.PermissionResultDeny
+        if kind == "question":
+            if a["answers"] or a["response"]:
+                extra = {"answers": a["answers"]} if a["answers"] else {"response": a["response"]}
+                return Allow(updated_input={"questions": inp.get("questions", []), **extra})
+            return Deny(message=a["message"] or "The user dismissed the question.")
+        if kind == "plan":
+            if a["allow"]:
+                return Allow(updated_input=inp)
+            return Deny(message=f"Keep planning. The user says: {a['message']}" if a["message"] else "Keep planning: the user didn't approve this plan yet.")
+        if not a["allow"]:
+            return Deny(message=a["message"] or "Denied in Switchboard")
+        keep = [s for s in suggestions if a["remember"] and getattr(s, "destination", None) == a["remember"]]
+        return Allow(updated_input=inp, **({"updated_permissions": keep} if keep else {}))
 
-    async def answer(self, request_id, allow, message=None, by="client"):
+    async def answer(self, request_id, allow, message=None, by="client", remember=None, answers=None, response=None):
         """First answer wins; later ones are ignored."""
         for lv in self.live.values():
             fut = lv.pending.get(request_id)
             if fut and not fut.done():
-                fut.set_result((bool(allow), message))
+                fut.set_result({"allow": bool(allow) or bool(answers) or bool(response), "message": message,
+                                "remember": remember, "answers": answers, "response": response})
                 await self.broadcast({"type": "permission_resolved", "entry": lv.entry_id, "request_id": request_id, "allow": bool(allow), "by": by})
                 return True
         return False
@@ -217,7 +237,7 @@ class Runner:
         if lv and lv.working:
             for fut in list(lv.pending.values()):  # a pending prompt is moot once interrupted
                 if not fut.done():
-                    fut.set_result((False, "Interrupted"))
+                    fut.set_result({"allow": False, "message": "Interrupted", "remember": None, "answers": None, "response": None})
             await lv.client.interrupt()
 
     async def models(self):
@@ -262,7 +282,7 @@ class Runner:
         log.info("session for entry %s closed", entry_id)
         for fut in lv.pending.values():
             if not fut.done():
-                fut.set_result((False, "Session stopped"))
+                fut.set_result({"allow": False, "message": "Session stopped", "remember": None, "answers": None, "response": None})
         if lv.reader and not lv.reader.done():
             lv.reader.cancel()
         try:

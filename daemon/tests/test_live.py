@@ -290,3 +290,46 @@ def test_account_cli(tmp_path):
     assert "work" in listed and "sk-ant" not in listed
     if os.name != "nt":  # Windows has no Unix mode bits; the file sits in the user's own profile
         assert oct(os.stat(tmp_path / "switchboard.db").st_mode & 0o777) == "0o600"
+
+
+def test_questions_plans_and_remember(tmp_path, monkeypatch):
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        eid = e["id"]
+
+        async def ask(text):
+            await ws.send_json({"type": "send", "entry": eid, "text": text})
+            req, _ = await until(ws, lambda m: m["type"] == "permission_request")
+            return req
+
+        # a clarifying question: pick an option
+        req = await ask("ask me something")
+        assert req["kind"] == "question" and req["input"]["questions"][0]["header"] == "Database" and req["remember"] == []
+        await ws.send_json({"type": "permission_reply", "request_id": req["request_id"], "answers": {"Which database should I use?": "Postgres"}})
+        _, seen = await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        assert any("You picked: {'Which database should I use?': 'Postgres'}" in str(m) for m in seen)
+        # ...or answer in your own words
+        req = await ask("ask me again")
+        await ws.send_json({"type": "permission_reply", "request_id": req["request_id"], "response": "whatever is simplest"})
+        _, seen = await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        assert any("You picked: whatever is simplest" in str(m) for m in seen)
+
+        # plan approval: keep planning with feedback, then approve
+        req = await ask("make a plan")
+        assert req["kind"] == "plan" and "Write the migration" in req["input"]["plan"]
+        await ws.send_json({"type": "permission_reply", "request_id": req["request_id"], "allow": False, "message": "use Alembic"})
+        _, seen = await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        assert any("Keep planning. The user says: use Alembic" in str(m) for m in seen)
+        req = await ask("plan again")
+        await ws.send_json({"type": "permission_reply", "request_id": req["request_id"], "allow": True})
+        _, seen = await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        assert any("Plan approved, starting." in str(m) for m in seen)
+
+        # tool permission remembered for the session
+        req = await ask("run it")
+        assert req["kind"] == "tool" and req["remember"] == ["localSettings", "session"]
+        await ws.send_json({"type": "permission_reply", "request_id": req["request_id"], "allow": True, "remember": "session"})
+        _, seen = await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        assert any("(remembered for: session)" in str(m) for m in seen)
+        await client.close()
+    asyncio.run(t())

@@ -368,7 +368,8 @@ async def ws_handler(request):
                     await runner.set_model(eid, m.get("model"))
                     await _broadcast(request.app, {"type": "model", "entry": eid, "model": m.get("model") or None})
                 elif t == "permission_reply":
-                    await runner.answer(m["request_id"], m.get("allow"), m.get("message"), by=client)
+                    await runner.answer(m["request_id"], m.get("allow"), m.get("message"), by=client,
+                                        remember=m.get("remember"), answers=m.get("answers"), response=m.get("response"))
             except Exception as e:
                 log.warning("ws %s failed: %s: %s", m.get("type") if isinstance(m, dict) else "?", type(e).__name__, logs.scrub(str(e)))
                 await ws.send_json({"type": "error", "entry": m.get("entry") if isinstance(m, dict) else None,

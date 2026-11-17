@@ -28,7 +28,7 @@ test('chat: stream, approve, deny, interrupt, auto mode, stop', async ({ page })
   await expect(card).toContainText('Bash: git status');
   await expect(entry).toHaveAttribute('title', 'Waiting for you');
   await page.screenshot({ path: 'e2e/.results/permission.png' });
-  await card.getByRole('button', { name: 'Allow' }).click();
+  await card.getByRole('button', { name: 'Allow', exact: true }).click();
   await expect(card).toHaveCount(0);
   await expect(log).toContainText('nothing to commit');
   await expect(log).toContainText('Done: please run the checks');
