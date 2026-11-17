@@ -15,10 +15,15 @@ test('create a new session in a folder', async ({ page }) => {
   await page.getByLabel('One-time code').fill(execFileSync(daemon, ['--data', DATA, 'pair']).toString().trim());
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
 
+  // the suggested folder arrives late (as on a slow machine) while the folder is being typed: it must not land in it
+  await page.route('**/v1/folders', async (r) => { await new Promise((ok) => setTimeout(ok, 1500)); await r.continue(); });
   await page.getByRole('button', { name: '+ Add' }).click();
   const dialog = page.getByRole('form', { name: 'Add to Switchboard' });
   await dialog.getByRole('tab', { name: 'New session' }).click();
-  await dialog.getByLabel(/Folder on/).fill('/no/such/folder');
+  await dialog.getByLabel(/Folder on/).click(); // in the field before the suggestion arrives...
+  await page.waitForTimeout(1800);
+  await dialog.getByLabel(/Folder on/).pressSequentially('/no/such/folder'); // ...then typing must not join it
+  await expect(dialog.getByLabel(/Folder on/)).toHaveValue('/no/such/folder');
   await dialog.getByRole('button', { name: 'Create session' }).click();
   await expect(dialog.getByText('No folder /no/such/folder')).toBeVisible();
   await dialog.getByLabel(/Folder on/).fill(folder);

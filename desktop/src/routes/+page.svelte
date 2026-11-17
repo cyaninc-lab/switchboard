@@ -148,6 +148,7 @@
   let aError = $state('');
   let aTab = $state<'existing' | 'new'>('existing');
   let nFolder = $state('');
+  let nTyped = false; // the suggested folder arrives async: never let it land in the middle of someone's typing
   let nFolders = $state<string[]>([]);
   let nName = $state('');
   let nMode = $state('default');
@@ -157,7 +158,7 @@
     aTab = 'new'; aError = '';
     if (!aMachine) return;
     loadModels(aMachine); loadAccounts(aMachine);
-    try { const f = await api.folders(aMachine); nFolders = f.folders; nFolder ||= f.folders[1] ?? f.home; } catch (e) { aError = (e as Error).message; }
+    try { const f = await api.folders(aMachine); nFolders = f.folders; if (!nTyped && !nFolder) nFolder = f.folders[1] ?? f.home; } catch (e) { aError = (e as Error).message; }
   }
   async function createNew(ev: Event) {
     ev.preventDefault();
@@ -434,7 +435,7 @@
 
   // ---- add ----
   async function openAdd() {
-    dialog = 'add'; aError = ''; aPick = null;
+    dialog = 'add'; aError = ''; aPick = null; nTyped = false;
     aMachine = aMachine ?? machines[0] ?? null;
     await search();
   }
@@ -832,7 +833,7 @@
       </div>
       {#if aTab === 'new'}
         <label>Folder on {aMachine?.name}
-          <input bind:value={nFolder} list="folder-list" required placeholder="/path/to/project" />
+          <input bind:value={nFolder} oninput={() => (nTyped = true)} onfocus={() => (nTyped = true)} list="folder-list" required placeholder="/path/to/project" />
           <datalist id="folder-list">{#each nFolders as f}<option value={f}></option>{/each}</datalist>
         </label>
         <div class="grid2">
