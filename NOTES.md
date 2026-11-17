@@ -1,4 +1,3 @@
-## Switchboard 0.1.2
+## Switchboard 0.1.3
 
-- **Reach this machine from your other devices over Tailscale.** Settings → Other devices → "Reachable from my other devices over Tailscale". No SSH tunnel needed: connect from another device with `http://<machine-name>:7878`. Only your Tailscale devices can reach it, each still has to be paired, and it can only be switched on from the machine itself.
-- **Pair another device from the app.** Settings → "Pair another device" shows the address and a one-time code to type on the other device.
+- **Fix: running sessions showed "open in terminal" after an update.** When the app closed without its usual shutdown (updating, a crash, being killed), the sessions' Claude processes kept running on their own and held on to their sessions. The background helper now takes them with it. (The update *to* 0.1.3 still runs the old shutdown code, so it's from the next update on.)

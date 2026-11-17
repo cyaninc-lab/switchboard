@@ -8,12 +8,24 @@ from .store import Store, default_data_dir
 from .procs import alive as _alive  # noqa: E402  (kept as _alive: tests import it)
 
 
+def _exit_with_children():
+    """Exit and take this daemon's Claude processes with it. Without this they outlive us, holding their sessions
+    (shown as "open in terminal" by the next daemon); Windows has no parent-death signal, and updating the app ends
+    it without the app's own tree-kill running."""
+    import subprocess, sys
+    if sys.platform == "win32":  # /T: our whole tree, ourselves last
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(os.getpid())], capture_output=True, creationflags=0x08000000)
+    elif os.getpgrp() in (os.getpid(), os.getppid()):  # the app made us (or our onefile launcher) a group leader
+        os.killpg(os.getpgrp(), signal.SIGKILL)
+    os._exit(0)
+
+
 async def _watch(pid):
     """Embedded mode: the app may be closed, killed or crash; whichever way it goes, the daemon goes too."""
     async def loop():
         while _alive(pid):
             await asyncio.sleep(1)
-        os._exit(0)
+        _exit_with_children()
     asyncio.get_running_loop().create_task(loop())
 
 
