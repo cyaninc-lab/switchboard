@@ -21,9 +21,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
         run: |
-          gh release create "v${{ steps.v.outputs.version }}" -R cyaninc-lab/switchboard-releases --target main \
-            --draft --title "Switchboard ${{ steps.v.outputs.version }}" --notes-file NOTES.md
-          echo "id=$(gh api repos/cyaninc-lab/switchboard-releases/releases --jq '.[] | select(.tag_name=="v${{ steps.v.outputs.version }}") | .id' | head -1)" >> "$GITHUB_OUTPUT"
+          # reuse the release for this tag if it exists (a re-run), else create a draft; take the id from the API's own
+          # answer: listing releases right after creating one can miss it (the 0.1.0 run uploaded nothing because of that)
+          V="v${{ steps.v.outputs.version }}"
+          ID=$(gh api "repos/cyaninc-lab/switchboard-releases/releases/tags/$V" --jq .id 2>/dev/null || true)
+          if [ -z "$ID" ]; then
+            ID=$(gh api -X POST repos/cyaninc-lab/switchboard-releases/releases -f tag_name="$V" -f target_commitish=main \
+              -f name="Switchboard ${{ steps.v.outputs.version }}" -F draft=true -f body="$(cat NOTES.md)" --jq .id)
+          fi
+          test -n "$ID" || { echo "no release id"; exit 1; }
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
   build:
     needs: draft
     strategy:
@@ -72,4 +79,11 @@ jobs:
     steps:
       - env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
-        run: gh release edit "v${{ needs.draft.outputs.version }}" -R cyaninc-lab/switchboard-releases --draft=false --latest
+        run: |
+          # never publish a release without its files and the update manifest
+          ASSETS=$(gh api "repos/cyaninc-lab/switchboard-releases/releases/${{ needs.draft.outputs.id }}/assets" --jq '.[].name')
+          echo "$ASSETS"
+          echo "$ASSETS" | grep -qx latest.json || { echo "latest.json missing"; exit 1; }
+          echo "$ASSETS" | grep -q '\.AppImage$' || { echo "AppImage missing"; exit 1; }
+          echo "$ASSETS" | grep -q 'setup\.exe$' || { echo "Windows installer missing"; exit 1; }
+          gh release edit "v${{ needs.draft.outputs.version }}" -R cyaninc-lab/switchboard-releases --draft=false --latest
