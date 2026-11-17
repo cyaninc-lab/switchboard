@@ -1,6 +1,7 @@
 <script lang="ts">
   import * as api from '$lib/api';
-  import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell, openExternal, appVersion } from '$lib/shell';
+  import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell, openExternal, appVersion, checkForUpdate } from '$lib/shell';
+  import type { Update } from '$lib/shell';
   import { captureAppLog, buildReport, issueUrl } from '$lib/report';
   import type { ServiceStatus } from '$lib/shell';
   import TerminalView from '$lib/Terminal.svelte';
@@ -21,6 +22,32 @@
   let filter = $state('');
   let dialog = $state<'connect' | 'add' | 'settings' | 'report' | null>(null);
   if (typeof window !== 'undefined') captureAppLog();
+
+  // self-update: check shortly after start and every 6 hours; never installs without a click
+  let update = $state<Update | null>(null);
+  let updNotes = $state(false);
+  let updBusy = $state<number | null>(null);
+  let updMsg = $state('');
+  let version = $state('');
+  async function checkUpdates(manual = false) {
+    try {
+      update = await checkForUpdate();
+      if (manual) updMsg = update ? `Switchboard ${update.version} is available.` : "You're on the latest version.";
+    } catch (e) { if (manual) updMsg = `Couldn't check for updates: ${(e as Error).message ?? e}`; }
+  }
+  $effect(() => {
+    appVersion().then((v) => (version = v));
+    const first = setTimeout(() => checkUpdates(), 10_000);
+    const every = setInterval(() => checkUpdates(), 6 * 3600_000);
+    return () => { clearTimeout(first); clearInterval(every); };
+  });
+  let liveHere = $derived(Object.values(tree).flatMap((t) => t.entries).filter((e) => ['working', 'waiting', 'ready'].includes(e.state)).length);
+  async function installUpdate() {
+    if (!update) return;
+    updBusy = 0;
+    try { await update.install((p) => (updBusy = p)); }
+    catch (e) { updBusy = null; updMsg = `Update failed: ${(e as Error).message ?? e}`; }
+  }
 
   // report a bug
   let rDesc = $state('');
@@ -367,6 +394,18 @@
 <svelte:window onkeydown={onKey} />
 
 <div class="app">
+  {#if update}
+    <div class="updbar" role="status">
+      <span><b>Switchboard {update.version}</b> is available{version ? ` (you have ${version})` : ''}.</span>
+      {#if update.notes}<button class="link" onclick={() => (updNotes = !updNotes)}>What's new</button>{/if}
+      {#if liveHere && svc?.embedded !== false}<span class="muted small">{liveHere} live session{liveHere === 1 ? '' : 's'} will stop and resume on your next message.</span>{/if}
+      <span class="grow"></span>
+      {#if updBusy !== null}<span class="muted small">Downloading… {updBusy}%</span>
+      {:else}<button class="btn primary small" onclick={installUpdate}>Restart to update</button>
+        <button class="tiny" aria-label="Dismiss update" onclick={() => (update = null)}>Later</button>{/if}
+    </div>
+    {#if updNotes}<div class="updnotes md">{@html md(update.notes)}</div>{/if}
+  {/if}
   <header class="titlebar">
     <div class="brand">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--mauve)" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" /></svg>
@@ -580,6 +619,11 @@
       {/if}
       {#if svcError}<p class="error">{svcError}</p>{/if}
 
+      <h3 class="sub">Updates</h3>
+      <p class="muted small">Switchboard {version || '…'}. Updates come from github.com/cyaninc-lab/switchboard-releases and are checked for a valid signature before installing.</p>
+      <div class="actions" style="justify-content: flex-start"><button type="button" class="btn ghost" onclick={() => checkUpdates(true)}>Check for updates</button></div>
+      {#if updMsg}<p class="muted small" role="status">{updMsg}</p>{/if}
+
       <h3 class="sub">Accounts</h3>
       {#if machines.length}
         <div class="pills">
@@ -778,6 +822,9 @@
   .tabs button.on { border-bottom-color: var(--mauve); color: var(--text); font-weight: 600; }
   .dialog select { background: var(--base); border: 1px solid var(--s1); border-radius: 8px; padding: 8px 10px; color: var(--text); font: inherit; appearance: none; }
   .sub { margin: 8px 0 0; font-size: 13px; }
+  .updbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 16px; background: rgba(203, 166, 247, 0.12); border-bottom: 1px solid rgba(203, 166, 247, 0.35); }
+  .updnotes { padding: 8px 16px 12px; background: var(--mantle); border-bottom: 1px solid var(--s0); max-height: 200px; overflow: auto; }
+  .btn.small { padding: 5px 12px; }
   .dialog textarea { width: 100%; box-sizing: border-box; background: var(--base); border: 1px solid var(--s1); border-radius: 8px; padding: 8px 10px; color: var(--text); font: inherit; resize: vertical; }
   .acclist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
   .acclist li { display: grid; grid-template-columns: 120px 1fr auto; gap: 10px; align-items: center; padding: 6px 10px; background: var(--mantle); border-radius: 8px; }

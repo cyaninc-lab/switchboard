@@ -208,6 +208,8 @@ fn start_embedded(state: &Embedded) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Embedded(Mutex::new(None)))
         .setup(|app| {
             // no daemon answering (no background service): run our own for as long as the app runs

@@ -38,3 +38,27 @@ export async function appVersion() {
   const { getVersion } = await import('@tauri-apps/api/app');
   return getVersion();
 }
+
+// ---- self-update (signed, from cyaninc-lab/switchboard-releases) ----
+export type Update = { version: string; notes: string; install: (onProgress: (pct: number) => void) => Promise<void> };
+
+/** null when up to date (or outside the desktop app). Throws if the check itself fails. */
+export async function checkForUpdate(): Promise<Update | null> {
+  if (!inShell()) return null;
+  const { check } = await import('@tauri-apps/plugin-updater');
+  const u = await check();
+  if (!u) return null;
+  return {
+    version: u.version,
+    notes: u.body ?? '',
+    install: async (onProgress) => {
+      let total = 0, done = 0;
+      await u.downloadAndInstall((ev) => {
+        if (ev.event === 'Started') total = ev.data.contentLength ?? 0;
+        if (ev.event === 'Progress') { done += ev.data.chunkLength; if (total) onProgress(Math.round((done / total) * 100)); }
+      });
+      const { relaunch } = await import('@tauri-apps/plugin-process');
+      await relaunch();
+    },
+  };
+}

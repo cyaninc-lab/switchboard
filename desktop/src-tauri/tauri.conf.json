@@ -25,7 +25,11 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "appimage",
+      "deb",
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -35,6 +39,15 @@
     ],
     "externalBin": [
       "binaries/switchboard-daemon"
-    ]
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI3NkQyREU5RjAxQjUxOTgKUldTWVVSdnc2UzF0SjdvZ3laenNlSTZRUkhMQWR2OUMyRmtBaGU3TzFsQTJJZG00QlNkYTNpZTkK",
+      "endpoints": [
+        "https://github.com/cyaninc-lab/switchboard-releases/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

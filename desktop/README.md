@@ -33,3 +33,12 @@ Later, the same flows can drive the actual Tauri window through `tauri-driver` o
 `node e2e-real/watch.mjs "<session search>"` drives the release build through `tauri-driver`
 (WebDriver; needs `webkit2gtk-driver` and `cargo install tauri-driver --version 2.0.6`), visibly and paced
 (`SLOW=ms`), against real Claude (`SWITCHBOARD_MODEL`, default Haiku). Screenshots: `e2e/.results/real-*.png`.
+
+## Releases and self-update
+
+Bump `VERSION` (and write `NOTES.md`) in a PR; merging it runs `.github/workflows/release.yml`: a draft release in
+the public `cyaninc-lab/switchboard-releases`, signed Linux (AppImage, .deb) and Windows (NSIS) builds plus
+`latest.json`, then publish. The app checks `latest.json` 10 s after start and every 6 hours, shows a banner, and
+installs only on "Restart to update" (signature checked against the public key in `tauri.conf.json`).
+Secrets: `TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)` (backup in Bitwarden), `RELEASES_TOKEN` (fine-grained, Contents on the releases repo).
+`tools/stamp-version.py` writes VERSION into every manifest. Local Rust must be ≥ 1.90 (Tauri 2.12).

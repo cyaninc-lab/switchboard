@@ -1,0 +1,75 @@
+name: release
+# Merging a PR that changes VERSION ships it: a draft release in the public releases repo, signed builds for
+# Linux and Windows uploaded to it with latest.json, then the draft is published (apps only see complete releases).
+on:
+  push:
+    branches: [main]
+    paths: [VERSION]
+  workflow_dispatch:
+concurrency: release
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      id: ${{ steps.r.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+      - id: r
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          gh release create "v${{ steps.v.outputs.version }}" -R cyaninc-lab/switchboard-releases --target main \
+            --draft --title "Switchboard ${{ steps.v.outputs.version }}" --notes-file NOTES.md
+          echo "id=$(gh api repos/cyaninc-lab/switchboard-releases/releases --jq '.[] | select(.tag_name=="v${{ steps.v.outputs.version }}") | .id' | head -1)" >> "$GITHUB_OUTPUT"
+  build:
+    needs: draft
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]  # 22.04: an older glibc, so the AppImage runs on more distros
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python tools/stamp-version.py && pip install ./daemon pyinstaller && PY=python daemon/build-sidecar.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - run: npm ci
+        working-directory: desktop
+      - id: notes
+        run: |
+          { echo "body<<NOTES_EOF"; cat NOTES.md; echo "NOTES_EOF"; } >> "$GITHUB_OUTPUT"
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: desktop
+          owner: cyaninc-lab
+          repo: switchboard-releases
+          releaseId: ${{ needs.draft.outputs.id }}
+          releaseBody: ${{ steps.notes.outputs.body }}
+          includeUpdaterJson: true
+  publish:
+    needs: [draft, build]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: gh release edit "v${{ needs.draft.outputs.version }}" -R cyaninc-lab/switchboard-releases --draft=false --latest
