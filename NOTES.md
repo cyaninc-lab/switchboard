@@ -1,8 +1,4 @@
-Watches, the inbox, and a much more capable chat view.
+## Switchboard 0.1.2
 
-- **Watches:** schedules, commands, HTTP checks and GitHub (issues, PRs, failed runs) that notify you or wake an agent; its reply lands in the new **inbox**, with desktop notifications.
-- **Claude's questions and plans:** answer multiple-choice questions and approve or send back plans right in the chat.
-- **Permissions:** Allow for this session, or Always allow.
-- **Readable work:** diffs for edits, to-do checklists, expandable tool output, collapsible thinking, and subagent work grouped under its step.
-- **Status bar:** context used and cost per session, plus an effort picker.
-- A notification when a session you're not looking at needs you.
+- **Reach this machine from your other devices over Tailscale.** Settings → Other devices → "Reachable from my other devices over Tailscale". No SSH tunnel needed: connect from another device with `http://<machine-name>:7878`. Only your Tailscale devices can reach it, each still has to be paired, and it can only be switched on from the machine itself.
+- **Pair another device from the app.** Settings → "Pair another device" shows the address and a one-time code to type on the other device.

@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS watches (
 CREATE TABLE IF NOT EXISTS inbox (
   id INTEGER PRIMARY KEY AUTOINCREMENT, created REAL, source TEXT, title TEXT, body TEXT,
   watch_id TEXT, entry_id TEXT, from_agent INTEGER NOT NULL DEFAULT 0, read INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS accounts (name TEXT PRIMARY KEY, kind TEXT NOT NULL, secret TEXT NOT NULL, created REAL);
 CREATE TABLE IF NOT EXISTS entries (
   id TEXT PRIMARY KEY, session_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL, grp TEXT NOT NULL,
@@ -52,6 +53,14 @@ class Store:
             self.db.execute("ALTER TABLE entries ADD COLUMN model TEXT")  # None = Claude Code's default
         if "effort" not in cols:
             self.db.execute("ALTER TABLE entries ADD COLUMN effort TEXT")  # None = the model's default
+
+    # settings (daemon-wide, e.g. whether to listen on the Tailscale address)
+    def setting(self, key, default=None):
+        r = self.db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return r["value"] if r else default
+
+    def set_setting(self, key, value):
+        self.db.execute("INSERT OR REPLACE INTO settings VALUES (?, ?)", (key, value))
 
     # pairing
     def new_pair_code(self):

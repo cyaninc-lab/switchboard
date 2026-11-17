@@ -8,6 +8,7 @@ from .store import Store
 from .runner import Runner, scrub_env
 from .tty import Terminals
 from .procs import alive
+from .net import Network, SETTING as NET_SETTING
 from .watches import Watches, KINDS, ACTIONS
 from .runner import MODES
 from . import logs
@@ -16,6 +17,7 @@ from .logs import log
 STORE, NAME = web.AppKey("store", Store), web.AppKey("name", str)
 RUNNER, SOCKETS, REAPER = web.AppKey("runner", Runner), web.AppKey("sockets", set), web.AppKey("reaper", asyncio.Task)
 TTYS = web.AppKey("ttys", Terminals)
+NET = web.AppKey("net", Network)
 WATCHES, WATCH_TASK = web.AppKey("watches", Watches), web.AppKey("watch_task", asyncio.Task)
 CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
 
@@ -68,7 +70,7 @@ def _entry_view(entry, info, live, runner=None):
 
 
 CORS = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Authorization, Content-Type",
-        "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS"}
+        "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS"}
 
 
 @web.middleware
@@ -250,6 +252,30 @@ async def read_inbox(request):
     request.app[STORE].mark_read(int(iid) if iid else None)
     await _broadcast(request.app, {"type": "inbox_read", "id": int(iid) if iid else None})
     return web.Response(status=204)
+
+
+def _local_only(request):
+    """Settings that change who can reach this daemon, and pairing codes, only from the machine itself."""
+    if request.remote not in ("127.0.0.1", "::1"):
+        raise web.HTTPForbidden(text=json.dumps({"code": "only_from_this_machine"}), content_type="application/json")
+
+
+async def get_network(request):
+    return web.json_response(await request.app[NET].status())
+
+
+async def set_network(request):
+    _local_only(request)
+    body = await request.json()
+    request.app[STORE].set_setting(NET_SETTING, "1" if body.get("listen_tailscale") else "0")
+    await request.app[NET].apply()
+    return web.json_response(await request.app[NET].status())
+
+
+async def pair_code(request):
+    """A one-time code for pairing another device, from the app instead of the command line."""
+    _local_only(request)
+    return web.json_response({"code": request.app[STORE].new_pair_code(), "expires_in": 600})
 
 
 async def get_logs(request):
@@ -437,6 +463,7 @@ def make_app(store: Store, name=None):
     app[SOCKETS] = set()
     app[RUNNER] = Runner(store, sdk, lambda ev: _broadcast(app, ev))
     app[TTYS] = Terminals(lambda ev: _broadcast(app, ev))
+    app[NET] = Network(store)
     app[WATCHES] = Watches(store, app[RUNNER], lambda ev: _broadcast(app, ev))
 
     async def start(app):
@@ -460,6 +487,7 @@ def make_app(store: Store, name=None):
         web.get("/v1/entries", list_entries), web.post("/v1/entries", add_entry),
         web.patch("/v1/entries/{id}", update_entry), web.delete("/v1/entries/{id}", remove_entry),
         web.get("/v1/entries/{id}/messages", messages), web.get("/v1/ws", ws_handler), web.get("/v1/commands", commands), web.get("/v1/folders", folders), web.get("/v1/models", models), web.get("/v1/logs", get_logs),
+        web.get("/v1/network", get_network), web.put("/v1/network", set_network), web.post("/v1/pair_code", pair_code),
         web.get("/v1/watches", list_watches), web.post("/v1/watches", add_watch), web.patch("/v1/watches/{id}", update_watch),
         web.delete("/v1/watches/{id}", remove_watch), web.post("/v1/watches/{id}/test", test_watch),
         web.get("/v1/inbox", list_inbox), web.post("/v1/inbox/read", read_inbox), web.post("/v1/inbox/{id}/read", read_inbox),

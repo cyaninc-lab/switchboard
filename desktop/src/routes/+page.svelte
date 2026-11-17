@@ -92,7 +92,28 @@
   let svc = $state<ServiceStatus | null>(null);
   let svcBusy = $state(false);
   let svcError = $state('');
+  // settings: other devices (this machine's daemon over Tailscale, and pairing codes)
+  let net = $state<api.Network | null>(null);
+  let netBusy = $state(false);
+  let netError = $state('');
+  let code = $state<{ code: string; until: number } | null>(null);
+  let now = $state(Date.now());
+  const localMachine = $derived(machines.find((m) => api.isLocal(m)) ?? null);
+  async function loadNet() { if (localMachine) try { net = await api.network(localMachine); } catch (e) { netError = (e as Error).message; } }
+  async function toggleNet() {
+    if (!localMachine || !net) return;
+    netBusy = true; netError = '';
+    try { net = await api.setNetwork(localMachine, !net.listen_tailscale); } catch (e) { netError = (e as Error).message; }
+    netBusy = false;
+  }
+  async function newCode() {
+    if (!localMachine) return;
+    try { const c = await api.pairCode(localMachine); code = { code: c.code, until: Date.now() + c.expires_in * 1000 }; }
+    catch (e) { netError = (e as Error).message; }
+  }
+  $effect(() => { if (!code) return; const t = setInterval(() => (now = Date.now()), 1000); return () => clearInterval(t); });
   async function openSettings() {
+    loadNet(); code = null;
     dialog = 'settings'; svcError = '';
     accMachine = accMachine ?? machines[0] ?? null;
     if (accMachine) loadAccounts(accMachine);
@@ -736,6 +757,30 @@
       {/if}
       {#if svcError}<p class="error">{svcError}</p>{/if}
 
+      <h3 class="sub">Other devices</h3>
+      {#if !localMachine}
+        <p class="muted small">Available for the machine this app runs on.</p>
+      {:else if net}
+        <label class="toggle">
+          <input type="checkbox" checked={net.listen_tailscale} disabled={netBusy || (!net.tailscale && !net.listen_tailscale)} onchange={toggleNet} />
+          <span><b>Reachable from my other devices over Tailscale</b><br />
+            <span class="muted small">{net.tailscale ? `This machine is ${net.tailscale.dns ?? net.tailscale.ips[0]} on your tailnet. Only your Tailscale devices can reach it, and each still has to be paired.` : "Tailscale isn't running on this machine."}</span></span>
+        </label>
+        {#if net.listen_tailscale && net.active.length}
+          <p class="small" aria-live="polite">Reachable at <code>{net.url ?? `http://${net.active[0]}`}</code>{net.url ? ` (or http://${net.active[0]})` : ''}</p>
+          <div class="actions" style="justify-content: flex-start"><button type="button" class="btn ghost" onclick={newCode}>Pair another device</button></div>
+          {#if code && code.until > now}
+            <div class="paircode" role="status">
+              <div>On the other device, open Switchboard → <b>+ Connect a machine</b>:</div>
+              <div>Address <code>{net.url ?? `http://${net.active[0]}`}</code> · code <b class="mono big">{code.code}</b></div>
+              <div class="muted small">Valid for {Math.max(0, Math.round((code.until - now) / 1000 / 60))} more min, once.</div>
+            </div>
+          {:else if code}<p class="muted small">That code expired. <button class="link" onclick={newCode}>New code</button></p>{/if}
+        {/if}
+        {#if net.error}<p class="error">{net.error}</p>{/if}
+      {/if}
+      {#if netError}<p class="error">{netError === 'only_from_this_machine' ? 'This can only be changed on that machine itself.' : netError}</p>{/if}
+
       <h3 class="sub">Updates</h3>
       <p class="muted small">Switchboard {version || '…'}. Updates come from github.com/cyaninc-lab/switchboard-releases and are checked for a valid signature before installing.</p>
       <div class="actions" style="justify-content: flex-start"><button type="button" class="btn ghost" onclick={() => checkUpdates(true)}>Check for updates</button></div>
@@ -958,6 +1003,8 @@
   .tabs button.on { border-bottom-color: var(--mauve); color: var(--text); font-weight: 600; }
   :global(.dialog select) { background: var(--base); border: 1px solid var(--s1); border-radius: 8px; padding: 8px 10px; color: var(--text); font: inherit; appearance: none; }
   .sub { margin: 8px 0 0; font-size: 13px; }
+  .paircode { border: 1px solid rgba(203, 166, 247, 0.45); background: rgba(203, 166, 247, 0.07); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+  .big { font-size: 16px; letter-spacing: 1px; color: var(--mauve); }
   .updbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 16px; background: rgba(203, 166, 247, 0.12); border-bottom: 1px solid rgba(203, 166, 247, 0.35); }
   .updnotes { padding: 8px 16px 12px; background: var(--mantle); border-bottom: 1px solid var(--s0); max-height: 200px; overflow: auto; }
   :global(.btn.small) { padding: 5px 12px; }

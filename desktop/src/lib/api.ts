@@ -73,6 +73,12 @@ export const accounts = (m: Machine) => call<{ accounts: Account[] }>(m, '/v1/ac
 export const addAccount = (m: Machine, name: string, token: string, kind: 'oauth' | 'api_key' = 'oauth') =>
   call<{ accounts: Account[] }>(m, '/v1/accounts', { method: 'POST', body: JSON.stringify({ name, token, kind }) }).then((d) => d.accounts);
 export const removeAccount = (m: Machine, name: string) => call<void>(m, `/v1/accounts/${encodeURIComponent(name)}`, { method: 'DELETE' });
+export type Network = { listen_tailscale: boolean; active: string[]; error: string | null; port: number;
+  url: string | null; tailscale: { name: string | null; dns: string | null; ips: string[] } | null };
+export const network = (m: Machine) => call<Network>(m, '/v1/network');
+export const setNetwork = (m: Machine, on: boolean) => call<Network>(m, '/v1/network', { method: 'PUT', body: JSON.stringify({ listen_tailscale: on }) });
+export const pairCode = (m: Machine) => call<{ code: string; expires_in: number }>(m, '/v1/pair_code', { method: 'POST' });
+export const isLocal = (m: Machine) => /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/.test(m.url);
 export type Usage = { context_used: number; context_window: number | null; turn_cost: number | null; session_cost: number };
 export type Model = { value: string; displayName: string; description?: string; supportsEffort?: boolean; supportedEffortLevels?: string[] };
 export const models = (m: Machine) => call<{ models: Model[] }>(m, '/v1/models').then((d) => d.models);

@@ -1,5 +1,5 @@
 """switchboard-daemon: serve | pair | clients | revoke <hash prefix>"""
-import argparse, asyncio, os, time
+import argparse, asyncio, os, signal, time
 from aiohttp import web
 from .app import make_app
 from .store import Store, default_data_dir
@@ -15,6 +15,27 @@ async def _watch(pid):
             await asyncio.sleep(1)
         os._exit(0)
     asyncio.get_running_loop().create_task(loop())
+
+
+async def _serve(app, host, port):
+    """Like web.run_app, but keeps the runner so the Tailscale listener can be opened and closed while running."""
+    from .app import NET
+    runner = web.AppRunner(app, shutdown_timeout=2)  # stop promptly; clients reconnect
+    await runner.setup()
+    await web.TCPSite(runner, host, port).start()
+    print(f"======== Running on http://{host}:{port} ========", flush=True)
+    app[NET].attach(runner, port)
+    await app[NET].apply()
+    stop = asyncio.Event()
+    try:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            asyncio.get_running_loop().add_signal_handler(sig, stop.set)
+    except (NotImplementedError, AttributeError, RuntimeError):
+        pass  # Windows: Ctrl+C arrives as KeyboardInterrupt instead
+    try:
+        await stop.wait()
+    finally:
+        await runner.cleanup()
 
 
 def main():
@@ -48,10 +69,15 @@ def main():
             from . import app as appmod, demo
             appmod.sdk = demo  # ponytail: swaps only the session readers the API uses; phase 2 running sessions will need a demo runner too
             appmod.open_in_terminal = lambda: {"demo-2"}
+            from . import net
+            net.tailscale_info = lambda: {"name": "demo-box", "dns": "demo-box.tail.ts.net", "ips": ["127.0.0.2"]}  # never the real tailnet
         app = make_app(store, a.name or ("demo" if a.demo else None))
         if a.exit_with:
             app.on_startup.append(lambda _app: _watch(a.exit_with))
-        web.run_app(app, host=a.host, port=a.port, shutdown_timeout=2)  # stop promptly; clients reconnect
+        try:
+            asyncio.run(_serve(app, a.host, a.port))
+        except KeyboardInterrupt:
+            pass
     elif a.cmd == "pair":
         print(store.new_pair_code())
     elif a.cmd == "clients":
