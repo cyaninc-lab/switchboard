@@ -8,6 +8,8 @@ class _UnixPty:
     def __init__(self, argv, cwd, env, cols, rows, on_data, on_exit):
         import fcntl, pty, termios, struct  # noqa: F401  (Unix-only modules)
         self._fcntl, self._termios, self._struct = fcntl, termios, struct
+        # ponytail: forkpty in a threaded process (executor threads) can in theory deadlock the child before exec;
+        # the child execs immediately, so the window is tiny. If it ever bites: openpty + subprocess with a setsid helper.
         self.pid, self.fd = pty.fork()
         if self.pid == 0:  # child: become the claude TUI
             try:

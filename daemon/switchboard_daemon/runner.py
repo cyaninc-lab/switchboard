@@ -52,6 +52,8 @@ class Live:
     pending: dict = dataclasses.field(default_factory=dict)  # request id -> Future
     said: bool = False  # did this turn produce any assistant text (built-in commands may only return a result)
     queue: list = dataclasses.field(default_factory=list)  # messages sent while working, sent in order afterwards
+    origin: dict = None  # set when a watch started this turn: its reply goes to the inbox
+    turn_text: list = dataclasses.field(default_factory=list)
 
 
 class Runner:
@@ -61,6 +63,7 @@ class Runner:
         self.cli_path = os.environ.get("SWITCHBOARD_CLAUDE") or shutil.which("claude")
         self.commands: list[str] = []  # slash commands from the last session start (init message)
         self._models = None
+        self.on_turn_end = None  # async (entry_id, reply_text, origin) for turns a watch started
 
     # ---- state ----
     def state(self, entry_id):
@@ -108,7 +111,7 @@ class Runner:
         lv = holder["lv"] = self.live[entry["id"]] = Live(entry["id"], client)
         return lv
 
-    async def send(self, entry, text, images=None):
+    async def send(self, entry, text, images=None, origin=None):
         images = images or []
         if len(images) > MAX_IMAGES:
             raise ValueError("too_many_images")
@@ -119,11 +122,15 @@ class Runner:
                 raise ValueError("image_too_large")
         lv = await self._open(entry)
         if lv.working:  # like Claude Code: a message typed while it works goes out when the turn ends
-            lv.queue.append((entry, text, images))
+            lv.queue.append((entry, text, images, origin))
             await self.broadcast({"type": "queued", "entry": entry["id"], "count": len(lv.queue)})
             return
         lv.working, lv.last_active, lv.said = True, time.time(), False
+        lv.origin, lv.turn_text = origin, []
         await self._emit_state(entry["id"])
+        if origin:  # clients show what they typed themselves; a watch's prompt has to be announced
+            await self.broadcast({"type": "message", "entry": entry["id"], "message": {
+                "type": "user", "uuid": uuid.uuid4().hex, "message": {"role": "user", "content": text}}})
         if images:
             content = [{"type": "image", "source": {"type": "base64", "media_type": im["media_type"], "data": im["data"]}} for im in images]
             content.append({"type": "text", "text": text or "(image)"})
@@ -145,6 +152,8 @@ class Runner:
                         await self.broadcast({"type": "delta", "entry": lv.entry_id, "text": ev["delta"]["text"]})
                 elif (h := as_history(m)) is not None:
                     lv.said |= h["type"] == "assistant"
+                    if h["type"] == "assistant":
+                        lv.turn_text += [b["text"] for b in h["message"]["content"] if isinstance(b, dict) and b.get("type") == "text"]
                     await self.broadcast({"type": "message", "entry": lv.entry_id, "message": h})
                 elif type(m).__name__ == "SystemMessage":
                     sub, data = getattr(m, "subtype", ""), getattr(m, "data", {}) or {}
@@ -166,9 +175,15 @@ class Runner:
             await self.broadcast({"type": "error", "entry": lv.entry_id, "code": "session_error", "message": str(e)[:500]})
         finally:
             lv.working = False
+            if lv.origin and self.on_turn_end:
+                origin, lv.origin = lv.origin, None
+                try:
+                    await self.on_turn_end(lv.entry_id, "\n\n".join(lv.turn_text).strip(), origin)
+                except Exception:
+                    log.exception("delivering a watch reply failed")
             if lv.queue and self.live.get(lv.entry_id) is lv:
-                entry, text, images = lv.queue.pop(0)
-                asyncio.get_running_loop().create_task(self.send(entry, text, images))
+                entry, text, images, origin = lv.queue.pop(0)
+                asyncio.get_running_loop().create_task(self.send(entry, text, images, origin))
             else:
                 await self._emit_state(lv.entry_id)
 

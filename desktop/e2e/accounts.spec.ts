@@ -22,7 +22,7 @@ test('accounts: add one, use it for a session, remove it', async ({ page }) => {
   await expect(list).toContainText('work');
   await expect(list).not.toContainText('sk-ant');
   await page.screenshot({ path: 'e2e/.results/accounts.png' });
-  await page.getByRole('button', { name: 'Close' }).click();
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
 
   await page.getByRole('button', { name: '+ Add' }).click();
   const dialog = page.getByRole('form', { name: 'Add to Switchboard' });
@@ -38,7 +38,7 @@ test('accounts: add one, use it for a session, remove it', async ({ page }) => {
   await page.getByRole('button', { name: 'Settings' }).click();
   await list.getByRole('button', { name: 'Remove account work' }).click();
   await expect(list).not.toContainText('work');
-  await page.getByRole('button', { name: 'Close' }).click();
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(page.getByRole('contentinfo').getByLabel('Account')).toHaveValue('');  // back on the machine login
   await page.getByRole('button', { name: 'Remove from tree' }).click();  // the specs share one demo daemon
 });
