@@ -24,12 +24,16 @@ jobs:
           # reuse the release for this tag if it exists (a re-run), else create a draft; take the id from the API's own
           # answer: listing releases right after creating one can miss it (the 0.1.0 run uploaded nothing because of that)
           V="v${{ steps.v.outputs.version }}"
-          ID=$(gh api "repos/cyaninc-lab/switchboard-releases/releases/tags/$V" --jq .id 2>/dev/null || true)
+          # gh api prints the error body on a 404, so decide on its exit status, never on whether it printed something
+          if ! ID=$(gh api "repos/cyaninc-lab/switchboard-releases/releases/tags/$V" --jq .id 2>/dev/null); then
+            # drafts have no tag yet, so look for a draft from an earlier run before creating one
+            ID=$(gh api repos/cyaninc-lab/switchboard-releases/releases --jq ".[] | select(.tag_name==\"$V\") | .id" | head -1)
+          fi
           if [ -z "$ID" ]; then
             ID=$(gh api -X POST repos/cyaninc-lab/switchboard-releases/releases -f tag_name="$V" -f target_commitish=main \
               -f name="Switchboard ${{ steps.v.outputs.version }}" -F draft=true -f body="$(cat NOTES.md)" --jq .id)
           fi
-          test -n "$ID" || { echo "no release id"; exit 1; }
+          [[ "$ID" =~ ^[0-9]+$ ]] || { echo "not a release id: $ID"; exit 1; }
           echo "id=$ID" >> "$GITHUB_OUTPUT"
   build:
     needs: draft
