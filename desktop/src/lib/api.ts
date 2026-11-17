@@ -123,7 +123,7 @@ export type LiveEvent =
   | { type: 'state'; entry: string; state: Entry['state'] | 'ready' }
   | { type: 'delta'; entry: string; text: string }
   | { type: 'message'; entry: string; message: HistoryMessage }
-  | { type: 'permission_request'; entry: string; request_id: string; tool: string; input: any }
+  | { type: 'permission_request'; entry: string; request_id: string; tool: string; kind: 'tool' | 'question' | 'plan'; input: any; remember: string[] }
   | { type: 'permission_resolved'; entry: string; request_id: string; allow: boolean; by: string }
   | { type: 'mode'; entry: string; mode: string }
   | { type: 'model'; entry: string; model: string | null }
@@ -169,7 +169,9 @@ export class Live {
   setMode(entry: string, mode: string) { this.sendJson({ type: 'set_mode', entry, mode }); }
   setModel(entry: string, model: string | null) { this.sendJson({ type: 'set_model', entry, model }); }
   setAccount(entry: string, account: string | null) { this.sendJson({ type: 'set_account', entry, account }); }
-  answer(request_id: string, allow: boolean, message?: string) { this.sendJson({ type: 'permission_reply', request_id, allow, message }); }
+  answer(request_id: string, allow: boolean, extra: { message?: string; remember?: string; answers?: Record<string, string | string[]>; response?: string } = {}) {
+    this.sendJson({ type: 'permission_reply', request_id, allow, ...extra });
+  }
   terminalOpen(entry: string, cols: number, rows: number) { this.sendJson({ type: 'terminal_open', entry, cols, rows }); }
   terminalInput(entry: string, data: string) { this.sendJson({ type: 'terminal_input', entry, data }); }
   terminalResize(entry: string, cols: number, rows: number) { this.sendJson({ type: 'terminal_resize', entry, cols, rows }); }

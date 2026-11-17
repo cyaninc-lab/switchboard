@@ -7,6 +7,7 @@
   import TerminalView from '$lib/Terminal.svelte';
   import InboxView from '$lib/Inbox.svelte';
   import WatchesView from '$lib/Watches.svelte';
+  import PromptCard from '$lib/Prompt.svelte';
   import { md } from '$lib/markdown';
   import { tick } from 'svelte';
   import type { Machine, Entry, Session, HistoryMessage } from '$lib/api';
@@ -152,7 +153,7 @@
   const lives = new Map<string, api.Live>();
   let streaming = $state<Record<string, string>>({});
   let queued = $state<Record<string, number>>({});
-  let prompts = $state<Record<string, { request_id: string; tool: string; input: any }[]>>({});
+  let prompts = $state<Record<string, { request_id: string; tool: string; kind: 'tool' | 'question' | 'plan'; input: any; remember: string[] }[]>>({});
   let draft = $state('');
   // follow new output while the view is at the bottom; leave it alone once the user scrolls up to read
   let logEl = $state<HTMLDivElement>();
@@ -249,7 +250,13 @@
       if (selected?.entry.id === e.entry) messages = [...messages, e.message];
       if (e.message.type === 'assistant') streaming[e.entry] = '';
     } else if (e.type === 'permission_request') {
-      prompts[e.entry] = [...(prompts[e.entry] ?? []), { request_id: e.request_id, tool: e.tool, input: e.input }];
+      prompts[e.entry] = [...(prompts[e.entry] ?? []), { request_id: e.request_id, tool: e.tool, kind: e.kind ?? 'tool', input: e.input, remember: e.remember ?? [] }];
+      // a session you're not looking at needs you: say so outside the app too
+      if (typeof document !== 'undefined' && (!document.hasFocus() || selected?.entry.id !== e.entry)) {
+        const name = Object.values(tree).flatMap((t) => t.entries).find((x) => x.id === e.entry)?.name ?? 'A session';
+        notify(`${name} needs you`, e.kind === 'question' ? (e.input?.questions?.[0]?.question ?? 'Claude has a question')
+          : e.kind === 'plan' ? 'Claude has a plan for you to approve' : `Allow ${e.tool}: ${summary(e.input)}?`);
+      }
     } else if (e.type === 'permission_resolved') {
       prompts[e.entry] = (prompts[e.entry] ?? []).filter((p) => p.request_id !== e.request_id);
     } else if (e.type === 'mode') {
@@ -528,14 +535,7 @@
           {/each}
           {#if streaming[selected.entry.id]}<div class="streaming"><span class="bullet">⏺ </span>{streaming[selected.entry.id]}<span class="cursor">▌</span></div>{/if}
           {#each prompts[selected.entry.id] ?? [] as p (p.request_id)}
-            <div class="perm" role="group" aria-label="Permission needed">
-              <div class="permtitle">Permission needed</div>
-              <div>{p.tool}: {summary(p.input)}</div>
-              <div class="permactions">
-                <button class="allow" onclick={() => act((l) => l.answer(p.request_id, true))}>Allow</button>
-                <button class="deny" onclick={() => act((l) => l.answer(p.request_id, false))}>Deny</button>
-              </div>
-            </div>
+            <PromptCard {p} live={live()!} />
           {/each}
         </div>
         {#if liveErr}<div class="liveerr" role="alert">{liveErr}</div>{/if}
