@@ -152,6 +152,14 @@
   // ---- live sessions (phase 2) ----
   const lives = new Map<string, api.Live>();
   let streaming = $state<Record<string, string>>({});
+  let thinkingLive = $state<Record<string, string>>({});
+  // subagents: their messages carry parent_tool_use_id; show them inside the Agent step that started them
+  let mainMsgs = $derived(messages.filter((m) => !m.parent_tool_use_id));
+  let byParent = $derived(messages.reduce((acc, m) => {
+    if (m.parent_tool_use_id) (acc[m.parent_tool_use_id] ??= []).push(m);
+    return acc;
+  }, {} as Record<string, HistoryMessage[]>));
+  const AGENT_TOOLS = ['Agent', 'Task'];
   let queued = $state<Record<string, number>>({});
   let expanded = $state<Record<string, boolean>>({});  // tool output shown in full
   const RESULT_LINES = 6;
@@ -263,12 +271,13 @@
     if (e.type === 'inbox_read' && m) { loadInbox(m); return; }
     if (e.type === 'state') {
       setEntry(e.entry, { state: e.state as Entry['state'] });
-      if (e.state !== 'working' && e.state !== 'waiting') { streaming[e.entry] = ''; queued[e.entry] = 0; }
+      if (e.state !== 'working' && e.state !== 'waiting') { streaming[e.entry] = ''; thinkingLive[e.entry] = ''; queued[e.entry] = 0; }
     } else if (e.type === 'delta') {
-      streaming[e.entry] = (streaming[e.entry] ?? '') + e.text;
+      if (e.kind === 'thinking') thinkingLive[e.entry] = (thinkingLive[e.entry] ?? '') + e.text;
+      else streaming[e.entry] = (streaming[e.entry] ?? '') + e.text;
     } else if (e.type === 'message') {
       if (selected?.entry.id === e.entry) messages = [...messages, e.message];
-      if (e.message.type === 'assistant') streaming[e.entry] = '';
+      if (e.message.type === 'assistant') { streaming[e.entry] = ''; thinkingLive[e.entry] = ''; }
     } else if (e.type === 'permission_request') {
       prompts[e.entry] = [...(prompts[e.entry] ?? []), { request_id: e.request_id, tool: e.tool, kind: e.kind ?? 'tool', input: e.input, remember: e.remember ?? [] }];
       // a session you're not looking at needs you: say so outside the app too
@@ -281,6 +290,8 @@
       prompts[e.entry] = (prompts[e.entry] ?? []).filter((p) => p.request_id !== e.request_id);
     } else if (e.type === 'mode') {
       setEntry(e.entry, { mode: e.mode });
+    } else if (e.type === 'effort') {
+      setEntry(e.entry, { effort: e.effort });
     } else if (e.type === 'model') {
       setEntry(e.entry, { model: e.model });
     } else if (e.type === 'account') {
@@ -542,7 +553,7 @@
           onwheel={markUser} ontouchmove={markUser} onpointerdown={markUser} onkeydown={markUser} tabindex="0">
           <div class="logbody" bind:this={logBody}>
           {#if loadingHistory}<div class="muted">Loading…</div>{/if}
-          {#each messages as msg (msg.uuid)}
+          {#snippet lines(msg: HistoryMessage)}
             {#each api.render(msg) as line, li}
               {#if line.kind === 'image'}
                 <img class="shot" src={line.text} alt="Attachment" />
@@ -552,6 +563,14 @@
                 {:else}
                   <div class="reply"><span class="bullet">⏺</span><div class="md">{@html md(line.text)}</div></div>
                 {/if}
+              {:else if line.kind === 'thinking'}
+                <details class="thinking"><summary>Thinking</summary><div class="thinktext">{line.text}</div></details>
+              {:else if line.kind === 'tool' && AGENT_TOOLS.includes(line.name)}
+                {@const kids = byParent[line.id] ?? []}
+                <details class="agent" open={!!expanded['agent' + line.id]} ontoggle={(e) => (expanded['agent' + line.id] = (e.currentTarget as HTMLDetailsElement).open)}>
+                  <summary><span class="bullet">⏺ </span>Agent: {line.input?.description ?? line.input?.subagent_type ?? 'subagent'}<span class="muted small"> · {kids.length} step{kids.length === 1 ? '' : 's'}</span></summary>
+                  <div class="agentbody">{#each kids as k (k.uuid)}{@render lines(k)}{/each}</div>
+                </details>
               {:else if line.kind === 'tool'}
                 <div><span class="bullet">⏺ </span><span class="tool">{line.text}</span></div>
               {:else if line.kind === 'diff'}
@@ -570,7 +589,9 @@
                 {#if rows.length > RESULT_LINES}<button class="link small more" onclick={() => (expanded[msg.uuid + li] = !expanded[msg.uuid + li])}>{expanded[msg.uuid + li] ? 'Show less' : `Show all ${rows.length} lines`}</button>{/if}
               {/if}
             {/each}
-          {/each}
+          {/snippet}
+          {#each mainMsgs as msg (msg.uuid)}{@render lines(msg)}{/each}
+          {#if thinkingLive[selected.entry.id] && !streaming[selected.entry.id]}<div class="thinking live"><span class="muted">Thinking… </span><span class="thinktext">{thinkingLive[selected.entry.id].slice(-240)}</span></div>{/if}
           {#if streaming[selected.entry.id]}<div class="streaming"><span class="bullet">⏺ </span>{streaming[selected.entry.id]}<span class="cursor">▌</span></div>{/if}
           {#each prompts[selected.entry.id] ?? [] as p (p.request_id)}
             <PromptCard {p} live={live()!} />
@@ -633,6 +654,16 @@
           {/each}
         </select>
       </label>
+      {@const mdl = (modelList[selected.machine.url] ?? []).find((m) => m.value === (selected!.entry.model ?? 'default'))}
+      {#if mdl?.supportsEffort && mdl.supportedEffortLevels?.length}
+        <label class="modepick">effort
+          <select aria-label="Effort" value={selected.entry.effort ?? ''} title="Applies from the next message (the live session restarts)"
+            onchange={(ev) => act((l, id) => l.setEffort(id, (ev.target as HTMLSelectElement).value || null))}>
+            <option value="">default</option>
+            {#each mdl.supportedEffortLevels as lvl}<option value={lvl}>{lvl}</option>{/each}
+          </select>
+        </label>
+      {/if}
       <label class="modepick">mode
         <select aria-label="Permission mode" value={selected.entry.mode ?? 'default'} onchange={(ev) => act((l, id) => l.setMode(id, (ev.target as HTMLSelectElement).value))}>
           {#each api.MODES as m}<option value={m}>{m}</option>{/each}
@@ -874,6 +905,11 @@
   .md :global(ul), .md :global(ol) { margin: 4px 0 8px; padding-left: 20px; } .prompt { color: var(--mauve); font-weight: 600; } .bullet { color: var(--mauve); }
   .tool { color: var(--sub1); } .result { color: var(--o2); padding-left: 18px; }
   .more { align-self: flex-start; margin-left: 30px; }
+  .thinking { color: var(--o2); font-style: italic; white-space: pre-wrap; } .thinking summary { cursor: pointer; font-style: normal; }
+  .thinking.live .thinktext { opacity: 0.8; }
+  .thinktext { display: block; padding: 4px 0 4px 18px; font-size: 12px; }
+  .agent { border-left: 2px solid var(--s1); padding-left: 10px; } .agent summary { cursor: pointer; color: var(--sub1); }
+  .agentbody { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; }
   .diff { display: flex; flex-direction: column; border: 1px solid var(--s0); border-radius: 8px; overflow: hidden; }
   .diffhead { padding: 4px 10px; background: var(--mantle); color: var(--sub1); }
   .dl { padding: 0 10px; white-space: pre-wrap; font-size: 12px; } .dl .sign { display: inline-block; width: 14px; color: var(--o1); }

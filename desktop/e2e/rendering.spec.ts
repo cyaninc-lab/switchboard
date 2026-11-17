@@ -39,6 +39,24 @@ test('diffs, to-dos, expandable output and the context/cost meter', async ({ pag
   await input.press('Enter');
   await expect(page.getByRole('contentinfo')).toContainText('ctx 26% · ≈$0.01');
 
+  // thinking (collapsed) and a subagent's work grouped under its Agent step
+  await input.fill('think, then use a subagent');
+  await input.press('Enter');
+  const agent = log.locator('details.agent').filter({ hasText: 'Agent: Search the codebase' });
+  await expect(agent).toContainText('3 steps');
+  await expect(log.locator('details.thinking').last()).toContainText('Thinking');
+  await expect(agent.getByText('Found it in server/app.py line 212.')).toBeHidden();  // collapsed until opened
+  await agent.locator('summary').click();
+  await expect(agent.getByText('Found it in server/app.py line 212.')).toBeVisible();
+  await expect(agent).toContainText('Grep(dash_url)');
+  await page.screenshot({ path: 'e2e/.results/subagent.png' });
+
+  // effort: the model offers levels; the next message runs at the chosen one
+  await page.getByRole('contentinfo').getByLabel('Effort').selectOption('low');
+  await input.fill('what effort');
+  await input.press('Enter');
+  await expect(log).toContainText('(effort: low)');
+
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
   await page.getByRole('button', { name: 'Remove from tree' }).click();
 });

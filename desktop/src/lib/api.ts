@@ -8,12 +8,12 @@ export type Session = {
 };
 export type Entry = {
   id: string; session_id: string; name: string; group: string; pinned: boolean;
-  account: string | null; mode: string | null; model: string | null;
+  account: string | null; mode: string | null; model: string | null; effort?: string | null;
   usage?: Usage | null;
   state: 'new' | 'working' | 'waiting' | 'ready' | 'stopped' | 'terminal' | 'missing' | 'error';
   session: Session | null;
 };
-export type HistoryMessage = { type: 'user' | 'assistant'; uuid: string; message: any };
+export type HistoryMessage = { type: 'user' | 'assistant'; uuid: string; message: any; parent_tool_use_id?: string | null };
 
 const KEY = 'switchboard.machines';
 
@@ -74,7 +74,7 @@ export const addAccount = (m: Machine, name: string, token: string, kind: 'oauth
   call<{ accounts: Account[] }>(m, '/v1/accounts', { method: 'POST', body: JSON.stringify({ name, token, kind }) }).then((d) => d.accounts);
 export const removeAccount = (m: Machine, name: string) => call<void>(m, `/v1/accounts/${encodeURIComponent(name)}`, { method: 'DELETE' });
 export type Usage = { context_used: number; context_window: number | null; turn_cost: number | null; session_cost: number };
-export type Model = { value: string; displayName: string; description?: string };
+export type Model = { value: string; displayName: string; description?: string; supportsEffort?: boolean; supportedEffortLevels?: string[] };
 export const models = (m: Machine) => call<{ models: Model[] }>(m, '/v1/models').then((d) => d.models);
 export const addEntry = (m: Machine, body: { session_id?: string; new?: { cwd: string }; name?: string; group?: string; mode?: string; model?: string; account?: string }) =>
   call<Entry>(m, '/v1/entries', { method: 'POST', body: JSON.stringify(body) });
@@ -89,7 +89,8 @@ export const history = (m: Machine, id: string, limit = 400) =>
 /** Flatten an SDK message into display lines: text, tool calls and tool results. */
 export type DiffLine = { t: '+' | '-' | ' '; s: string };
 export type Line =
-  | { kind: 'text' | 'tool' | 'result' | 'image'; text: string }
+  | { kind: 'text' | 'result' | 'image' | 'thinking'; text: string }
+  | { kind: 'tool'; text: string; name: string; id: string; input: any }
   | { kind: 'diff'; text: string; file: string; lines: DiffLine[]; note?: string }
   | { kind: 'todos'; text: string; items: { content: string; status: string; activeForm?: string }[] };
 
@@ -129,6 +130,7 @@ export function render(msg: HistoryMessage): Line[] {
   if (!Array.isArray(c)) return [];
   return c.flatMap((b: any): Line[] => {
     if (b.type === 'text') return [{ kind: 'text' as const, text: untag(b.text) }];
+    if (b.type === 'thinking' && b.thinking) return [{ kind: 'thinking' as const, text: b.thinking }];
     if (b.type === 'image' && b.source?.type === 'base64') return [{ kind: 'image' as const, text: `data:${b.source.media_type};base64,${b.source.data}` }];
     if (b.type === 'tool_use') {
       const i = b.input ?? {};
@@ -141,7 +143,7 @@ export function render(msg: HistoryMessage): Line[] {
       if (b.name === 'TodoWrite' && Array.isArray(i.todos))
         return [{ kind: 'todos', text: 'To-dos', items: i.todos }];
       const arg = i.command ?? i.file_path ?? i.pattern ?? i.description ?? '';
-      return [{ kind: 'tool' as const, text: `${b.name}(${String(arg).slice(0, 160)})` }];
+      return [{ kind: 'tool' as const, text: `${b.name}(${String(arg).slice(0, 160)})`, name: b.name, id: b.id, input: i }];
     }
     if (b.type === 'tool_result') {
       const t = Array.isArray(b.content) ? b.content.map((x: any) => x.text ?? '').join('\n') : String(b.content ?? '');
@@ -156,12 +158,13 @@ export function render(msg: HistoryMessage): Line[] {
 export type LiveEvent =
   | { type: 'hello'; machine: string }
   | { type: 'state'; entry: string; state: Entry['state'] | 'ready' }
-  | { type: 'delta'; entry: string; text: string }
+  | { type: 'delta'; entry: string; text: string; kind?: 'thinking' }
   | { type: 'message'; entry: string; message: HistoryMessage }
   | { type: 'permission_request'; entry: string; request_id: string; tool: string; kind: 'tool' | 'question' | 'plan'; input: any; remember: string[] }
   | { type: 'permission_resolved'; entry: string; request_id: string; allow: boolean; by: string }
   | { type: 'mode'; entry: string; mode: string }
   | { type: 'model'; entry: string; model: string | null }
+  | { type: 'effort'; entry: string; effort: string | null }
   | { type: 'account'; entry: string; account: string | null }
   | { type: 'terminal_opened' | 'terminal_closed'; entry: string }
   | { type: 'commands'; entry: string; commands: string[] }
@@ -204,6 +207,7 @@ export class Live {
   stop(entry: string) { this.sendJson({ type: 'stop', entry }); }
   setMode(entry: string, mode: string) { this.sendJson({ type: 'set_mode', entry, mode }); }
   setModel(entry: string, model: string | null) { this.sendJson({ type: 'set_model', entry, model }); }
+  setEffort(entry: string, effort: string | null) { this.sendJson({ type: 'set_effort', entry, effort }); }
   setAccount(entry: string, account: string | null) { this.sendJson({ type: 'set_account', entry, account }); }
   answer(request_id: string, allow: boolean, extra: { message?: string; remember?: string; answers?: Record<string, string | string[]>; response?: string } = {}) {
     this.sendJson({ type: 'permission_reply', request_id, allow, ...extra });

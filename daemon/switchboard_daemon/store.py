@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS entries (
   id TEXT PRIMARY KEY, session_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL, grp TEXT NOT NULL,
   pinned INTEGER NOT NULL DEFAULT 0, account TEXT, mode TEXT, created REAL);
 """
-ENTRY_FIELDS = ("name", "grp", "pinned", "account", "mode", "model")
+ENTRY_FIELDS = ("name", "grp", "pinned", "account", "mode", "model", "effort")
 
 
 def default_data_dir():
@@ -50,6 +50,8 @@ class Store:
             self.db.execute("ALTER TABLE entries ADD COLUMN cwd TEXT")  # folder of a session created in Switchboard
         if "model" not in cols:
             self.db.execute("ALTER TABLE entries ADD COLUMN model TEXT")  # None = Claude Code's default
+        if "effort" not in cols:
+            self.db.execute("ALTER TABLE entries ADD COLUMN effort TEXT")  # None = the model's default
 
     # pairing
     def new_pair_code(self):
