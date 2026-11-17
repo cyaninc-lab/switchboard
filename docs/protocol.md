@@ -66,6 +66,7 @@ Daemon → client:
 | `mode` / `model` / `account` | the new value (after a change) |
 | `commands` | `entry, commands` (slash commands the session reported at start) |
 | `notice` | `entry, text` (e.g. conversation compacted) |
+| `usage` | `entry, context_used, context_window, turn_cost, session_cost` (after each turn; costs are API-equivalent) |
 | `queued` | `entry, count` (a message sent while working waits for the turn to end; interrupt drops the queue) |
 | `error` | `entry?, code, message` |
 

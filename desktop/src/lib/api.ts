@@ -9,6 +9,7 @@ export type Session = {
 export type Entry = {
   id: string; session_id: string; name: string; group: string; pinned: boolean;
   account: string | null; mode: string | null; model: string | null;
+  usage?: Usage | null;
   state: 'new' | 'working' | 'waiting' | 'ready' | 'stopped' | 'terminal' | 'missing' | 'error';
   session: Session | null;
 };
@@ -72,6 +73,7 @@ export const accounts = (m: Machine) => call<{ accounts: Account[] }>(m, '/v1/ac
 export const addAccount = (m: Machine, name: string, token: string, kind: 'oauth' | 'api_key' = 'oauth') =>
   call<{ accounts: Account[] }>(m, '/v1/accounts', { method: 'POST', body: JSON.stringify({ name, token, kind }) }).then((d) => d.accounts);
 export const removeAccount = (m: Machine, name: string) => call<void>(m, `/v1/accounts/${encodeURIComponent(name)}`, { method: 'DELETE' });
+export type Usage = { context_used: number; context_window: number | null; turn_cost: number | null; session_cost: number };
 export type Model = { value: string; displayName: string; description?: string };
 export const models = (m: Machine) => call<{ models: Model[] }>(m, '/v1/models').then((d) => d.models);
 export const addEntry = (m: Machine, body: { session_id?: string; new?: { cwd: string }; name?: string; group?: string; mode?: string; model?: string; account?: string }) =>
@@ -85,7 +87,30 @@ export const history = (m: Machine, id: string, limit = 400) =>
   call<{ messages: HistoryMessage[] }>(m, `/v1/entries/${id}/messages?limit=${limit}`).then((d) => d.messages);
 
 /** Flatten an SDK message into display lines: text, tool calls and tool results. */
-export type Line = { kind: 'text' | 'tool' | 'result' | 'image'; text: string };
+export type DiffLine = { t: '+' | '-' | ' '; s: string };
+export type Line =
+  | { kind: 'text' | 'tool' | 'result' | 'image'; text: string }
+  | { kind: 'diff'; text: string; file: string; lines: DiffLine[]; note?: string }
+  | { kind: 'todos'; text: string; items: { content: string; status: string; activeForm?: string }[] };
+
+/** Line diff by longest common subsequence; big inputs fall back to all-removed / all-added. */
+export function lineDiff(a: string, b: string): DiffLine[] {
+  const A = a.split('\n'), B = b.split('\n');
+  if (A.length * B.length > 250_000) return [...A.map((s) => ({ t: '-' as const, s })), ...B.map((s) => ({ t: '+' as const, s }))];
+  const L = Array.from({ length: A.length + 1 }, () => new Int32Array(B.length + 1));
+  for (let i = A.length - 1; i >= 0; i--) for (let j = B.length - 1; j >= 0; j--)
+    L[i][j] = A[i] === B[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const out: DiffLine[] = [];
+  let i = 0, j = 0;
+  while (i < A.length && j < B.length) {
+    if (A[i] === B[j]) { out.push({ t: ' ', s: A[i] }); i++; j++; }
+    else if (L[i + 1][j] >= L[i][j + 1]) out.push({ t: '-', s: A[i++] });
+    else out.push({ t: '+', s: B[j++] });
+  }
+  while (i < A.length) out.push({ t: '-', s: A[i++] });
+  while (j < B.length) out.push({ t: '+', s: B[j++] });
+  return out;
+}
 export type Image = { media_type: string; data: string };
 export type Command = { name: string; description: string };
 // Claude Code stores slash commands and their output wrapped in tags; show them as the user typed / saw them.
@@ -106,12 +131,22 @@ export function render(msg: HistoryMessage): Line[] {
     if (b.type === 'text') return [{ kind: 'text' as const, text: untag(b.text) }];
     if (b.type === 'image' && b.source?.type === 'base64') return [{ kind: 'image' as const, text: `data:${b.source.media_type};base64,${b.source.data}` }];
     if (b.type === 'tool_use') {
-      const arg = b.input?.command ?? b.input?.file_path ?? b.input?.pattern ?? b.input?.description ?? '';
+      const i = b.input ?? {};
+      if (b.name === 'Edit' && typeof i.old_string === 'string')
+        return [{ kind: 'diff', text: `Edit(${i.file_path})`, file: i.file_path, lines: lineDiff(i.old_string, i.new_string ?? ''), note: i.replace_all ? 'all occurrences' : undefined }];
+      if (b.name === 'MultiEdit' && Array.isArray(i.edits))
+        return i.edits.map((e: any, n: number) => ({ kind: 'diff' as const, text: `Edit(${i.file_path})`, file: i.file_path, lines: lineDiff(e.old_string ?? '', e.new_string ?? ''), note: `edit ${n + 1} of ${i.edits.length}` }));
+      if (b.name === 'Write' && typeof i.content === 'string')
+        return [{ kind: 'diff', text: `Write(${i.file_path})`, file: i.file_path, lines: i.content.split('\n').map((s: string) => ({ t: '+' as const, s })), note: 'new contents' }];
+      if (b.name === 'TodoWrite' && Array.isArray(i.todos))
+        return [{ kind: 'todos', text: 'To-dos', items: i.todos }];
+      const arg = i.command ?? i.file_path ?? i.pattern ?? i.description ?? '';
       return [{ kind: 'tool' as const, text: `${b.name}(${String(arg).slice(0, 160)})` }];
     }
     if (b.type === 'tool_result') {
       const t = Array.isArray(b.content) ? b.content.map((x: any) => x.text ?? '').join('\n') : String(b.content ?? '');
-      return [{ kind: 'result' as const, text: t.split('\n').slice(0, 6).join('\n') }];
+      if (/^Todos have been modified successfully/.test(t)) return [];  // the checklist above already shows it
+      return [{ kind: 'result' as const, text: t }];
     }
     return [];
   });
@@ -132,6 +167,7 @@ export type LiveEvent =
   | { type: 'commands'; entry: string; commands: string[] }
   | { type: 'notice'; entry: string; text: string }
   | { type: 'queued'; entry: string; count: number }
+  | ({ type: 'usage'; entry: string } & Usage)
   | { type: 'inbox'; item: InboxItem }
   | { type: 'inbox_read'; id: number | null }
   | { type: 'terminal_output'; entry: string; data: string }

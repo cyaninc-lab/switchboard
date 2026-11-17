@@ -333,3 +333,17 @@ def test_questions_plans_and_remember(tmp_path, monkeypatch):
         assert any("(remembered for: session)" in str(m) for m in seen)
         await client.close()
     asyncio.run(t())
+
+
+def test_usage_meter(tmp_path, monkeypatch):
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        for n in (1, 2):
+            await ws.send_json({"type": "send", "entry": e["id"], "text": f"hello {n}"})
+            u, _ = await until(ws, lambda m: m["type"] == "usage")
+        assert u["context_used"] == 52000 and u["context_window"] == 200000
+        assert u["turn_cost"] == 0.0123 and u["session_cost"] == round(2 * 0.0123, 4)
+        es = (await (await client.get("/v1/entries", headers=h)).json())["entries"]
+        assert es[0]["usage"]["context_used"] == 52000  # reopening a session still shows the meter
+        await client.close()
+    asyncio.run(t())

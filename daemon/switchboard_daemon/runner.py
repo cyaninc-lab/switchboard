@@ -54,6 +54,8 @@ class Live:
     queue: list = dataclasses.field(default_factory=list)  # messages sent while working, sent in order afterwards
     origin: dict = None  # set when a watch started this turn: its reply goes to the inbox
     turn_text: list = dataclasses.field(default_factory=list)
+    last_usage: dict = None  # usage of the latest main-thread API call: how full the context is now
+    cost: float = 0.0  # API-equivalent cost of this live session so far
 
 
 class Runner:
@@ -64,6 +66,7 @@ class Runner:
         self.commands: list[str] = []  # slash commands from the last session start (init message)
         self._models = None
         self.on_turn_end = None  # async (entry_id, reply_text, origin) for turns a watch started
+        self.usage: dict[str, dict] = {}  # entry id -> last usage event (survives the session closing)
 
     # ---- state ----
     def state(self, entry_id):
@@ -151,6 +154,8 @@ class Runner:
                     if ev.get("type") == "content_block_delta" and ev.get("delta", {}).get("type") == "text_delta":
                         await self.broadcast({"type": "delta", "entry": lv.entry_id, "text": ev["delta"]["text"]})
                 elif (h := as_history(m)) is not None:
+                    if type(m).__name__ == "AssistantMessage" and getattr(m, "usage", None) and not getattr(m, "parent_tool_use_id", None):
+                        lv.last_usage = m.usage
                     lv.said |= h["type"] == "assistant"
                     if h["type"] == "assistant":
                         lv.turn_text += [b["text"] for b in h["message"]["content"] if isinstance(b, dict) and b.get("type") == "text"]
@@ -163,6 +168,7 @@ class Runner:
                     elif sub == "compact_boundary":
                         await self.broadcast({"type": "notice", "entry": lv.entry_id, "text": "Conversation compacted"})
                 elif type(m).__name__ == "ResultMessage":
+                    await self._usage(lv, m)
                     if m.is_error:
                         log.warning("entry %s turn ended with an error: %s", lv.entry_id, scrub(str(m.result))[:300])
                         await self.broadcast({"type": "error", "entry": lv.entry_id, "code": "result_error", "message": str(m.result)[:500]})
@@ -186,6 +192,16 @@ class Runner:
                 asyncio.get_running_loop().create_task(self.send(entry, text, images, origin))
             else:
                 await self._emit_state(lv.entry_id)
+
+    async def _usage(self, lv, m):
+        u = lv.last_usage or {}
+        used = sum(int(u.get(k) or 0) for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+        windows = [int(v.get("contextWindow") or 0) for v in (getattr(m, "model_usage", None) or {}).values()]
+        lv.cost += float(getattr(m, "total_cost_usd", None) or 0)
+        ev = {"type": "usage", "entry": lv.entry_id, "context_used": used, "context_window": max(windows) if windows else None,
+              "turn_cost": getattr(m, "total_cost_usd", None), "session_cost": round(lv.cost, 4)}
+        self.usage[lv.entry_id] = ev
+        await self.broadcast(ev)
 
     async def _ask(self, lv, tool, inp, ctx=None):
         """Three kinds of request, all through can_use_tool: Claude's questions (AskUserQuestion), plan approval
