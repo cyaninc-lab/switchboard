@@ -62,3 +62,16 @@ export async function checkForUpdate(): Promise<Update | null> {
     },
   };
 }
+
+/** A desktop notification (the system's own in the desktop app; the browser's if allowed; else nothing). */
+export async function notify(title: string, body: string) {
+  try {
+    if (inShell()) {
+      const n = await import('@tauri-apps/plugin-notification');
+      if (!(await n.isPermissionGranted()) && (await n.requestPermission()) !== 'granted') return;
+      n.sendNotification({ title, body: body.slice(0, 240) });
+    } else if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      new Notification(title, { body: body.slice(0, 240) });
+    }
+  } catch (e) { console.warn('notification failed', e); }
+}

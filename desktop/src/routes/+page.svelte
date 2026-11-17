@@ -1,10 +1,12 @@
 <script lang="ts">
   import * as api from '$lib/api';
-  import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell, openExternal, appVersion, checkForUpdate } from '$lib/shell';
+  import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell, openExternal, appVersion, checkForUpdate, notify } from '$lib/shell';
   import type { Update } from '$lib/shell';
   import { captureAppLog, buildReport, issueUrl } from '$lib/report';
   import type { ServiceStatus } from '$lib/shell';
   import TerminalView from '$lib/Terminal.svelte';
+  import InboxView from '$lib/Inbox.svelte';
+  import WatchesView from '$lib/Watches.svelte';
   import { md } from '$lib/markdown';
   import { tick } from 'svelte';
   import type { Machine, Entry, Session, HistoryMessage } from '$lib/api';
@@ -20,7 +22,25 @@
   let loadingHistory = $state(false);
   let openSeq = 0;
   let filter = $state('');
-  let dialog = $state<'connect' | 'add' | 'settings' | 'report' | null>(null);
+  let dialog = $state<'connect' | 'add' | 'settings' | 'report' | 'watches' | null>(null);
+
+  // inbox: per machine, merged newest first
+  let inboxBy = $state<Record<string, api.InboxItem[]>>({});
+  let showInbox = $state(true);
+  let inboxItems = $derived(machines.flatMap((m) => (inboxBy[m.url] ?? []).map((i) => ({ ...i, machine: m.name, url: m.url }))).sort((a, b) => b.created - a.created));
+  let unreadCount = $derived(inboxItems.filter((i) => !i.read).length);
+  async function loadInbox(m: Machine) { try { inboxBy[m.url] = await api.inbox(m); } catch {} }
+  async function readItem(i: { url: string; id: number }) {
+    const m = machines.find((x) => x.url === i.url);
+    if (m) { await api.markRead(m, i.id); loadInbox(m); }
+  }
+  async function readAll() { for (const m of machines) { await api.markRead(m).catch(() => {}); loadInbox(m); } }
+  function openFromInbox(i: { url: string; entry_id: string | null; id: number }) {
+    const m = machines.find((x) => x.url === i.url);
+    const e = m && tree[m.url]?.entries.find((x) => x.id === i.entry_id);
+    if (m && e) open(m, e);
+    readItem(i);
+  }
   if (typeof window !== 'undefined') captureAppLog();
 
   // self-update: check shortly after start and every 6 hours; never installs without a click
@@ -205,7 +225,7 @@
   let termSink: ((data: string) => void) | null = null;
 
   $effect(() => {
-    for (const m of machines) if (!lives.has(m.url)) lives.set(m.url, new api.Live(m, (e) => onEvent(e), () => {}));
+    for (const m of machines) if (!lives.has(m.url)) { lives.set(m.url, new api.Live(m, (e) => onEvent(e, m), () => {})); loadInbox(m); }
     for (const [url, l] of lives) if (!machines.some((m) => m.url === url)) { l.close(); lives.delete(url); }
   });
 
@@ -213,7 +233,13 @@
     for (const t of Object.values(tree)) { const e = t.entries.find((x) => x.id === id); if (e) Object.assign(e, patch); }
     if (selected?.entry.id === id) Object.assign(selected.entry, patch);
   }
-  function onEvent(e: api.LiveEvent) {
+  function onEvent(e: api.LiveEvent, m?: Machine) {
+    if (e.type === 'inbox' && m) {
+      inboxBy[m.url] = [e.item, ...(inboxBy[m.url] ?? [])];
+      notify(`${e.item.source}${e.item.from_agent ? ' (agent)' : ''}`, `${e.item.title}: ${e.item.body}`);
+      return;
+    }
+    if (e.type === 'inbox_read' && m) { loadInbox(m); return; }
     if (e.type === 'state') {
       setEntry(e.entry, { state: e.state as Entry['state'] });
       if (e.state !== 'working' && e.state !== 'waiting') { streaming[e.entry] = ''; queued[e.entry] = 0; }
@@ -413,10 +439,15 @@
     </div>
     <div class="chips">
       {#each machines as m (m.url)}
-        <span class="chip" title={m.url}><span class="dot" class:on={!tree[m.url]?.error} class:off={!!tree[m.url]?.error}></span>{m.name}
-          <span class="muted">{tree[m.url]?.error ? 'offline' : 'online'}</span></span>
+        <!-- online only once the daemon has actually answered; until then "connecting" (it may still be starting) -->
+        <span class="chip" title={m.url}><span class="dot" class:on={tree[m.url] && !tree[m.url].error} class:off={!!tree[m.url]?.error}></span>{m.name}
+          <span class="muted">{!tree[m.url] ? 'connecting…' : tree[m.url].error ? 'offline' : 'online'}</span></span>
       {/each}
       <button class="chip dashed" onclick={() => (dialog = 'connect')}>+ Connect a machine</button>
+      <button class="chip icon" class:hot={unreadCount > 0} aria-label="Inbox ({unreadCount} unread)" title="Inbox" onclick={() => (showInbox = !showInbox)}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2" /><path d="M5.5 5h13L22 12v7H2v-7z" /></svg>
+        {#if unreadCount}<span class="count">{unreadCount}</span>{/if}
+      </button>
       <button class="chip icon" aria-label="Report a bug" title="Report a bug" onclick={() => { dialog = 'report'; rDone = ''; rReport = ''; }}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="8" y="6" width="8" height="14" rx="4" /><path d="M19 7l-3 2M5 7l3 2M19 19l-3-2M5 19l3-2M20 13h-4M4 13h4M10 4l1 2M14 4l-1 2" /></svg>
       </button>
@@ -455,7 +486,10 @@
           </div>
         {/each}
       </div>
-      <div class="navfoot"><button class="btn" disabled={!machines.length} onclick={openAdd}>+ Add</button></div>
+      <div class="navfoot">
+        <button class="btn" disabled={!machines.length} onclick={openAdd}>+ Add</button>
+        <button class="btn" disabled={!machines.length} onclick={() => (dialog = 'watches')}>Watches</button>
+      </div>
     </nav>
 
     <main class="term">
@@ -538,6 +572,9 @@
         <div class="placeholder">Pick a session from the tree, or <button class="link" disabled={!machines.length} onclick={openAdd}>add one</button>.</div>
       {/if}
     </main>
+    {#if showInbox && machines.length}
+      <InboxView items={inboxItems} onOpen={openFromInbox} onRead={readItem} onReadAll={readAll} onClose={() => (showInbox = false)} />
+    {/if}
   </div>
 
   <footer class="status mono">
@@ -579,6 +616,10 @@
       <div class="actions"><button type="button" class="btn ghost" onclick={() => (dialog = null)}>Cancel</button><button class="btn primary">Connect</button></div>
     </form>
   </div>
+{/if}
+
+{#if dialog === 'watches'}
+  <WatchesView {machines} entries={Object.fromEntries(Object.entries(tree).map(([u, t]) => [u, t.entries]))} onClose={() => (dialog = null)} />
 {/if}
 
 {#if dialog === 'report'}
@@ -720,8 +761,8 @@
   }
   :global(html, body) { margin: 0; height: 100%; background: var(--crust); color: var(--text); font: 13px/1.45 Inter, system-ui, sans-serif; }
   :global(button) { font: inherit; cursor: pointer; }
-  .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
-  .muted { color: var(--o2); } .small { font-size: 11px; } .grow { flex: 1; }
+  :global(.mono) { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+  :global(.muted) { color: var(--o2); } .small { font-size: 11px; } .grow { flex: 1; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   code { background: var(--s0); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
 
@@ -731,6 +772,9 @@
   .chips { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
   .chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--s0); border: 1px solid var(--s1); color: var(--text); }
   .chip.icon { padding: 4px 8px; cursor: pointer; }
+  .chip.hot { border-color: var(--mauve); }
+  .count { background: var(--mauve); color: var(--crust); border-radius: 999px; padding: 0 6px; font-size: 11px; font-weight: 600; }
+  .navfoot { display: flex; gap: 8px; }
   .toggle { display: flex !important; flex-direction: row !important; gap: 10px; align-items: flex-start; color: var(--text) !important; font-size: 13px !important; }
   .toggle input { width: auto; margin-top: 3px; }
   .chip.dashed { background: none; border-style: dashed; border-color: var(--s2); color: var(--sub0); }
@@ -740,15 +784,15 @@
   .body { flex: 1; display: flex; min-height: 0; }
   .tree { width: 290px; flex: 0 0 290px; display: flex; flex-direction: column; background: var(--mantle); border-right: 1px solid var(--s0); }
   .search { display: block; padding: 12px; }
-  input:focus, select:focus { outline: 1px solid var(--mauve); outline-offset: 0; }
-  input { width: 100%; box-sizing: border-box; background: var(--base); border: 1px solid var(--s1); border-radius: 8px; padding: 8px 10px; color: var(--text); font: inherit; }
+  :global(input:focus), :global(select:focus) { outline: 1px solid var(--mauve); outline-offset: 0; }
+  :global(input) { width: 100%; box-sizing: border-box; background: var(--base); border: 1px solid var(--s1); border-radius: 8px; padding: 8px 10px; color: var(--text); font: inherit; }
   .scroll { flex: 1; overflow: auto; padding: 0 8px 12px; }
   .empty { color: var(--o2); padding: 8px; }
   .machine { margin-top: 6px; } .machine.offline { opacity: 0.6; }
   .mhead { display: flex; align-items: center; gap: 6px; padding: 6px 8px; }
   .mname { font-weight: 600; flex: 1; }
-  .tiny.on { border-color: var(--mauve); color: var(--text); }
-  .tiny { background: none; border: 1px solid var(--s1); color: var(--sub0); border-radius: 6px; padding: 2px 8px; font-size: 12px; }
+  :global(.tiny.on) { border-color: var(--mauve); color: var(--text); }
+  :global(.tiny) { background: none; border: 1px solid var(--s1); color: var(--sub0); border-radius: 6px; padding: 2px 8px; font-size: 12px; }
   .group { padding: 6px 8px 2px 24px; color: var(--sub0); }
   .entry { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: 0; border-radius: 8px; padding: 6px 8px 6px 36px; background: none; color: var(--sub1); }
   .entry:hover { background: var(--base); }
@@ -761,10 +805,10 @@
   .st.new { border: 1.5px dashed var(--mauve); }
   .st.terminal { background: var(--sky); border: 0; border-radius: 2px; } .st.missing, .st.error { border-color: var(--red); }
   .navfoot { padding: 10px 12px; border-top: 1px solid var(--s0); }
-  .btn { width: 100%; background: var(--s0); border: 1px solid var(--s1); color: var(--text); border-radius: 8px; padding: 9px; }
-  .btn:disabled { opacity: 0.5; cursor: default; }
-  .btn.primary { background: var(--mauve); color: var(--crust); border: 0; font-weight: 600; width: auto; padding: 9px 18px; }
-  .btn.ghost { width: auto; padding: 9px 16px; }
+  :global(.btn) { width: 100%; background: var(--s0); border: 1px solid var(--s1); color: var(--text); border-radius: 8px; padding: 9px; }
+  :global(.btn:disabled) { opacity: 0.5; cursor: default; }
+  :global(.btn.primary) { background: var(--mauve); color: var(--crust); border: 0; font-weight: 600; width: auto; padding: 9px 18px; }
+  :global(.btn.ghost) { width: auto; padding: 9px 16px; }
 
   .term { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--base); }
   .termhead { display: flex; gap: 16px; align-items: center; padding: 8px 18px; font-size: 12px; color: var(--o2); border-bottom: 1px solid var(--s0); }
@@ -809,31 +853,31 @@
 
   .status { display: flex; gap: 18px; padding: 6px 16px; background: var(--mantle); border-top: 1px solid var(--s0); font-size: 11px; color: var(--o2); }
 
-  .backdrop { position: fixed; inset: 0; background: rgba(17, 17, 27, 0.7); display: flex; align-items: center; justify-content: center; padding: 16px; }
-  .dialog { width: 100%; max-width: 440px; background: var(--base); border: 1px solid var(--s1); border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
-  .dialog.wide { max-width: 780px; max-height: 90vh; overflow: auto; }
-  .dialog h2 { margin: 0; font-size: 16px; }
-  .dialog label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--sub0); }
-  .dialog .search { padding: 0; }
-  .actions { display: flex; justify-content: flex-end; gap: 8px; }
-  .error { color: var(--red); margin: 0; }
+  :global(.backdrop) { position: fixed; inset: 0; background: rgba(17, 17, 27, 0.7); display: flex; align-items: center; justify-content: center; padding: 16px; }
+  :global(.dialog) { width: 100%; max-width: 440px; background: var(--base); border: 1px solid var(--s1); border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+  :global(.dialog.wide) { max-width: 780px; max-height: 90vh; overflow: auto; }
+  :global(.dialog h2) { margin: 0; font-size: 16px; }
+  :global(.dialog label) { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--sub0); }
+  :global(.dialog .search) { padding: 0; }
+  :global(.actions) { display: flex; justify-content: flex-end; gap: 8px; }
+  :global(.error) { color: var(--red); margin: 0; }
   .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--s0); }
   .tabs button { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--sub0); padding: 6px 12px; }
   .tabs button.on { border-bottom-color: var(--mauve); color: var(--text); font-weight: 600; }
-  .dialog select { background: var(--base); border: 1px solid var(--s1); border-radius: 8px; padding: 8px 10px; color: var(--text); font: inherit; appearance: none; }
+  :global(.dialog select) { background: var(--base); border: 1px solid var(--s1); border-radius: 8px; padding: 8px 10px; color: var(--text); font: inherit; appearance: none; }
   .sub { margin: 8px 0 0; font-size: 13px; }
   .updbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 16px; background: rgba(203, 166, 247, 0.12); border-bottom: 1px solid rgba(203, 166, 247, 0.35); }
   .updnotes { padding: 8px 16px 12px; background: var(--mantle); border-bottom: 1px solid var(--s0); max-height: 200px; overflow: auto; }
-  .btn.small { padding: 5px 12px; }
-  .dialog textarea { width: 100%; box-sizing: border-box; background: var(--base); border: 1px solid var(--s1); border-radius: 8px; padding: 8px 10px; color: var(--text); font: inherit; resize: vertical; }
+  :global(.btn.small) { padding: 5px 12px; }
+  :global(.dialog textarea) { width: 100%; box-sizing: border-box; background: var(--base); border: 1px solid var(--s1); border-radius: 8px; padding: 8px 10px; color: var(--text); font: inherit; resize: vertical; }
   .acclist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
   .acclist li { display: grid; grid-template-columns: 120px 1fr auto; gap: 10px; align-items: center; padding: 6px 10px; background: var(--mantle); border-radius: 8px; }
   .accform { display: flex; flex-direction: column; gap: 8px; }
-  .dialog label.inline { flex-direction: row; align-items: center; gap: 8px; } .dialog label.inline input { width: auto; }
-  .dialog { max-height: 90vh; overflow: auto; }
-  .pills { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  .pill { background: var(--mantle); border: 1px solid var(--s1); color: var(--sub1); border-radius: 999px; padding: 6px 12px; }
-  .pill.on { background: var(--s0); border-color: var(--mauve); color: var(--text); }
+  :global(.dialog label.inline) { flex-direction: row; align-items: center; gap: 8px; } .dialog label.inline input { width: auto; }
+  :global(.dialog) { max-height: 90vh; overflow: auto; }
+  :global(.pills) { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  :global(.pill) { background: var(--mantle); border: 1px solid var(--s1); color: var(--sub1); border-radius: 999px; padding: 6px 12px; }
+  :global(.pill.on) { background: var(--s0); border-color: var(--mauve); color: var(--text); }
   .slist { display: flex; flex-direction: column; gap: 6px; }
   .srow { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr) 50px; gap: 12px; align-items: center; text-align: left; padding: 10px 12px; border-radius: 10px; background: var(--mantle); border: 1px solid var(--s0); color: var(--text); }
   .srow.on { background: var(--s0); border-color: var(--mauve); }
@@ -841,5 +885,5 @@
   .stitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ellip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .badge { margin-left: 8px; font-size: 11px; color: var(--sub0); border: 1px solid var(--s1); border-radius: 999px; padding: 1px 8px; }
-  .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  :global(.grid2) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 </style>

@@ -97,6 +97,7 @@ def test_wake_agent_reply_to_inbox(tmp_path, monkeypatch):
         assert (await client.post(f"/v1/watches/{w['id']}/test", headers=h)).status == 200
         item, seen = await until(ws, lambda m: m["type"] == "inbox", timeout=10)
         assert item["item"]["from_agent"] and item["item"]["source"] == "morning check"
+        assert any(m["type"] == "message" and m["message"]["type"] == "user" and "Switchboard watch" in str(m) for m in seen)
         assert "Done: Switchboard watch" in item["item"]["body"]  # the fake agent echoes the prompt it got
         runner = client.server.app[appmod.RUNNER]
         assert runner.live[e["id"]].client.options.permission_mode == "auto"  # the watch's mode applied

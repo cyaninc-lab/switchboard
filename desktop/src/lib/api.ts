@@ -49,6 +49,24 @@ export async function pair(url: string, code: string, clientName: string): Promi
 export const entries = (m: Machine) => call<{ entries: Entry[] }>(m, '/v1/entries').then((d) => d.entries);
 export const sessions = (m: Machine, q = '', limit = 50) =>
   call<{ total: number; sessions: Session[] }>(m, `/v1/sessions?q=${encodeURIComponent(q)}&limit=${limit}`);
+export type WatchKind = 'schedule' | 'command' | 'http' | 'github';
+export type Watch = {
+  id: string; name: string; entry_id: string | null; kind: WatchKind; config: Record<string, any>;
+  action: 'notify' | 'wake'; instructions: string | null; mode: string | null; enabled: boolean; last_fired: number | null;
+};
+export type InboxItem = {
+  id: number; created: number; source: string; title: string; body: string; watch_id: string | null;
+  entry_id: string | null; from_agent: boolean; read: boolean;
+};
+export const watches = (m: Machine) => call<{ watches: Watch[] }>(m, '/v1/watches').then((d) => d.watches);
+export const saveWatch = (m: Machine, w: Partial<Watch>) => w.id
+  ? call<Watch>(m, `/v1/watches/${w.id}`, { method: 'PATCH', body: JSON.stringify(w) })
+  : call<Watch>(m, '/v1/watches', { method: 'POST', body: JSON.stringify(w) });
+export const removeWatch = (m: Machine, id: string) => call<void>(m, `/v1/watches/${id}`, { method: 'DELETE' });
+export const testWatch = (m: Machine, id: string) => call<{ fired: boolean }>(m, `/v1/watches/${id}/test`, { method: 'POST' });
+export const inbox = (m: Machine) => call<{ items: InboxItem[] }>(m, '/v1/inbox').then((d) => d.items);
+export const markRead = (m: Machine, id?: number) => call<void>(m, id === undefined ? '/v1/inbox/read' : `/v1/inbox/${id}/read`, { method: 'POST' });
+
 export type Account = { name: string; kind: 'oauth' | 'api_key'; created: number };
 export const accounts = (m: Machine) => call<{ accounts: Account[] }>(m, '/v1/accounts').then((d) => d.accounts);
 export const addAccount = (m: Machine, name: string, token: string, kind: 'oauth' | 'api_key' = 'oauth') =>
@@ -114,6 +132,8 @@ export type LiveEvent =
   | { type: 'commands'; entry: string; commands: string[] }
   | { type: 'notice'; entry: string; text: string }
   | { type: 'queued'; entry: string; count: number }
+  | { type: 'inbox'; item: InboxItem }
+  | { type: 'inbox_read'; id: number | null }
   | { type: 'terminal_output'; entry: string; data: string }
   | { type: 'error'; entry?: string; code: string; message: string };
 

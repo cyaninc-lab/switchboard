@@ -128,6 +128,9 @@ class Runner:
         lv.working, lv.last_active, lv.said = True, time.time(), False
         lv.origin, lv.turn_text = origin, []
         await self._emit_state(entry["id"])
+        if origin:  # clients show what they typed themselves; a watch's prompt has to be announced
+            await self.broadcast({"type": "message", "entry": entry["id"], "message": {
+                "type": "user", "uuid": uuid.uuid4().hex, "message": {"role": "user", "content": text}}})
         if images:
             content = [{"type": "image", "source": {"type": "base64", "media_type": im["media_type"], "data": im["data"]}} for im in images]
             content.append({"type": "text", "text": text or "(image)"})
