@@ -10,6 +10,7 @@ IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 MAX_IMAGE_B64 = 7_000_000  # ~5 MB of image per attachment
 MAX_IMAGES = 10
 MODES = {"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}
+EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 
 
 def scrub_env():
@@ -31,6 +32,8 @@ def as_history(msg):
             bn = type(b).__name__
             if bn == "TextBlock":
                 blocks.append({"type": "text", "text": b.text})
+            elif bn == "ThinkingBlock":
+                blocks.append({"type": "thinking", "thinking": b.thinking})
             elif bn == "ToolUseBlock":
                 blocks.append({"type": "tool_use", "id": b.id, "name": b.name, "input": b.input})
             elif bn == "ToolResultBlock":
@@ -39,7 +42,8 @@ def as_history(msg):
                 blocks.append(b)
         content = blocks
     role = "assistant" if name == "AssistantMessage" else "user"
-    return {"type": role, "uuid": getattr(msg, "uuid", None) or uuid.uuid4().hex, "message": {"role": role, "content": content}}
+    return {"type": role, "uuid": getattr(msg, "uuid", None) or uuid.uuid4().hex, "message": {"role": role, "content": content},
+            "parent_tool_use_id": getattr(msg, "parent_tool_use_id", None)}  # set on a subagent's messages
 
 
 @dataclasses.dataclass
@@ -56,6 +60,7 @@ class Live:
     turn_text: list = dataclasses.field(default_factory=list)
     last_usage: dict = None  # usage of the latest main-thread API call: how full the context is now
     cost: float = 0.0  # API-equivalent cost of this live session so far
+    restart: bool = False  # close after this turn (a setting that only applies at start changed)
 
 
 class Runner:
@@ -105,6 +110,7 @@ class Runner:
             **start, cwd=(info.cwd if info else entry["cwd"]) or None, include_partial_messages=True,
             permission_mode=entry.get("mode") or "default", can_use_tool=can_use_tool,
             **({"env": acct} if acct else {}),
+            **({"effort": entry["effort"]} if entry.get("effort") else {}),
             # SWITCHBOARD_MODEL overrides everything (tests run on Haiku); else the entry's choice; else Claude Code's default
             **({"model": m} if (m := os.environ.get("SWITCHBOARD_MODEL") or entry.get("model")) else {}),
             **({"cli_path": self.cli_path} if self.cli_path else {}))
@@ -151,8 +157,11 @@ class Runner:
                 lv.last_active = time.time()
                 if type(m).__name__ == "StreamEvent":
                     ev = m.event
-                    if ev.get("type") == "content_block_delta" and ev.get("delta", {}).get("type") == "text_delta":
-                        await self.broadcast({"type": "delta", "entry": lv.entry_id, "text": ev["delta"]["text"]})
+                    delta = ev.get("delta", {}) if ev.get("type") == "content_block_delta" else {}
+                    if delta.get("type") == "text_delta":
+                        await self.broadcast({"type": "delta", "entry": lv.entry_id, "text": delta["text"]})
+                    elif delta.get("type") == "thinking_delta":
+                        await self.broadcast({"type": "delta", "entry": lv.entry_id, "text": delta.get("thinking", ""), "kind": "thinking"})
                 elif (h := as_history(m)) is not None:
                     if type(m).__name__ == "AssistantMessage" and getattr(m, "usage", None) and not getattr(m, "parent_tool_use_id", None):
                         lv.last_usage = m.usage
@@ -187,7 +196,9 @@ class Runner:
                     await self.on_turn_end(lv.entry_id, "\n\n".join(lv.turn_text).strip(), origin)
                 except Exception:
                     log.exception("delivering a watch reply failed")
-            if lv.queue and self.live.get(lv.entry_id) is lv:
+            if lv.restart and not lv.queue:
+                asyncio.get_running_loop().create_task(self.stop(lv.entry_id))
+            elif lv.queue and self.live.get(lv.entry_id) is lv:
                 entry, text, images, origin = lv.queue.pop(0)
                 asyncio.get_running_loop().create_task(self.send(entry, text, images, origin))
             else:
@@ -282,6 +293,17 @@ class Runner:
             raise LookupError("no_such_account")
         self.store.update_entry(entry_id, account=account or None)
         await self.stop(entry_id)
+
+    async def set_effort(self, entry_id, effort):
+        """Effort only applies when a session starts: close it now (or after the running turn); it resumes at the new effort."""
+        if effort and effort not in EFFORTS:
+            raise ValueError("bad_effort")
+        self.store.update_entry(entry_id, effort=effort or None)
+        lv = self.live.get(entry_id)
+        if lv and lv.working:
+            lv.restart = True
+        elif lv:
+            await self.stop(entry_id)
 
     async def set_mode(self, entry_id, mode):
         if mode not in MODES:

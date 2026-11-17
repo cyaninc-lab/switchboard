@@ -76,6 +76,12 @@ class TextBlock:
 
 
 @dataclasses.dataclass
+class ThinkingBlock:
+    thinking: str
+    signature: str = ""
+
+
+@dataclasses.dataclass
 class ToolUseBlock:
     id: str
     name: str
@@ -99,6 +105,7 @@ class AssistantMessage:
 @dataclasses.dataclass
 class UserMessage:
     content: list
+    parent_tool_use_id: str = None
 
 
 @dataclasses.dataclass
@@ -131,6 +138,7 @@ class ClaudeAgentOptions:
     cli_path: str = None
     model: str = None
     env: dict = None
+    effort: str = None
 
 
 @dataclasses.dataclass
@@ -187,7 +195,7 @@ class ClaudeSDKClient:
         self.options.model = model
 
     async def get_server_info(self):
-        return {"models": [{"value": "default", "displayName": "Default (recommended)", "description": "Opus 5.5"},
+        return {"models": [{"value": "default", "displayName": "Default (recommended)", "description": "Opus 5.5", "supportsEffort": True, "supportedEffortLevels": ["low", "medium", "high", "max"]},
                            {"value": "sonnet", "displayName": "Sonnet 5.5", "description": "Most efficient for simpler tasks"},
                            {"value": "haiku", "displayName": "Haiku 5.5", "description": "Fastest"}]}
 
@@ -206,6 +214,19 @@ class ClaudeSDKClient:
         for word in "Looking into it.".split(" "):
             yield StreamEvent({"type": "content_block_delta", "delta": {"type": "text_delta", "text": word + " "}})
             await asyncio.sleep(0.05)
+        if "think" in text.lower():  # thinking, streamed then as a block
+            for w in "Weighing the two options first.".split(" "):
+                yield StreamEvent({"type": "content_block_delta", "delta": {"type": "thinking_delta", "thinking": w + " "}})
+                await asyncio.sleep(0.05)
+            yield AssistantMessage([ThinkingBlock("Weighing the two options first.")])
+        if "subagent" in text.lower():  # work delegated to a subagent: its messages carry parent_tool_use_id
+            yield AssistantMessage([ToolUseBlock("ag1", "Agent", {"description": "Search the codebase", "prompt": "Find where dash_url is read"})])
+            yield AssistantMessage([ToolUseBlock("sg1", "Grep", {"pattern": "dash_url"})], parent_tool_use_id="ag1")
+            yield UserMessage([ToolResultBlock("sg1", "server/app.py:212")], parent_tool_use_id="ag1")
+            yield AssistantMessage([TextBlock("Found it in server/app.py line 212.")], parent_tool_use_id="ag1")
+            yield UserMessage([ToolResultBlock("ag1", "dash_url is read in server/app.py:212")])
+        if self.options.effort and "effort" in text.lower():
+            yield AssistantMessage([TextBlock(f"(effort: {self.options.effort})")])
         if "ask me" in text.lower():  # a clarifying question (AskUserQuestion)
             q = {"question": "Which database should I use?", "header": "Database", "multiSelect": False,
                  "options": [{"label": "SQLite", "description": "One file, no server"}, {"label": "Postgres", "description": "A real server"}]}

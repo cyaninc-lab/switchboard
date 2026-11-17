@@ -53,7 +53,7 @@ async def _off(fn, *a, **kw):
 
 
 def _entry_view(entry, info, live, runner=None):
-    d = {k: entry.get(k) for k in ("id", "session_id", "name", "pinned", "account", "mode", "model")}
+    d = {k: entry.get(k) for k in ("id", "session_id", "name", "pinned", "account", "mode", "model", "effort")}
     d["group"], d["pinned"] = entry["grp"], bool(entry["pinned"])
     held = runner.state(entry["id"]) if runner else None
     d["usage"] = runner.usage.get(entry["id"]) if runner else None
@@ -333,7 +333,7 @@ async def ws_handler(request):
                 m = json.loads(msg.data)
                 t, eid = m.get("type"), m.get("entry")
                 entry = store.entry(eid) if eid else None
-                if t in ("send", "interrupt", "stop", "set_mode", "set_model", "set_account") or t.startswith("terminal_"):
+                if t in ("send", "interrupt", "stop", "set_mode", "set_model", "set_account", "set_effort") or t.startswith("terminal_"):
                     if not entry:
                         raise LookupError("no_such_entry")
                 if t == "terminal_open":
@@ -365,6 +365,9 @@ async def ws_handler(request):
                 elif t == "set_account":
                     await runner.set_account(eid, m.get("account"))
                     await _broadcast(request.app, {"type": "account", "entry": eid, "account": m.get("account") or None})
+                elif t == "set_effort":
+                    await runner.set_effort(eid, m.get("effort"))
+                    await _broadcast(request.app, {"type": "effort", "entry": eid, "effort": m.get("effort") or None})
                 elif t == "set_model":
                     await runner.set_model(eid, m.get("model"))
                     await _broadcast(request.app, {"type": "model", "entry": eid, "model": m.get("model") or None})

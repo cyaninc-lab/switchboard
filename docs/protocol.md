@@ -47,6 +47,7 @@ Client → daemon:
 | `interrupt` / `stop` | `entry` |
 | `set_mode` | `entry, mode` (default, acceptEdits, plan, auto, dontAsk, bypassPermissions) |
 | `set_account` | `entry, account` (null = the machine's own login; closes a live session, which resumes on the new account at the next message) |
+| `set_effort` | `entry, effort` (low/medium/high/xhigh/max or null; applies when the session starts, so a live one restarts, after the running turn if busy) |
 | `set_model` | `entry, model` (a value from `/v1/models`; null = Claude Code's default; switches a live session) |
 | `permission_reply` | `request_id, allow, message?, remember? (session or localSettings), answers? ({question: label or [labels]}), response? (free text)` |
 | `terminal_open` / `terminal_input` / `terminal_resize` / `terminal_close` | real-terminal toggle: PTY running `claude --resume` (the SDK session is closed first) |
@@ -56,8 +57,8 @@ Daemon → client:
 | type | fields |
 | --- | --- |
 | `state` | `entry, state` (new, working, waiting, ready = live and idle, stopped, terminal, error) |
-| `delta` | `entry, text` (partial streaming) |
-| `message` | `entry, message` (full assistant/user/tool message, same shape as history) |
+| `delta` | `entry, text, kind?` (partial streaming; `kind: thinking` for thinking) |
+| `message` | `entry, message` (same shape as history; a subagent's messages carry `parent_tool_use_id` = the Agent tool call) |
 | `permission_request` | `request_id, entry, tool, kind (tool, question = AskUserQuestion, plan = ExitPlanMode), input, remember (which 'remember' choices Claude Code offers)` |
 | `permission_resolved` | `request_id, allow, by` (first answer wins; every client is told) |
 | `inbox` / `inbox_read` | a new item / items marked read |

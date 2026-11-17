@@ -347,3 +347,28 @@ def test_usage_meter(tmp_path, monkeypatch):
         assert es[0]["usage"]["context_used"] == 52000  # reopening a session still shows the meter
         await client.close()
     asyncio.run(t())
+
+
+def test_thinking_subagents_effort(tmp_path, monkeypatch):
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        eid = e["id"]
+        await ws.send_json({"type": "send", "entry": eid, "text": "think, then use a subagent"})
+        _, seen = await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        assert any(m["type"] == "delta" and m.get("kind") == "thinking" for m in seen)
+        msgs = [m["message"] for m in seen if m["type"] == "message"]
+        assert any(b.get("type") == "thinking" for m in msgs for b in m["message"]["content"] if isinstance(b, dict))
+        children = [m for m in msgs if m.get("parent_tool_use_id") == "ag1"]
+        assert len(children) == 3 and not any(m.get("parent_tool_use_id") for m in msgs if m not in children)
+        # effort applies at start: changing it closes the idle session, the next message reopens at that effort
+        await ws.send_json({"type": "set_effort", "entry": eid, "effort": "low"})
+        _, seen = await until(ws, lambda m: m["type"] == "effort")
+        assert {"type": "state", "entry": eid, "state": "stopped"} in seen  # the idle session closed first
+        await ws.send_json({"type": "send", "entry": eid, "text": "what effort"})
+        _, seen = await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        assert any("(effort: low)" in str(m) for m in seen)
+        await ws.send_json({"type": "set_effort", "entry": eid, "effort": "turbo"})
+        err, _ = await until(ws, lambda m: m["type"] == "error")
+        assert "bad_effort" in err["message"]
+        await client.close()
+    asyncio.run(t())
