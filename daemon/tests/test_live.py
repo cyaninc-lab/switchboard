@@ -372,3 +372,23 @@ def test_thinking_subagents_effort(tmp_path, monkeypatch):
         assert "bad_effort" in err["message"]
         await client.close()
     asyncio.run(t())
+
+
+def test_turns_claude_takes_on_its_own(tmp_path, monkeypatch):
+    """A background command finishing makes Claude reply unprompted: that reply shows at once, and the next
+    message gets its own answer (not the previous one: the "one behind" bug)."""
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        eid = e["id"]
+        await ws.send_json({"type": "send", "entry": eid, "text": "start the background build"})
+        await until(ws, lambda m: m["type"] == "message" and "Done: start the background build" in str(m))
+        await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        # nobody sends anything: the unprompted turn arrives by itself
+        await until(ws, lambda m: m["type"] == "state" and m["state"] == "working")
+        await until(ws, lambda m: m["type"] == "message" and "Done: background task finished" in str(m))
+        await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        await ws.send_json({"type": "send", "entry": eid, "text": "next question"})
+        m, _ = await until(ws, lambda m: m["type"] == "message" and m["message"]["type"] == "assistant" and "Done:" in str(m))
+        assert "Done: next question" in str(m)
+        await client.close()
+    asyncio.run(t())

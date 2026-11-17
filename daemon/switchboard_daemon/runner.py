@@ -118,6 +118,7 @@ class Runner:
         await client.connect()
         log.info("session %s live (entry %s, model %s, account %s)", entry["session_id"], entry["id"], entry.get("model") or "default", entry.get("account") or "machine")
         lv = holder["lv"] = self.live[entry["id"]] = Live(entry["id"], client)
+        lv.reader = asyncio.get_running_loop().create_task(self._read(lv))
         return lv
 
     async def send(self, entry, text, images=None, origin=None):
@@ -149,12 +150,17 @@ class Runner:
             await lv.client.query(one())
         else:
             await lv.client.query(text)
-        lv.reader = asyncio.get_running_loop().create_task(self._read(lv))
 
     async def _read(self, lv):
+        """One reader for the session's whole life, not one per message: Claude also takes turns nobody asked for
+        (a background command finishing, a scheduled wake-up). Read per message, those replies sat unread and each
+        message then got the previous answer."""
         try:
-            async for m in lv.client.receive_response():
+            async for m in lv.client.receive_messages():
                 lv.last_active = time.time()
+                if not lv.working:  # a turn Claude started on its own
+                    lv.working, lv.said, lv.origin, lv.turn_text = True, False, None, []
+                    await self._emit_state(lv.entry_id)
                 if type(m).__name__ == "StreamEvent":
                     ev = m.event
                     delta = ev.get("delta", {}) if ev.get("type") == "content_block_delta" else {}
@@ -185,24 +191,33 @@ class Runner:
                         await self.broadcast({"type": "message", "entry": lv.entry_id, "message": {
                             "type": "assistant", "uuid": uuid.uuid4().hex,
                             "message": {"role": "assistant", "content": [{"type": "text", "text": str(m.result)}]}}})
+                    await self._turn_end(lv)
+        except asyncio.CancelledError:
+            raise
         except Exception as e:  # a dead CLI process must not take the daemon down
             log.exception("session for entry %s failed", lv.entry_id)
             await self.broadcast({"type": "error", "entry": lv.entry_id, "code": "session_error", "message": str(e)[:500]})
-        finally:
-            lv.working = False
-            if lv.origin and self.on_turn_end:
-                origin, lv.origin = lv.origin, None
-                try:
-                    await self.on_turn_end(lv.entry_id, "\n\n".join(lv.turn_text).strip(), origin)
-                except Exception:
-                    log.exception("delivering a watch reply failed")
-            if lv.restart and not lv.queue:
-                asyncio.get_running_loop().create_task(self.stop(lv.entry_id))
-            elif lv.queue and self.live.get(lv.entry_id) is lv:
-                entry, text, images, origin = lv.queue.pop(0)
-                asyncio.get_running_loop().create_task(self.send(entry, text, images, origin))
-            else:
-                await self._emit_state(lv.entry_id)
+        # the CLI process ended (or failed): drop it, so the next message opens the session afresh
+        if self.live.get(lv.entry_id) is lv:
+            asyncio.get_running_loop().create_task(self.stop(lv.entry_id))
+        if lv.working:
+            await self._turn_end(lv)
+
+    async def _turn_end(self, lv):
+        lv.working = False
+        if lv.origin and self.on_turn_end:
+            origin, lv.origin = lv.origin, None
+            try:
+                await self.on_turn_end(lv.entry_id, "\n\n".join(lv.turn_text).strip(), origin)
+            except Exception:
+                log.exception("delivering a watch reply failed")
+        if lv.restart and not lv.queue:
+            asyncio.get_running_loop().create_task(self.stop(lv.entry_id))
+        elif lv.queue and self.live.get(lv.entry_id) is lv:
+            entry, text, images, origin = lv.queue.pop(0)
+            asyncio.get_running_loop().create_task(self.send(entry, text, images, origin))
+        else:
+            await self._emit_state(lv.entry_id)
 
     async def _usage(self, lv, m):
         u = lv.last_usage or {}

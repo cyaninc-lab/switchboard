@@ -1,4 +1,4 @@
-## Switchboard 0.1.4
+## Switchboard 0.1.5
 
-- **Fix: long sessions opened at their beginning.** Opening a session (or the app restarting, e.g. after an update) showed only its first few hundred messages and looked as if it had rolled back and stopped updating. It now opens at the latest messages.
-- (from 0.1.3) Sessions' Claude processes no longer outlive the app after an update or crash.
+- **Fix: replies one message behind.** When Claude replied on its own (for example when a background command finished), that reply wasn't shown, and every message after it got the previous message's answer. Switchboard now listens all the time, so replies Claude starts by itself appear as they happen.
+- (from 0.1.4) Long sessions open at their latest messages.

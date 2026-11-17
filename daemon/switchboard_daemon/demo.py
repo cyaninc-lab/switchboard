@@ -168,6 +168,7 @@ class ClaudeSDKClient:
     """Scripted stand-in: streams a reply; "run" asks to use Bash; "slow" works for 30 s (interruptible)."""
     def __init__(self, options):
         self.options, self.prompt, self.interrupted, self.images, self.started = options, "", False, 0, False
+        self.go = asyncio.Event()
 
     async def connect(self):
         pass
@@ -179,11 +180,21 @@ class ClaudeSDKClient:
         self.interrupted, self.images = False, 0
         if isinstance(text, str):
             self.prompt = text
+            self.go.set()
             return
         async for msg in text:  # a user message with content blocks (images)
             blocks = msg["message"]["content"]
             self.images = sum(b["type"] == "image" for b in blocks)
             self.prompt = " ".join(b.get("text", "") for b in blocks if b["type"] == "text")
+        self.go.set()
+
+    async def receive_messages(self):
+        """Like the real client: everything the CLI says, including turns it takes on its own."""
+        while True:
+            await self.go.wait()
+            self.go.clear()
+            async for m in self.receive_response():
+                yield m
 
     async def interrupt(self):
         self.interrupted = True
@@ -248,6 +259,12 @@ class ClaudeSDKClient:
                 yield AssistantMessage([TextBlock(f"(remembered for: {r.updated_permissions[0].destination})")])
             yield AssistantMessage([ToolUseBlock("t1", "Bash", {"command": "git status"})])
             yield UserMessage([ToolResultBlock("t1", "On branch main, nothing to commit" if ok else "Permission denied", not ok)])
+        if "background" in text.lower():  # a background command: Claude reports back later, unprompted
+            async def later():
+                await asyncio.sleep(1)
+                self.prompt = "background task finished"
+                self.go.set()
+            asyncio.get_running_loop().create_task(later())
         if "slow" in text.lower():
             for _ in range(300):
                 if self.interrupted:
