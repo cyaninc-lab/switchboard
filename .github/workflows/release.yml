@@ -104,7 +104,8 @@ jobs:
         run: |
           V="v${{ needs.draft.outputs.version }}"
           GH_TOKEN=${{ github.token }} gh release download "$V" -R "${{ github.repository }}" -p latest.json -D bridge
-          grep -q "github.com/${{ github.repository }}/releases/download/$V/" bridge/latest.json || { echo "latest.json doesn't point here"; exit 1; }
+          # tauri-action links to …/releases/latest/download/…, so check the repo, not the tag; every link must point here
+          python3 -c "import json,sys; urls={v['url'] for v in json.load(open('bridge/latest.json'))['platforms'].values()}; bad=[u for u in urls if not u.startswith('https://github.com/${{ github.repository }}/releases/')]; print('links:', sorted(urls)); sys.exit(1 if bad or not urls else 0)" || { echo "latest.json doesn't point here"; exit 1; }
           if gh release view "$V" -R cyaninc-lab/switchboard-releases >/dev/null 2>&1; then
             gh release upload "$V" bridge/latest.json --clobber -R cyaninc-lab/switchboard-releases
           else
