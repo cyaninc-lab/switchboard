@@ -5,6 +5,22 @@
   import { theme, THEMES, applyTheme, fonts, UI_FONTS, MONO_FONTS, SIZES, applyFonts } from '$lib/themes.svelte';
   applyTheme(theme.name);
   applyFonts();
+
+  // links (in Claude's replies, the inbox, questions) never navigate this window: web and mail links open in the
+  // default browser / mail app, anything else is ignored. ponytail: until sessions get windows or tabs of their own
+  function onLinkClick(ev: MouseEvent) {
+    const a = (ev.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null;
+    if (!a) return;
+    const url = new URL(a.href, location.href);
+    if (url.origin === location.origin && !a.target) return;  // the app's own links
+    ev.preventDefault();
+    if (['http:', 'https:', 'mailto:'].includes(url.protocol)) openExternal(url.href);
+  }
+  $effect(() => {
+    document.addEventListener('click', onLinkClick, true);
+    document.addEventListener('auxclick', onLinkClick, true);  // middle-click too
+    return () => { document.removeEventListener('click', onLinkClick, true); document.removeEventListener('auxclick', onLinkClick, true); };
+  });
   import type { Update } from '$lib/shell';
   import { captureAppLog, buildReport, issueUrl } from '$lib/report';
   import type { ServiceStatus } from '$lib/shell';
