@@ -276,12 +276,23 @@
       .sort((a, b) => Number(!a.name.toLowerCase().startsWith(q)) - Number(!b.name.toLowerCase().startsWith(q))).slice(0, 8);
   });
   function complete(c: api.Command) { draft = `/${c.name} `; cmdIdx = 0; }
+  // multi-line box: Enter sends, Shift+Enter starts a new line (as in Claude Code)
+  function enterSends(ev: KeyboardEvent) {
+    if (ev.key !== 'Enter' || ev.shiftKey || ev.isComposing || ev.defaultPrevented) return;
+    ev.preventDefault();
+    (ev.currentTarget as HTMLTextAreaElement).form?.requestSubmit();
+  }
+  function grow(el: HTMLTextAreaElement) {  // fit the text, up to the CSS max-height
+    const fit = () => { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; };
+    $effect(() => { void draft; fit(); });  // also shrinks back after sending
+  }
   function onInputKey(ev: KeyboardEvent) {
-    if (!menu.length) return;
+    if (!menu.length) return enterSends(ev);
     if (ev.key === 'ArrowDown') { ev.preventDefault(); cmdIdx = (cmdIdx + 1) % menu.length; }
     else if (ev.key === 'ArrowUp') { ev.preventDefault(); cmdIdx = (cmdIdx - 1 + menu.length) % menu.length; }
     else if (ev.key === 'Tab' || (ev.key === 'Enter' && draft !== `/${menu[cmdIdx]?.name}`)) { ev.preventDefault(); complete(menu[Math.min(cmdIdx, menu.length - 1)]); }
     else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); draft = ''; }
+    enterSends(ev);
   }
   let liveErr = $state('');
   const LIVE_STATES = ['working', 'waiting', 'ready'];
@@ -759,7 +770,7 @@
           <form class="inputbar mono" onsubmit={sendSub}>
             <span class="prompt">❯</span>
             <label class="grow"><span class="sr">Message this subagent</span>
-              <input bind:value={draft} placeholder="Message {selected.sub.description}" /></label>
+              <textarea rows="1" {@attach grow} bind:value={draft} onkeydown={enterSends} placeholder="Message {selected.sub.description}"></textarea></label>
           </form>
           <div class="subnote muted small">Goes through <button class="link" onclick={() => open(selected!.machine, selected!.entry)}>{selected.entry.name}</button>, which passes it on with SendMessage (resuming the subagent if it has finished).</div>
         {:else}
@@ -784,8 +795,8 @@
         <form class="inputbar mono" onsubmit={sendDraft} ondragover={(e) => e.preventDefault()} ondrop={onDrop}>
           <span class="prompt">❯</span>
           <label class="grow"><span class="sr">Message this session</span>
-            <input bind:value={draft} onpaste={onPaste} onkeydown={onInputKey} disabled={selected.entry.state === 'terminal' || selected.entry.state === 'missing'}
-              placeholder={selected.entry.state === 'terminal' ? 'Open in a terminal elsewhere' : selected.entry.state === 'working' ? 'Working… messages are queued (Esc to interrupt)' : 'Message this session'} /></label>
+            <textarea rows="1" {@attach grow} bind:value={draft} onpaste={onPaste} onkeydown={onInputKey} disabled={selected.entry.state === 'terminal' || selected.entry.state === 'missing'}
+              placeholder={selected.entry.state === 'terminal' ? 'Open in a terminal elsewhere' : selected.entry.state === 'working' ? 'Working… messages are queued (Esc to interrupt)' : 'Message this session (Shift+Enter for a new line)'}></textarea></label>
           <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden bind:this={fileInput} onchange={(e) => { addFiles((e.target as HTMLInputElement).files ?? []); (e.target as HTMLInputElement).value = ''; }} />
           <button type="button" class="tiny" aria-label="Attach images" title="Attach images (or paste / drop them)" onclick={() => fileInput?.click()}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" /></svg>
@@ -1132,7 +1143,10 @@
   .todos li.completed { color: var(--o2); text-decoration: line-through; } .todos li.completed .box { color: var(--green); border-color: var(--green); }
   .todos li.in_progress { color: var(--text); font-weight: 600; } .todos li.in_progress .box { color: var(--peach); border-color: var(--peach); }
   .inputbar { display: flex; gap: 10px; align-items: center; padding: 12px 18px; border-top: 1px solid var(--s0); }
-  .inputbar input { border: 0; background: none; }
+  .inputbar { align-items: flex-end; }
+  .inputbar textarea { display: block; width: 100%; box-sizing: border-box; border: 0; background: none; color: var(--text); font: inherit; padding: 8px 10px; resize: none; max-height: 40vh; overflow-y: auto; line-height: 1.45; }
+  .inputbar textarea:focus { outline: 1px solid var(--mauve); border-radius: 8px; }
+  .inputbar .prompt { padding-bottom: 8px; }
   .placeholder { margin: auto; color: var(--o2); }
   .streaming { color: var(--text); } .cursor { color: var(--mauve); animation: blink 1s steps(2) infinite; }
   @keyframes blink { 50% { opacity: 0; } }

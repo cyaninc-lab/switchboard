@@ -20,6 +20,20 @@ test('chat: stream, approve, deny, interrupt, auto mode, stop', async ({ page })
   const input = page.getByLabel('Message this session');
   const entry = page.getByRole('navigation', { name: 'Sessions' }).getByRole('button', { name: /Investigate slow feed/ });
 
+  // Shift+Enter starts a new line, the box grows; Enter sends both lines and it shrinks back
+  const h0 = (await input.boundingBox())!.height;
+  await input.click();
+  await page.keyboard.type('first line');
+  await page.keyboard.press('Shift+Enter');
+  await page.keyboard.type('second line');
+  await expect(input).toHaveValue('first line\nsecond line');
+  expect((await input.boundingBox())!.height).toBeGreaterThan(h0);
+  await page.keyboard.press('Enter');
+  await expect(log).toContainText('first line\nsecond line');
+  await expect(input).toHaveValue('');
+  await expect.poll(async () => (await input.boundingBox())!.height).toBe(h0);
+  await expect(entry).toHaveAttribute('title', 'Live and ready');
+
   // approve
   await input.fill('please run the checks');
   await input.press('Enter');
