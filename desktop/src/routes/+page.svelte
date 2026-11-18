@@ -1212,7 +1212,8 @@
   .termhead { display: flex; gap: 16px; align-items: center; padding: 8px 18px; font-size: 12px; color: var(--o2); border-bottom: 1px solid var(--s0); }
   .logbody { display: flex; flex-direction: column; gap: 8px; }
   .log { flex: 1; overflow: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; white-space: pre-wrap; word-break: break-word; }
-  .you { color: var(--text); }
+  /* your messages: a soft mauve band with an edge, so they stand out when scrolling back */
+  .you { color: var(--text); background: color-mix(in srgb, var(--mauve) 10%, transparent); border-left: 3px solid var(--mauve); border-radius: 6px; padding: 8px 12px; margin: 4px 0; }
   .reply { display: flex; gap: 8px; white-space: normal; }
   /* messages between sessions: their own box, sky for received, teal for sent */
   .mail { border: 1px solid var(--s1); border-left: 3px solid var(--sky); border-radius: 8px; background: rgba(137, 220, 235, 0.06); padding: 8px 12px; white-space: normal; }
