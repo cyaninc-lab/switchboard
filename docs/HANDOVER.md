@@ -9,7 +9,7 @@ A self-hosted manager for Claude Code sessions, for a general audience (don't ta
 - **Watches** (schedule, command, HTTP, GitHub via `gh`) either post to the inbox or wake a session that then messages you first.
 - Sessions get the same power as Claude Code on that machine (permission modes incl. auto/bypass, AskUserQuestion, plan approval, "allow for this session"); limits are the user's to set.
 
-## State: 0.1.11, in daily use
+## State: 0.1.14, in daily use
 Live on the author's Linux PC and Windows work PC, each with its own daemon, connected to each other over Tailscale. Self-update verified for real (0.1.0 → 0.1.7 byte-identical to the signed release).
 
 Done: pairing (one-time code, tokens hashed), multi-machine tree, live chat with streaming, thinking, subagents (running ones in the tree; message one through its parent via SendMessage), images (paste/drop), slash commands, model/effort/mode/account per session, multiple Claude accounts (`switchboard-daemon account add`), diffs/to-dos/context-and-cost meter, real terminal (pty/ConPTY), watches + inbox + desktop notifications, report-a-bug (scrubbed logs → pre-filled GitHub issue, no credentials in the app), self-update, Windows port.
@@ -32,26 +32,24 @@ Done: pairing (one-time code, tokens hashed), multi-machine tree, live chat with
 7. Code-sign the Windows installer (SmartScreen warns today).
 
 ### From daily use (the user's list, 2026-11-18)
-Grouped; **(S)** small, **(M)** medium, **(L)** large. Do as separate PRs; batch into one release.
-- **Input:** multiline box, Shift+Enter for a new line **(S)**; Ctrl+Enter = "send now", as in Claude Code (its `chat:sendNow`, hint "interrupt and send"; checked in 2.1.327) **(S)**: queue the message, then interrupt; the daemon sends the queue when the interrupted turn ends; queued messages stay at the bottom **(S/M)**: today a message sent while Claude works is added to the chat at once, and the still-streaming reply pushes it up, so it reads as if sent earlier. Like Claude Code, keep queued messages pinned above the box (with the "1 queued" note) and move each into the chat when its turn starts (the client has to hold them; the daemon only sends a count).
-- **Tree & projects** (a project is today just the entry's `group` string, sorted by name):
-  - rename an agent or project from the right-click menu (the menu exists since 0.1.9) **(S)**;
-  - order agents within a project by last activity (your message or Claude's reply), with a setting to choose later **(S/M)**: pinned stay on top, and hold the order still while the pointer is over the tree so nothing jumps under a click;
-  - drag an agent to another project **(M)**; drag projects to reorder them (needs a stored project order) **(M)**;
-  - archive: hide from the tree but keep name/project/settings, restorable from a list **(M)**. Simpler: make Remove itself keep them, with a "Removed" list to restore from (one feature, not two).
-- **Adding:** pick several sessions at once **(S)**; a dropdown of existing projects, plus "New project" **(S)**.
-- **Chat display:**
-  - your typed messages vs Claude's replies are hard to tell apart when scrolling back: make them clearly different **(S/M, show a couple of looks first)**;
-  - messages from another session (`message_session`, 0.1.9) arrive as ordinary user prompts and look like your own typing: show them as their own kind, e.g. "✉ from Alpha", in both the receiver's chat and as a clear step in the sender's **(S)**. The daemon already knows (the turn's `origin.from`); send it with the message;
-  - file paths in messages open the file/folder **(S/M)**: Claude writes those paths, so only open existing files/folders (reveal in the file manager or a viewer), never run anything; line numbers on diffs: doable, Claude Code's tool result carries a structured patch with line numbers **(M)**.
-- **Inbox:** delete an item **(S)** (removes it for every device: the inbox is per machine, shared).
-- **Layout & look:** collapsible left sidebar, automatic when the window is narrow **(S/M)**; light mode (Catppuccin Latte; colours are already variables) **(M)**; font picker **(S)**: a short fixed list plus size (a webview can't easily list installed fonts). A collapsed sidebar still shows the sun when a session needs you.
-- **Windows:** pop a session out into its own window **(L)**; tabs **(L)**. Probably one or the other: they solve the same problem.
-- **Settings:** machine defaults for new sessions (mode, model, effort, account), and a session shows its real values instead of "default" **(M)**. Changing a default affects new sessions only.
-- **Idle close as a setting:** 0.1.9 removed auto-closing (closing lost "allow for this session" and in-session timers); bring it back only as an opt-in, off by default, saying what closing forgets **(S)**.
-- ~~Collapse projects / subagents~~: done in 0.1.9.
+Shipped in 0.1.9–0.1.14: multiline input, Ctrl+Enter send-now, queued messages at the bottom, rename from the right-click menu, project dropdown + "New project" when adding, add several at once, inbox delete, Catppuccin themes, text size and fonts, boxes for messages between sessions, a band for your own messages, clickable file links, web links in the default browser, collapsible projects.
+
+Left, **(S)** small, **(M)** medium, **(L)** large. Separate PRs, batched into a release when the user says so:
+- **Order agents within a project by last activity** **(S/M)**: pinned stay on top; hold the order still while the pointer is over the tree.
+- **Collapsible left sidebar**, automatic when the window is narrow **(S/M)**; still shows the sun when a session needs you.
+- **Line numbers on diffs** **(M)**: probably from Claude Code's structured patch in the tool result; not checked.
+- **Drag an agent to another project** **(M)**; **drag projects to reorder** **(M)** (needs a stored project order).
+- **Archive**, or better: make Remove keep name/project/settings, with a "Removed" list to restore from **(M)**.
+- **Settings defaults** for new sessions (mode, model, effort, account), and sessions show real values instead of "default" **(M)**; a changed default affects new sessions only.
+- **Pop out a session or tabs** **(L)**: one or the other. Links could open in a Switchboard window then.
+- **Idle close as an opt-in setting** **(S)**, only if wanted; say what closing forgets.
+- **Say when another machine runs an older Switchboard** **(S)** (e.g. inbox Delete against an old daemon fails silently today); maybe show each machine's version on its chip.
 
 ## Traps learned the hard way
+- A new repo whose automatic Actions runs never start (push/PR do nothing, a manual `workflow_dispatch` works): GitHub's Actions setup for it got stuck at creation. Turning Actions off and on fixes it: `gh api -X PUT repos/OWNER/REPO/actions/permissions -F enabled=false`, then `-F enabled=true -f allowed_actions=all`. Seen 2026-11-18 when the repo went public.
+- Tests must not depend on github.com: the Report a bug test stubs it (a public repo sends logged-out visitors of `/issues/new` to the login page).
+- Merging a stacked PR with `--delete-branch` closes the PR stacked on it: retarget the next one to `main` first (and rebase it onto `main` with `git rebase --onto origin/main <old base> <branch>`).
+- A shell script with `set -e` does not stop on a failing `a && b` list: check results explicitly.
 - A `claude` started from inside a Claude session inherits `CLAUDE*` env vars and misbehaves; scrub them (the daemon does).
 - PyInstaller one-file sidecar: the real process is a child of the bootloader. The app passes `--exit-with <pid>` and kills the process group (`kill -- -pgid`; Windows `taskkill /T`). On Windows build with `--collect-all winpty`.
 - `pkill -f <pattern>` can match your own shell; use `pkill -x` or a `[x]` bracket pattern.
