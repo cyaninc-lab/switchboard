@@ -302,6 +302,8 @@ class ClaudeSDKClient:
             yield UserMessage([ToolResultBlock("ag1", "dash_url is read in server/app.py:212")])
         if self.options.effort and "effort" in text.lower():
             yield AssistantMessage([TextBlock(f"(effort: {self.options.effort})")])
+        if "mention a file" in text.lower():  # a file path and a command as inline code
+            yield AssistantMessage([TextBlock("The handler is in `server/app.py:212`; check it with `npm test`.")])
         if "show a link" in text.lower():  # a markdown link in the reply
             yield AssistantMessage([TextBlock("See [the docs](https://example.com/docs) for details.")])
         if "ask me" in text.lower():  # a clarifying question (AskUserQuestion)
