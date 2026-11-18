@@ -119,7 +119,9 @@ class Runner:
             **({"model": m} if (m := os.environ.get("SWITCHBOARD_MODEL") or entry.get("model")) else {}),
             **({"cli_path": self.cli_path} if self.cli_path else {}),
             mcp_servers={"switchboard": self._tools(entry["id"])}, allowed_tools=list(TOOLS),
-            max_buffer_size=MAX_MESSAGE)
+            max_buffer_size=MAX_MESSAGE,
+            # Claude in Chrome: the terminal turns it on by itself, SDK sessions only with --chrome (checked on 2.1.327)
+            extra_args={"chrome": None})
         client = self.sdk.ClaudeSDKClient(options=opts)
         await client.connect()
         log.info("session %s live (entry %s, model %s, account %s)", entry["session_id"], entry["id"], entry.get("model") or "default", entry.get("account") or "machine")

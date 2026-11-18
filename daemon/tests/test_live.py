@@ -468,7 +468,7 @@ def test_old_unfinished_subagents_are_not_running(tmp_path, monkeypatch):
     asyncio.run(t())
 
 
-def test_sessions_accept_big_messages(tmp_path, monkeypatch):
+def test_session_options(tmp_path, monkeypatch):
     """A Read of a big screenshot is one multi-MB line from Claude Code; the SDK's 1 MB default killed the session."""
     async def t():
         client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
@@ -476,6 +476,7 @@ def test_sessions_accept_big_messages(tmp_path, monkeypatch):
         await ws.send_json({"type": "send", "entry": e["id"], "text": "hi"})
         await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
         assert runner.live[e["id"]].client.options.max_buffer_size >= 32 * 1024 * 1024
+        assert "chrome" in runner.live[e["id"]].client.options.extra_args  # Claude in Chrome, as in the terminal
         await client.close()
     asyncio.run(t())
 
