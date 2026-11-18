@@ -38,6 +38,10 @@
     const m = machines.find((x) => x.url === i.url);
     if (m) { await api.markRead(m, i.id); loadInbox(m); }
   }
+  async function deleteItem(i: { url: string; id: number }) {
+    const m = machines.find((x) => x.url === i.url);
+    if (m) { await api.deleteInboxItem(m, i.id).catch(() => {}); loadInbox(m); }
+  }
   async function readAll() { for (const m of machines) { await api.markRead(m).catch(() => {}); loadInbox(m); } }
   function openFromInbox(i: { url: string; entry_id: string | null; id: number }) {
     const m = machines.find((x) => x.url === i.url);
@@ -328,7 +332,7 @@
       notify(`${e.item.source}${e.item.from_agent ? ' (agent)' : ''}`, `${e.item.title}: ${e.item.body}`);
       return;
     }
-    if (e.type === 'inbox_read' && m) { loadInbox(m); return; }
+    if ((e.type === 'inbox_read' || e.type === 'inbox_removed') && m) { loadInbox(m); return; }
     if (e.type === 'subagents') { refresh(); if (selected?.sub && selected.entry.id === e.entry) loadSub(); return; }
     if (e.type === 'state') {
       const was = Object.values(tree).flatMap((t) => t.entries).find((x) => x.id === e.entry)?.state;
@@ -882,7 +886,7 @@
       {/if}
     </main>
     {#if showInbox && machines.length}
-      <InboxView items={inboxItems} onOpen={openFromInbox} onRead={readItem} onReadAll={readAll} onClose={() => (showInbox = false)} />
+      <InboxView items={inboxItems} onOpen={openFromInbox} onRead={readItem} onDelete={deleteItem} onReadAll={readAll} onClose={() => (showInbox = false)} />
     {/if}
   </div>
 

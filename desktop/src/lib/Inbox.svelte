@@ -4,8 +4,8 @@
   import { md } from './markdown';
 
   type Item = InboxItem & { machine: string; url: string };
-  let { items, onOpen, onRead, onReadAll, onClose }: {
-    items: Item[]; onOpen: (i: Item) => void; onRead: (i: Item) => void; onReadAll: () => void; onClose: () => void;
+  let { items, onOpen, onRead, onDelete, onReadAll, onClose }: {
+    items: Item[]; onOpen: (i: Item) => void; onRead: (i: Item) => void; onDelete: (i: Item) => void; onReadAll: () => void; onClose: () => void;
   } = $props();
   let unread = $derived(items.filter((i) => !i.read).length);
   const when = (s: number) => {
@@ -36,6 +36,8 @@
         <div class="actions">
           {#if i.entry_id}<button class="tiny" onclick={() => onOpen(i)}>Open session</button>{/if}
           {#if !i.read}<button class="tiny" onclick={() => onRead(i)}>Mark read</button>{/if}
+          <span class="grow"></span>
+          <button class="tiny" title="Delete (from every device)" onclick={() => onDelete(i)}>Delete</button>
         </div>
       </article>
     {/each}

@@ -153,6 +153,9 @@ class Store:
         return [{**dict(r), "read": bool(r["read"]), "from_agent": bool(r["from_agent"])}
                 for r in self.db.execute("SELECT * FROM inbox ORDER BY id DESC LIMIT ?", (limit,))]
 
+    def delete_inbox(self, iid):
+        return self.db.execute("DELETE FROM inbox WHERE id = ?", (iid,)).rowcount > 0
+
     def mark_read(self, iid=None):
         if iid is None:
             self.db.execute("UPDATE inbox SET read = 1")

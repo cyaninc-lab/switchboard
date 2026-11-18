@@ -57,6 +57,12 @@ test('watches: notify and wake-an-agent both land in the inbox', async ({ page }
   await inbox.getByRole('button', { name: 'Mark all read' }).click();
   await expect(page.getByRole('button', { name: 'Inbox (0 unread)' })).toBeVisible();
 
+  // delete an item (gone from every device)
+  const disk = inbox.getByRole('article', { name: /Disk check/ }).first();
+  const before = await inbox.getByRole('article').count();
+  await disk.getByRole('button', { name: 'Delete' }).click();
+  await expect(inbox.getByRole('article')).toHaveCount(before - 1);
+
   // tidy up (the specs share one demo daemon)
   await page.getByRole('button', { name: 'Watches' }).click();
   for (const name of ['Disk check', 'Morning check']) await dlg.getByRole('button', { name: `Delete ${name}` }).click();

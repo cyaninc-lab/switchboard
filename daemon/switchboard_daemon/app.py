@@ -271,6 +271,14 @@ async def list_inbox(request):
     return web.json_response({"items": request.app[STORE].inbox(int(request.query.get("limit", 100)))})
 
 
+async def delete_inbox(request):
+    iid = int(request.match_info["id"])
+    if not request.app[STORE].delete_inbox(iid):
+        raise web.HTTPNotFound()
+    await _broadcast(request.app, {"type": "inbox_removed", "id": iid})  # every device drops it
+    return web.Response(status=204)
+
+
 async def read_inbox(request):
     iid = request.match_info.get("id")
     request.app[STORE].mark_read(int(iid) if iid else None)
@@ -528,7 +536,7 @@ def make_app(store: Store, name=None):
         web.get("/v1/network", get_network), web.put("/v1/network", set_network), web.post("/v1/pair_code", pair_code),
         web.get("/v1/watches", list_watches), web.post("/v1/watches", add_watch), web.patch("/v1/watches/{id}", update_watch),
         web.delete("/v1/watches/{id}", remove_watch), web.post("/v1/watches/{id}/test", test_watch),
-        web.get("/v1/inbox", list_inbox), web.post("/v1/inbox/read", read_inbox), web.post("/v1/inbox/{id}/read", read_inbox),
+        web.get("/v1/inbox", list_inbox), web.post("/v1/inbox/read", read_inbox), web.post("/v1/inbox/{id}/read", read_inbox), web.delete("/v1/inbox/{id}", delete_inbox),
         web.get("/v1/accounts", list_accounts), web.post("/v1/accounts", add_account), web.delete("/v1/accounts/{name}", remove_account),
     ])
     return app

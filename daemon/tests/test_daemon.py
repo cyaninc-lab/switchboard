@@ -153,3 +153,17 @@ def test_history_is_the_latest_messages(env, monkeypatch):
         assert d["total"] == 1000 and len(d["messages"]) == 400
         assert d["messages"][0]["uuid"] == "u600" and d["messages"][-1]["uuid"] == "u999"
     run(store, t)
+
+
+def test_delete_inbox_item(env):
+    store, _ = env
+    keep, gone = store.add_inbox("watch", "keep", "a"), store.add_inbox("watch", "gone", "b")
+
+    async def t(client):
+        h = await paired(client, store)
+        assert (await client.delete(f"/v1/inbox/{gone['id']}", headers=h)).status == 204
+        items = (await (await client.get("/v1/inbox", headers=h)).json())["items"]
+        assert [i["title"] for i in items] == ["keep"]
+        assert (await client.delete(f"/v1/inbox/{gone['id']}", headers=h)).status == 404
+        assert (await client.delete(f"/v1/inbox/{keep['id']}")).status == 401  # needs pairing like everything else
+    run(store, t)

@@ -69,6 +69,7 @@ export const saveWatch = (m: Machine, w: Partial<Watch>) => w.id
 export const removeWatch = (m: Machine, id: string) => call<void>(m, `/v1/watches/${id}`, { method: 'DELETE' });
 export const testWatch = (m: Machine, id: string) => call<{ fired: boolean }>(m, `/v1/watches/${id}/test`, { method: 'POST' });
 export const inbox = (m: Machine) => call<{ items: InboxItem[] }>(m, '/v1/inbox').then((d) => d.items);
+export const deleteInboxItem = (m: Machine, id: number) => call<void>(m, `/v1/inbox/${id}`, { method: 'DELETE' });
 export const markRead = (m: Machine, id?: number) => call<void>(m, id === undefined ? '/v1/inbox/read' : `/v1/inbox/${id}/read`, { method: 'POST' });
 
 export type Account = { name: string; kind: 'oauth' | 'api_key'; created: number };
@@ -195,6 +196,7 @@ export type LiveEvent =
   | ({ type: 'usage'; entry: string } & Usage)
   | { type: 'inbox'; item: InboxItem }
   | { type: 'inbox_read'; id: number | null }
+  | { type: 'inbox_removed'; id: number }
   | { type: 'terminal_output'; entry: string; data: string }
   | { type: 'error'; entry?: string; code: string; message: string };
 
