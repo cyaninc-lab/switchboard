@@ -1,11 +1,30 @@
 name: windows
+# Only when something Windows-specific could break: the daemon, the native app, dependencies, tools, workflows.
+# The UI and docs are covered by the Linux job. PRs only; run by hand from the Actions tab if needed.
 on:
   pull_request:
-  push:
-    branches: [main]
+    paths: [daemon/**, desktop/src-tauri/**, desktop/package.json, desktop/package-lock.json, tools/**, .github/workflows/**]
   workflow_dispatch:
 jobs:
+  changes:  # a release-only PR (version numbers and notes) needs no test run: the release build that follows catches breakage
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.c.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: c
+        run: |
+          if [ "${{ github.event_name }}" != pull_request ]; then echo code=true >> "$GITHUB_OUTPUT"; exit 0; fi
+          files=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
+          echo "$files"
+          # the files tools/stamp-version.py writes, plus VERSION and NOTES.md
+          other=$(echo "$files" | grep -vxE 'VERSION|NOTES\.md|desktop/package\.json|desktop/src-tauri/(Cargo\.toml|Cargo\.lock|tauri\.conf\.json)|daemon/pyproject\.toml|daemon/switchboard_daemon/__init__\.py' || true)
+          echo "code=$([ -n "$other" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
   windows:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: windows-latest
     defaults:
       run:

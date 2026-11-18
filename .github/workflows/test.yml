@@ -1,10 +1,28 @@
 name: test
+# PRs only: a squash merge to main is exactly what its PR tested. Run by hand from the Actions tab if needed.
 on:
   pull_request:
-  push:
-    branches: [main]
+  workflow_dispatch:
 jobs:
+  changes:  # a release-only PR (version numbers and notes) needs no test run: the release build that follows catches breakage
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.c.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: c
+        run: |
+          if [ "${{ github.event_name }}" != pull_request ]; then echo code=true >> "$GITHUB_OUTPUT"; exit 0; fi
+          files=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
+          echo "$files"
+          # the files tools/stamp-version.py writes, plus VERSION and NOTES.md
+          other=$(echo "$files" | grep -vxE 'VERSION|NOTES\.md|desktop/package\.json|desktop/src-tauri/(Cargo\.toml|Cargo\.lock|tauri\.conf\.json)|daemon/pyproject\.toml|daemon/switchboard_daemon/__init__\.py' || true)
+          echo "code=$([ -n "$other" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
   daemon:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,6 +32,8 @@ jobs:
       - run: pip install -e "./daemon[test]"
       - run: python -m pytest -q daemon/tests
   desktop:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
