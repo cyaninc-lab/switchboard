@@ -80,6 +80,20 @@ test('tree icons: ring when live, spinner when working, sun when waiting, dot wh
   await a.click();
   await expect(input).toHaveValue('for A');
 
+  // a half-answered question survives switching away and back
+  await b.click();
+  await input.fill('ask me something');
+  await input.press('Enter');
+  const q = page.getByRole('group', { name: 'Claude asks' });
+  await q.getByLabel(/Other answer to/).fill('half an answer');
+  await a.click();
+  await expect(q).toHaveCount(0);
+  await b.click();
+  await expect(q.getByLabel(/Other answer to/)).toHaveValue('half an answer');
+  await q.getByLabel(/Other answer to/).press('Enter');
+  await expect(q).toHaveCount(0);
+  await expect(st(b)).toHaveClass(/ready/);
+
   // right-click > Close session ends the live session; it stays in the tree
   const menu = page.getByRole('menu', { name: 'Icon B actions' });
   await b.click({ button: 'right' });

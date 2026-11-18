@@ -1,3 +1,3 @@
-## Switchboard 0.1.10
+## Switchboard 0.1.11
 
-- **Reading big images no longer breaks a session.** When Claude read a large screenshot, the session stopped with "JSON message exceeded maximum buffer size". Sessions now take messages up to 64 MB.
+- **Half-answered questions are kept.** If you start answering Claude's questions (or typing feedback on a plan) and switch to another session, your picks and typing are still there when you come back.

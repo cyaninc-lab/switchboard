@@ -1,15 +1,24 @@
+<script module lang="ts">
+  // half-given answers outlive the card (switching sessions unmounts it), keyed by request id
+  // ponytail: never pruned; a few small objects per question asked in this window
+  const drafts: Record<string, { picked: Record<string, string[]>; other: Record<string, string>; feedback: string }> = $state({});
+</script>
+
 <script lang="ts">
   // One thing Claude is waiting on: a clarifying question, a plan to approve, or permission to use a tool.
   import type { Live } from './api';
   import { md } from './markdown';
+  import { untrack } from 'svelte';
 
   type P = { request_id: string; tool: string; kind: 'tool' | 'question' | 'plan'; input: any; remember: string[] };
   let { p, live }: { p: P; live: Live } = $props();
   const summary = (i: any) => i?.command ?? i?.file_path ?? i?.pattern ?? i?.url ?? JSON.stringify(i).slice(0, 200);
 
   // questions
-  let picked = $state<Record<string, string[]>>({});
-  let other = $state<Record<string, string>>({});
+  const id = untrack(() => p.request_id);  // the parent keys cards by request id: it never changes for this card
+  drafts[id] ??= { picked: {}, other: {}, feedback: '' };
+  const d = drafts[id];
+  const picked = d.picked, other = d.other;
   const questions: any[] = $derived(p.input?.questions ?? []);
   function toggle(q: any, label: string) {
     const cur = picked[q.question] ?? [];
@@ -29,7 +38,6 @@
   }
 
   // plans
-  let feedback = $state('');
 </script>
 
 {#if p.kind === 'question'}
@@ -62,8 +70,8 @@
     <div class="row">
       <button class="primary" onclick={() => live.answer(p.request_id, true)}>Approve plan</button>
       <label class="grow"><span class="sr">What to change in the plan</span>
-        <input placeholder="Or say what to change…" bind:value={feedback} onkeydown={(e) => e.key === 'Enter' && live.answer(p.request_id, false, { message: feedback })} /></label>
-      <button class="quiet" onclick={() => live.answer(p.request_id, false, { message: feedback })}>Keep planning</button>
+        <input placeholder="Or say what to change…" bind:value={d.feedback} onkeydown={(e) => e.key === 'Enter' && live.answer(p.request_id, false, { message: d.feedback })} /></label>
+      <button class="quiet" onclick={() => live.answer(p.request_id, false, { message: d.feedback })}>Keep planning</button>
     </div>
   </div>
 {:else}
