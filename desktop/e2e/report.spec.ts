@@ -18,6 +18,9 @@ test('report a bug: copies a scrubbed report and opens a pre-filled issue', asyn
   await page.getByRole('button', { name: 'Report a bug' }).click();
   const dialog = page.getByRole('form', { name: 'Report a bug' });
   await dialog.getByLabel(/What happened/).fill('Tree flashes offline\nAfter switching to the background service the chip says offline.');
+  // answer GitHub with a stub: the test checks the address the app opens, not GitHub's own redirects
+  // (a public repo sends logged-out visitors to its login page) or the network
+  await page.context().route('https://github.com/**', (r) => r.fulfill({ contentType: 'text/html', body: '<title>stub</title>' }));
   const popup = page.waitForEvent('popup');
   await dialog.getByRole('button', { name: /Copy report/ }).click();
   const url = (await popup).url();
