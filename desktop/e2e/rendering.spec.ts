@@ -57,6 +57,17 @@ test('diffs, to-dos, expandable output and the context/cost meter', async ({ pag
   await input.press('Enter');
   await expect(log).toContainText('(effort: low)');
 
+  // a web link in a reply opens outside the app (the browser here; the default browser in the desktop app)
+  await input.fill('show a link');
+  await input.press('Enter');
+  const link = log.getByRole('link', { name: 'the docs' });
+  const here = page.url();
+  const [popup] = await Promise.all([page.waitForEvent('popup'), link.click()]);
+  await expect.poll(() => popup.url()).toContain('example.com/docs');
+  await popup.close();
+  expect(page.url()).toBe(here);  // the app didn't navigate away
+  await expect(log).toContainText('Done: show a link');
+
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
   await page.getByRole('button', { name: 'Remove from tree' }).click();
 });
