@@ -23,6 +23,12 @@ test('questions, plan approval, and allow for this session', async ({ page }) =>
   const q = page.getByRole('group', { name: 'Claude asks' });
   await expect(q).toContainText('Which database should I use?');
   await expect(q.getByRole('radio', { name: /SQLite/ })).toContainText('One file, no server');
+  await expect(log).toContainText('AskUserQuestion(Which database should I use?)');  // the chat line names the question
+  // the header label stays on one line, even squeezed in a narrow window
+  await page.setViewportSize({ width: 760, height: 820 });
+  const chip = q.locator('.chip');
+  expect((await chip.boundingBox())!.height).toBeLessThan(24);
+  await page.setViewportSize({ width: 1280, height: 820 });
   await page.screenshot({ path: 'e2e/.results/question.png' });
   await q.getByRole('radio', { name: /Postgres/ }).click();
   await expect(log).toContainText("You picked: {'Which database should I use?': 'Postgres'}");

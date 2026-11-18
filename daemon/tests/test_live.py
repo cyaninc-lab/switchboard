@@ -288,7 +288,7 @@ def test_questions_plans_and_remember(tmp_path, monkeypatch):
 
         # a clarifying question: pick an option
         req = await ask("ask me something")
-        assert req["kind"] == "question" and req["input"]["questions"][0]["header"] == "Database" and req["remember"] == []
+        assert req["kind"] == "question" and req["input"]["questions"][0]["header"] == "DB choice" and req["remember"] == []
         await ws.send_json({"type": "permission_reply", "request_id": req["request_id"], "answers": {"Which database should I use?": "Postgres"}})
         _, seen = await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
         assert any("You picked: {'Which database should I use?': 'Postgres'}" in str(m) for m in seen)

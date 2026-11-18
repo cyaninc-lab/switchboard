@@ -95,7 +95,7 @@
   .title { font-weight: 600; color: var(--peach); } .plan .title { color: var(--mauve); }
   .mono { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
   .qhead { display: flex; gap: 8px; align-items: baseline; }
-  .chip { font-size: 11px; color: var(--sky); border: 1px solid color-mix(in srgb, var(--sky) 50%, transparent); border-radius: 999px; padding: 1px 8px; }
+  .chip { flex: none; white-space: nowrap; font-size: 11px; color: var(--sky); border: 1px solid color-mix(in srgb, var(--sky) 50%, transparent); border-radius: 999px; padding: 1px 8px; }
   .opts { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 6px; }
   .opts button { display: flex; flex-direction: column; gap: 2px; text-align: left; background: var(--mantle); border: 1px solid var(--s1); color: var(--text); border-radius: 8px; padding: 8px 10px; cursor: pointer; }
   .opts button.on { border-color: var(--sky); background: var(--s0); }

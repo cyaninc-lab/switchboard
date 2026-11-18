@@ -302,8 +302,9 @@ class ClaudeSDKClient:
         if self.options.effort and "effort" in text.lower():
             yield AssistantMessage([TextBlock(f"(effort: {self.options.effort})")])
         if "ask me" in text.lower():  # a clarifying question (AskUserQuestion)
-            q = {"question": "Which database should I use?", "header": "Database", "multiSelect": False,
+            q = {"question": "Which database should I use?", "header": "DB choice", "multiSelect": False,
                  "options": [{"label": "SQLite", "description": "One file, no server"}, {"label": "Postgres", "description": "A real server"}]}
+            yield AssistantMessage([ToolUseBlock("q1", "AskUserQuestion", {"questions": [q]})])  # shown in the chat, as real Claude Code does
             r = await self.options.can_use_tool("AskUserQuestion", {"questions": [q]}, _Ctx())
             got = (r.updated_input or {}) if isinstance(r, PermissionResultAllow) else {}
             yield AssistantMessage([TextBlock(f"You picked: {got.get('answers') or got.get('response') or 'nothing (' + r.message + ')'}")])

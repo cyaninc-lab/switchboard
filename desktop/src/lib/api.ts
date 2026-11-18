@@ -163,7 +163,7 @@ export function render(msg: HistoryMessage): Line[] {
         return [{ kind: 'mail', dir: 'out', who: String(i.session ?? ''), text: i.text }];
       if (b.name === 'TodoWrite' && Array.isArray(i.todos))
         return [{ kind: 'todos', text: 'To-dos', items: i.todos }];
-      const arg = i.command ?? i.file_path ?? i.pattern ?? i.description ?? '';
+      const arg = i.command ?? i.file_path ?? i.pattern ?? i.description ?? i.questions?.[0]?.question ?? '';  // AskUserQuestion: its first question
       return [{ kind: 'tool' as const, text: `${b.name}(${String(arg).slice(0, 160)})`, name: b.name, id: b.id, input: i }];
     }
     if (b.type === 'tool_result') {
