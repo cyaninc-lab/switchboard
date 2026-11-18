@@ -2,8 +2,9 @@
   import * as api from '$lib/api';
   import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell, openExternal, appVersion, checkForUpdate, notify } from '$lib/shell';
   import { backdrop } from '$lib/backdrop';
-  import { theme, THEMES, applyTheme } from '$lib/themes.svelte';
+  import { theme, THEMES, applyTheme, fonts, UI_FONTS, MONO_FONTS, SIZES, applyFonts } from '$lib/themes.svelte';
   applyTheme(theme.name);
+  applyFonts();
   import type { Update } from '$lib/shell';
   import { captureAppLog, buildReport, issueUrl } from '$lib/report';
   import type { ServiceStatus } from '$lib/shell';
@@ -983,6 +984,14 @@
       <h2>Settings</h2>
       <label>Theme<select value={theme.name} onchange={(e) => applyTheme((e.currentTarget as HTMLSelectElement).value)}>
         {#each Object.entries(THEMES) as [k, t]}<option value={k}>{t.label}</option>{/each}</select></label>
+      <div class="grid3">
+        <label>Text size<select value={fonts.size} onchange={(e) => applyFonts({ size: +(e.currentTarget as HTMLSelectElement).value })}>
+          {#each SIZES as z}<option value={z}>{z}%</option>{/each}</select></label>
+        <label>Interface font<select value={fonts.ui} onchange={(e) => applyFonts({ ui: (e.currentTarget as HTMLSelectElement).value })}>
+          {#each Object.entries(UI_FONTS) as [k, f]}<option value={k}>{f.label}</option>{/each}</select></label>
+        <label>Chat and code font<select value={fonts.mono} onchange={(e) => applyFonts({ mono: (e.currentTarget as HTMLSelectElement).value })}>
+          {#each Object.entries(MONO_FONTS) as [k, f]}<option value={k}>{f.label}</option>{/each}</select></label>
+      </div>
       {#if !inShell()}
         <p class="muted">Settings for this machine are available in the desktop app.</p>
       {:else if svc && !svc.supported}
@@ -1132,9 +1141,9 @@
     --o1: #7f849c; --o2: #9399b2; --sub0: #a6adc8; --sub1: #bac2de; --text: #cdd6f4;
     --mauve: #cba6f7; --green: #a6e3a1; --peach: #fab387; --sky: #89dceb; --teal: #94e2d5; --red: #f38ba8;
   }
-  :global(html, body) { margin: 0; height: 100%; background: var(--crust); color: var(--text); font: 13px/1.45 Inter, system-ui, sans-serif; }
+  :global(html, body) { margin: 0; height: 100%; background: var(--crust); color: var(--text); font: 13px/1.45 var(--ui-font, Inter, system-ui, sans-serif); }
   :global(button) { font: inherit; cursor: pointer; }
-  :global(.mono) { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+  :global(.mono) { font-family: var(--mono-font, 'JetBrains Mono', ui-monospace, monospace); }
   :global(.muted) { color: var(--o2); } .small { font-size: 11px; } .grow { flex: 1; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   code { background: var(--s0); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
@@ -1208,12 +1217,12 @@
   /* messages between sessions: their own box, sky for received, teal for sent */
   .mail { border: 1px solid var(--s1); border-left: 3px solid var(--sky); border-radius: 8px; background: rgba(137, 220, 235, 0.06); padding: 8px 12px; white-space: normal; }
   .mail.out { border-left-color: var(--teal); background: rgba(148, 226, 213, 0.05); }
-  .mailhead { font: 12px Inter, system-ui, sans-serif; color: var(--sky); margin-bottom: 4px; } .mail.out .mailhead { color: var(--teal); }
+  .mailhead { font: 12px var(--ui-font, Inter, system-ui, sans-serif); color: var(--sky); margin-bottom: 4px; } .mail.out .mailhead { color: var(--teal); }
   .mailhead b { font-weight: 600; }
-  .md { min-width: 0; font-family: Inter, system-ui, sans-serif; line-height: 1.55; }
+  .md { min-width: 0; font-family: var(--ui-font, Inter, system-ui, sans-serif); line-height: 1.55; }
   .md :global(p) { margin: 0 0 8px; } .md :global(p:last-child) { margin-bottom: 0; }
   .md :global(h1), .md :global(h2), .md :global(h3) { font-size: 14px; margin: 10px 0 6px; color: var(--mauve); }
-  .md :global(code) { font-family: 'JetBrains Mono', monospace; background: var(--s0); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .md :global(code) { font-family: var(--mono-font, 'JetBrains Mono', monospace); background: var(--s0); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
   .md :global(pre) { background: var(--mantle); border: 1px solid var(--s0); border-radius: 8px; padding: 10px 12px; overflow-x: auto; }
   .md :global(pre code) { background: none; padding: 0; }
   .md :global(table) { border-collapse: collapse; margin: 6px 0; font-size: 12px; display: block; overflow-x: auto; }
@@ -1233,7 +1242,7 @@
   .dl { padding: 0 10px; white-space: pre-wrap; font-size: 12px; } .dl .sign { display: inline-block; width: 14px; color: var(--o1); }
   .dl.add { background: color-mix(in srgb, var(--green) 12%, transparent); color: var(--green); } .dl.del { background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--red); }
   .diff .link { align-self: flex-start; margin: 4px 10px; }
-  .todos { list-style: none; margin: 0; padding: 6px 10px; border: 1px solid var(--s0); border-radius: 8px; display: flex; flex-direction: column; gap: 2px; font-family: Inter, system-ui, sans-serif; white-space: normal; }
+  .todos { list-style: none; margin: 0; padding: 6px 10px; border: 1px solid var(--s0); border-radius: 8px; display: flex; flex-direction: column; gap: 2px; font-family: var(--ui-font, Inter, system-ui, sans-serif); white-space: normal; }
   .todos .box { display: inline-block; width: 14px; height: 14px; border: 1px solid var(--s2); border-radius: 3px; margin-right: 8px; text-align: center; line-height: 13px; font-size: 11px; vertical-align: -2px; }
   .todos li.completed { color: var(--o2); text-decoration: line-through; } .todos li.completed .box { color: var(--green); border-color: var(--green); }
   .todos li.in_progress { color: var(--text); font-weight: 600; } .todos li.in_progress .box { color: var(--peach); border-color: var(--peach); }
@@ -1248,7 +1257,7 @@
   @keyframes blink { 50% { opacity: 0; } }
   .perm { border: 1px solid color-mix(in srgb, var(--peach) 45%, transparent); background: color-mix(in srgb, var(--peach) 8%, transparent); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; white-space: normal; }
   .permtitle { color: var(--peach); font-weight: 600; }
-  .permactions { display: flex; gap: 8px; font-family: Inter, system-ui, sans-serif; }
+  .permactions { display: flex; gap: 8px; font-family: var(--ui-font, Inter, system-ui, sans-serif); }
   .allow { background: var(--green); color: var(--crust); border: 0; border-radius: 8px; padding: 8px 16px; font-weight: 600; }
   .deny { background: none; color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 45%, transparent); border-radius: 8px; padding: 8px 16px; }
   .shot { max-width: 320px; max-height: 200px; border-radius: 8px; border: 1px solid var(--s1); display: block; margin: 4px 0 4px 18px; }
@@ -1271,6 +1280,7 @@
   :global(.dialog) { width: 100%; max-width: 440px; background: var(--base); border: 1px solid var(--s1); border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
   :global(.dialog.wide) { max-width: 780px; max-height: 90vh; overflow: auto; }
   :global(.dialog h2) { margin: 0; font-size: 16px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
   :global(.dialog label) { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--sub0); }
   :global(.dialog .search) { padding: 0; }
   :global(.actions) { display: flex; justify-content: flex-end; gap: 8px; }

@@ -88,12 +88,12 @@
 {/if}
 
 <style>
-  .card { border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; white-space: normal; font-family: Inter, system-ui, sans-serif; }
+  .card { border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; white-space: normal; font-family: var(--ui-font, Inter, system-ui, sans-serif); }
   .perm { border: 1px solid color-mix(in srgb, var(--peach) 45%, transparent); background: color-mix(in srgb, var(--peach) 8%, transparent); }
   .q { border: 1px solid color-mix(in srgb, var(--sky) 45%, transparent); background: color-mix(in srgb, var(--sky) 7%, transparent); }
   .plan { border: 1px solid color-mix(in srgb, var(--mauve) 45%, transparent); background: color-mix(in srgb, var(--mauve) 7%, transparent); }
   .title { font-weight: 600; color: var(--peach); } .plan .title { color: var(--mauve); }
-  .mono { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+  .mono { font-family: var(--mono-font, 'JetBrains Mono', monospace); font-size: 12px; }
   .qhead { display: flex; gap: 8px; align-items: baseline; }
   .chip { flex: none; white-space: nowrap; font-size: 11px; color: var(--sky); border: 1px solid color-mix(in srgb, var(--sky) 50%, transparent); border-radius: 999px; padding: 1px 8px; }
   .opts { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 6px; }

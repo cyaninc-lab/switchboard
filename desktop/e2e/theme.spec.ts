@@ -36,6 +36,29 @@ test('themes: pick a Catppuccin palette in Settings; it applies everywhere and i
   await page.reload();
   expect(await base(page)).toBe('rgb(239, 241, 245)');  // Latte remembered
   expect(await page.evaluate(() => document.documentElement.style.colorScheme)).toBe('light');
+  // text size and fonts: applied at once, remembered
+  await entry.click();
+  await expect(page.getByRole('log', { name: 'Session history' })).toBeVisible();
+  await page.getByRole('button', { name: 'Settings' }).click();
+  const settings = page.getByRole('dialog', { name: 'Settings' });
+  await settings.getByLabel('Text size').selectOption('120');
+  await settings.getByLabel('Chat and code font').selectOption({ label: 'Fira Code' });
+  await settings.getByLabel('Interface font').selectOption({ label: 'System default' });
+  await page.mouse.click(5, 5);
+  const look = () => page.evaluate(() => ({ zoom: document.documentElement.style.zoom,
+    mono: getComputedStyle(document.querySelector('.log')!).fontFamily, ui: getComputedStyle(document.body).fontFamily }));
+  for (const when of ['now', 'after a reload']) {
+    const l = await look();
+    expect(l.zoom, when).toBe('120%');
+    expect(l.mono, when).toContain('Fira Code');
+    expect(l.ui, when).toMatch(/^system-ui/);
+    if (when === 'now') { await page.reload(); await entry.click(); await expect(page.getByRole('log', { name: 'Session history' })).toBeVisible(); }
+  }
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await settings.getByLabel('Text size').selectOption('100');
+  await page.mouse.click(5, 5);
+  expect((await look()).zoom).toBe('');
+
   if (added) { // leave the shared demo daemon as we found it
     await entry.click();
     await page.getByRole('button', { name: 'Remove from tree' }).click();

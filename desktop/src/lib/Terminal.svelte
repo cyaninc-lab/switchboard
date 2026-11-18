@@ -5,16 +5,17 @@
   import { FitAddon } from '@xterm/addon-fit';
   import '@xterm/xterm/css/xterm.css';
   import type { Live } from './api';
-  import { theme, xtermTheme } from './themes.svelte';
+  import { theme, xtermTheme, fonts, MONO_FONTS } from './themes.svelte';
 
   let { live, entry, listen }: { live: Live; entry: string; listen: (fn: ((data: string) => void) | null) => void } = $props();
   let el: HTMLDivElement;
   let xterm: Terminal | undefined;
   $effect(() => { const t = xtermTheme(theme.name); if (xterm) xterm.options.theme = t; });  // follows a theme change while open
+  $effect(() => { const f = MONO_FONTS[fonts.mono].css; if (xterm) xterm.options.fontFamily = f; });  // and a font change
 
   onMount(() => {
     const term = new Terminal({
-      fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 13, cursorBlink: true, allowProposedApi: true,
+      fontFamily: MONO_FONTS[fonts.mono].css, fontSize: 13, cursorBlink: true, allowProposedApi: true,
       theme: xtermTheme(theme.name),
     });
     xterm = term;

@@ -1,5 +1,5 @@
-// Catppuccin themes (https://catppuccin.com/palette): the app's colour variables come from the chosen palette.
-// The chosen theme is remembered on this device.
+// Appearance, remembered on this device: Catppuccin themes (https://catppuccin.com/palette) set the app's colour
+// variables; fonts and text size set --ui-font, --mono-font and the page zoom.
 
 type Palette = Record<'rosewater' | 'pink' | 'mauve' | 'red' | 'peach' | 'yellow' | 'green' | 'teal' | 'sky' | 'blue' | 'text' | 'subtext1'
   | 'subtext0' | 'overlay2' | 'overlay1' | 'overlay0' | 'surface2' | 'surface1' | 'surface0' | 'base' | 'mantle' | 'crust', string>;
@@ -54,4 +54,35 @@ export function xtermTheme(name: string) {
     brightBlack: p.surface2, brightRed: p.red, brightGreen: p.green, brightYellow: p.yellow, brightBlue: p.blue, brightMagenta: p.pink,
     brightCyan: p.teal, brightWhite: p.subtext0,
   };
+}
+
+// a short fixed list: a webview can't list installed fonts. Each falls back if it isn't installed.
+export const UI_FONTS: Record<string, { label: string; css: string }> = {
+  inter: { label: 'Inter', css: 'Inter, system-ui, sans-serif' },
+  system: { label: 'System default', css: 'system-ui, sans-serif' },
+};
+export const MONO_FONTS: Record<string, { label: string; css: string }> = {
+  jetbrains: { label: 'JetBrains Mono', css: "'JetBrains Mono', ui-monospace, monospace" },
+  cascadia: { label: 'Cascadia Code', css: "'Cascadia Code', 'Cascadia Mono', ui-monospace, monospace" },
+  fira: { label: 'Fira Code', css: "'Fira Code', ui-monospace, monospace" },
+  system: { label: 'System monospace', css: 'ui-monospace, Menlo, Consolas, monospace' },
+};
+export const SIZES = [90, 100, 110, 120, 130];  // % of the normal size: the whole app scales, like zooming
+
+const FKEY = 'switchboard.fonts';
+const fsaved = (() => { try { return JSON.parse(localStorage.getItem(FKEY) || '{}'); } catch { return {}; } })();
+export const fonts = $state({
+  ui: fsaved.ui in UI_FONTS ? fsaved.ui : 'inter',
+  mono: fsaved.mono in MONO_FONTS ? fsaved.mono : 'jetbrains',
+  size: SIZES.includes(fsaved.size) ? fsaved.size : 100,
+});
+
+export function applyFonts(change: Partial<typeof fonts> = {}) {
+  Object.assign(fonts, change);
+  try { localStorage.setItem(FKEY, JSON.stringify(fonts)); } catch {}
+  if (typeof document === 'undefined') return;
+  const root = document.documentElement;
+  root.style.setProperty('--ui-font', UI_FONTS[fonts.ui].css);
+  root.style.setProperty('--mono-font', MONO_FONTS[fonts.mono].css);
+  root.style.zoom = fonts.size === 100 ? '' : `${fonts.size}%`;
 }
