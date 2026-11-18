@@ -22,6 +22,6 @@ Start with `docs/HANDOVER.md` (state, decisions, backlog, traps). API contract: 
 
 ## Ship
 - Branch → PR → checks green → **you may merge Switchboard PRs yourself** (squash). Never push to main. Before deleting a merged base branch, retarget any PR stacked on it (deleting it closes them).
-- A merge that changes `VERSION` releases: `.github/workflows/release.yml` builds Linux (AppImage, deb) + Windows (NSIS) and publishes to the public repo `cyaninc-lab/switchboard-releases`; installed apps self-update from its `latest.json`. So bump `VERSION` (then `python3 tools/stamp-version.py`) and rewrite `NOTES.md` (user-facing, plain words) in any PR the user should get.
+- A merge that changes `VERSION` releases: `.github/workflows/release.yml` builds Linux (AppImage, deb) + Windows (NSIS) and publishes a release in this repo (`.sig` files go to the `signatures` branch); installed apps self-update from its `latest.json`. Until everyone is on 0.1.15+, a real release also copies `latest.json` to `cyaninc-lab/switchboard-releases` (the `bridge` step; needs `RELEASES_TOKEN`), where older installs look. So bump `VERSION` (then `python3 tools/stamp-version.py`) and rewrite `NOTES.md` (user-facing, plain words) in any PR the user should get.
 - No Claude attribution in commits or PRs (no Co-Authored-By / session trailers, no footer).
 - Secrets: `RELEASES_TOKEN`, `TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)` are repo secrets; the signing key's backup is in the user's Bitwarden. Never print or paste tokens.

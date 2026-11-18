@@ -37,7 +37,7 @@ Later, the same flows can drive the actual Tauri window through `tauri-driver` o
 ## Releases and self-update
 
 Bump `VERSION` (and write `NOTES.md`) in a PR; merging it runs `.github/workflows/release.yml`: a draft release in
-the public `cyaninc-lab/switchboard-releases`, signed Linux (AppImage, .deb) and Windows (NSIS) builds plus
+this repo, signed Linux (AppImage, .deb) and Windows (NSIS) builds plus
 `latest.json`, then publish. The app checks `latest.json` 10 s after start and every 6 hours, shows a banner, and
 installs only on "Restart to update" (signature checked against the public key in `tauri.conf.json`).
 Secrets: `TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)` (backup in Bitwarden), `RELEASES_TOKEN` (fine-grained, Contents on the releases repo).

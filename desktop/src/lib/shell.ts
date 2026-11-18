@@ -43,7 +43,7 @@ export async function appVersion() {
   return getVersion();
 }
 
-// ---- self-update (signed, from cyaninc-lab/switchboard-releases) ----
+// ---- self-update (signed, from cyaninc-lab/switchboard's releases) ----
 export type Update = { version: string; notes: string; install: (onProgress: (pct: number) => void) => Promise<void> };
 
 /** null when up to date (or outside the desktop app). Throws if the check itself fails. */
