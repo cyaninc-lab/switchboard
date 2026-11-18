@@ -152,7 +152,11 @@
   let aPicks = $state<Session[]>([]);  // several can be added at once
   const aPick = $derived(aPicks.length === 1 ? aPicks[0] : null);
   let aName = $state('');
-  let aGroup = $state('');
+  // project for what's being added: '' = its folder's name (the daemon's default), an existing project, or a new one
+  let aProj = $state('');
+  let aNewProj = $state('');
+  const aGroup = $derived(aProj === '\u0000new' ? aNewProj.trim() : aProj);
+  const projects = $derived(aMachine ? [...new Set((tree[aMachine.url]?.entries ?? []).map((e) => e.group))].sort((x, y) => x.localeCompare(y)) : []);
   let aError = $state('');
   let aTab = $state<'existing' | 'new'>('existing');
   let nFolder = $state('');
@@ -172,8 +176,8 @@
     ev.preventDefault();
     if (!aMachine) return;
     try {
-      const e = await api.addEntry(aMachine, { new: { cwd: nFolder.trim() }, name: nName.trim() || undefined, mode: nMode, model: nModel === 'default' ? undefined : nModel, account: nAccount || undefined });
-      dialog = null; nName = '';
+      const e = await api.addEntry(aMachine, { new: { cwd: nFolder.trim() }, name: nName.trim() || undefined, group: aGroup || undefined, mode: nMode, model: nModel === 'default' ? undefined : nModel, account: nAccount || undefined });
+      dialog = null; nName = ''; aProj = ''; aNewProj = '';
       await refresh();
       open(aMachine, e);
     } catch (e) { aError = (e as Error).message === 'no_such_folder' ? `No folder ${nFolder} on ${aMachine.name}` : (e as Error).message; }
@@ -583,7 +587,7 @@
 
   // ---- add ----
   async function openAdd() {
-    dialog = 'add'; aError = ''; aPicks = []; nTyped = false;
+    dialog = 'add'; aError = ''; aPicks = []; nTyped = false; aProj = ''; aNewProj = '';
     aMachine = aMachine ?? machines[0] ?? null;
     await search();
   }
@@ -606,7 +610,7 @@
       const added = [];
       for (const s of aPicks)
         added.push(await api.addEntry(m, { session_id: s.session_id, name: aPicks.length === 1 ? aName : undefined, group: aGroup || undefined }));
-      dialog = null; aGroup = '';
+      dialog = null; aProj = ''; aNewProj = '';
       await refresh();
       open(m, added[0]);
     } catch (e) { aError = (e as Error).message; }
@@ -1068,6 +1072,14 @@
           <button type="button" class="pill" class:on={aMachine?.url === m.url} onclick={() => { aMachine = m; aPicks = []; aTab === 'new' ? newTab() : search(); }}>{m.name}</button>
         {/each}
       </div>
+      {#snippet projectPicker()}
+        <label>Project<select bind:value={aProj}>
+          <option value="">Project folder (default)</option>
+          {#each projects as g (g)}<option value={g}>{g}</option>{/each}
+          <option value={'\u0000new'}>New project…</option>
+        </select></label>
+        {#if aProj === '\u0000new'}<label>New project name<input bind:value={aNewProj} required placeholder="e.g. Client work" /></label>{/if}
+      {/snippet}
       {#if aTab === 'new'}
         <label>Folder on {aMachine?.name}
           <input bind:value={nFolder} oninput={() => (nTyped = true)} onfocus={() => (nTyped = true)} list="folder-list" required placeholder="/path/to/project" />
@@ -1075,6 +1087,7 @@
         </label>
         <div class="grid2">
           <label>Name in the tree<input bind:value={nName} placeholder="New session" /></label>
+          {@render projectPicker()}
           <label>Permission mode<select bind:value={nMode}>{#each api.MODES as m}<option value={m}>{m}</option>{/each}</select></label>
           <label>Account<select bind:value={nAccount}>
             <option value="">machine login</option>
@@ -1102,7 +1115,7 @@
         <div class="grid2">
           {#if aPick}<label>Name in the tree<input bind:value={aName} required /></label>
           {:else}<p class="muted small">{aPicks.length} sessions, each named after its title</p>{/if}
-          <label>Group<input bind:value={aGroup} placeholder="default: the project folder" /></label>
+          {@render projectPicker()}
         </div>
       {/if}
       {#if aError}<p class="error">{aError}</p>{/if}

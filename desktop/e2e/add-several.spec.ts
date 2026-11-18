@@ -25,12 +25,19 @@ test('add several sessions at once', async ({ page }) => {
   await dialog.getByRole('button', { name: new RegExp(two) }).click();
   await expect(dialog.getByLabel('Name in the tree')).toHaveCount(0);  // several: each keeps its title
   await expect(dialog).toContainText('2 sessions, each named after its title');
-  await dialog.getByLabel('Group').fill('Batch');
+  await dialog.getByRole('combobox', { name: /^Project/ }).selectOption({ label: 'New project…' });
+  await dialog.getByLabel('New project name').fill('Batch');
   await dialog.getByRole('button', { name: 'Add 2 to tree' }).click();
 
   const tree = page.getByRole('navigation', { name: 'Sessions' });
   await expect(tree.getByRole('button', { name: /Batch/ })).toBeVisible();
   for (const name of [one, two]) await expect(tree.getByRole('button', { name: new RegExp(name) })).toBeVisible();
+
+  // the new project is offered next time (the New session tab shows the picker straight away)
+  await page.getByRole('button', { name: '+ Add' }).click();
+  await dialog.getByRole('tab', { name: 'New session' }).click();
+  await expect(dialog.getByRole('combobox', { name: /^Project/ }).locator('option', { hasText: 'Batch' })).toHaveCount(1);
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
 
   // tidy up
   for (const name of [one, two]) {
