@@ -273,6 +273,7 @@ class Runner:
             asyncio.get_running_loop().create_task(self.stop(lv.entry_id))
         elif lv.queue and self.live.get(lv.entry_id) is lv:
             entry, text, images, origin = lv.queue.pop(0)
+            await self.broadcast({"type": "queued", "entry": lv.entry_id, "count": len(lv.queue), "sent": 1})  # clients move it into the chat
             asyncio.get_running_loop().create_task(self.send(entry, text, images, origin))
         else:
             await self._emit_state(lv.entry_id)
@@ -341,8 +342,9 @@ class Runner:
 
     async def interrupt(self, entry_id, keep_queue=False):
         lv = self.live.get(entry_id)
-        if lv and not keep_queue:
+        if lv and not keep_queue and lv.queue:
             lv.queue.clear()  # interrupting drops what was queued behind the current turn, as in Claude Code
+            await self.broadcast({"type": "queued", "entry": entry_id, "count": 0, "dropped": True})  # clients put it back in the box
         if lv and lv.working:
             for fut in list(lv.pending.values()):  # a pending prompt is moot once interrupted
                 if not fut.done():

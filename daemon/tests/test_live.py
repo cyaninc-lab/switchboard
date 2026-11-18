@@ -507,3 +507,24 @@ def test_interrupting_is_not_an_error(tmp_path, monkeypatch):
         assert not [m for m in seen if m["type"] == "error"]
         await client.close()
     asyncio.run(t())
+
+
+def test_queue_reports_sent_and_dropped(tmp_path, monkeypatch):
+    """Clients keep queued messages at the bottom: the daemon says when one leaves the queue, and when Esc drops them."""
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        await ws.send_json({"type": "send", "entry": e["id"], "text": "please run the checks"})
+        req, _ = await until(ws, lambda m: m["type"] == "permission_request")
+        await ws.send_json({"type": "send", "entry": e["id"], "text": "next"})
+        await until(ws, lambda m: m["type"] == "queued" and m["count"] == 1)
+        await ws.send_json({"type": "permission_reply", "request_id": req["request_id"], "allow": True})
+        await until(ws, lambda m: m["type"] == "queued" and m["count"] == 0 and m.get("sent") == 1)
+        await until(ws, lambda m: m["type"] == "message" and "Done: next" in str(m))
+        await ws.send_json({"type": "send", "entry": e["id"], "text": "a slow job"})
+        await until(ws, lambda m: m["type"] == "state" and m["state"] == "working")
+        await ws.send_json({"type": "send", "entry": e["id"], "text": "never mind"})
+        await until(ws, lambda m: m["type"] == "queued" and m["count"] == 1)
+        await ws.send_json({"type": "interrupt", "entry": e["id"]})
+        await until(ws, lambda m: m["type"] == "queued" and m["count"] == 0 and m.get("dropped"))
+        await client.close()
+    asyncio.run(t())

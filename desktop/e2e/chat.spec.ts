@@ -71,6 +71,35 @@ test('chat: stream, approve, deny, interrupt, auto mode, stop', async ({ page })
   await expect(log).toContainText('Done: jump the queue', { timeout: 8000 });
   await expect(entry).toHaveAttribute('title', 'Live and ready');
 
+  // sent while Claude is busy: it waits at the bottom, then joins the chat after the reply it waited for
+  const pending = page.getByRole('list', { name: 'Queued messages' });
+  await input.fill('please run the checks');
+  await input.press('Enter');
+  await expect(card).toBeVisible();
+  await input.fill('after the checks');
+  await input.press('Enter');
+  await expect(pending).toContainText('after the checks');
+  await expect(log).not.toContainText('after the checks');
+  await card.getByRole('button', { name: 'Allow', exact: true }).click();
+  await expect(log).toContainText('Done: after the checks');
+  await expect(pending).toHaveCount(0);
+  const text = (await log.textContent())!;
+  expect(text.lastIndexOf('Done: please run the checks')).toBeLessThan(text.lastIndexOf('❯after the checks'));
+  await expect(entry).toHaveAttribute('title', 'Live and ready');
+
+  // Esc drops the queue and gives the text back
+  await input.fill('a slow job');
+  await input.press('Enter');
+  await expect(entry).toHaveAttribute('title', 'Working');
+  await input.fill('never mind');
+  await input.press('Enter');
+  await expect(pending).toContainText('never mind');
+  await page.keyboard.press('Escape');
+  await expect(pending).toHaveCount(0);
+  await expect(input).toHaveValue('never mind');
+  await expect(entry).toHaveAttribute('title', 'Live and ready');
+  await input.fill('');
+
   // auto mode: no prompt
   await page.getByRole('contentinfo').getByLabel('Permission mode').selectOption('auto');
   await input.fill('run in auto');

@@ -68,7 +68,7 @@ Daemon → client:
 | `commands` | `entry, commands` (slash commands the session reported at start) |
 | `notice` | `entry, text` (e.g. conversation compacted) |
 | `usage` | `entry, context_used, context_window, turn_cost, session_cost` (after each turn; costs are API-equivalent) |
-| `queued` | `entry, count` (a message sent while working waits for the turn to end; interrupt drops the queue) |
+| `queued` | `entry, count, sent?, dropped?` (a message sent while working waits for the turn to end; `sent`: how many just left the queue to be sent, clients move them into the chat; `dropped`: interrupt cleared the queue, clients give the text back) |
 | `error` | `entry?, code, message` |
 
 Every subscribed client receives every event, so several clients stay live on one session.

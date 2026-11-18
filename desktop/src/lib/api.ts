@@ -191,7 +191,7 @@ export type LiveEvent =
   | { type: 'terminal_opened' | 'terminal_closed'; entry: string }
   | { type: 'commands'; entry: string; commands: string[] }
   | { type: 'notice'; entry: string; text: string }
-  | { type: 'queued'; entry: string; count: number }
+  | { type: 'queued'; entry: string; count: number; sent?: number; dropped?: boolean }
   | ({ type: 'usage'; entry: string } & Usage)
   | { type: 'inbox'; item: InboxItem }
   | { type: 'inbox_read'; id: number | null }

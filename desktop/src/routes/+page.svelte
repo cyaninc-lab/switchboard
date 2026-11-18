@@ -196,6 +196,17 @@
   let draft = $state('');
   // each session (and subagent view) keeps its own unsent text and images; ponytail: in memory, a restart forgets it
   const drafts: Record<string, { text: string; images: typeof attachments }> = {};
+  // messages sent while Claude works wait at the bottom (as in Claude Code) and join the chat when the daemon sends them
+  // ponytail: mirrors only this window's queue; another device queueing at the same time can make the counts disagree
+  let pendingQ = $state<Record<string, HistoryMessage[]>>({});
+  const msgText = (m: HistoryMessage) => (Array.isArray(m.message.content) ? m.message.content : []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n');
+  function giveBack(entryId: string, texts: string[]) {  // queued text that won't be sent goes back in the box
+    const t = texts.filter((x) => x.trim()).join('\n');
+    if (!t) return;
+    const join = (cur: string) => (cur ? `${t}\n${cur}` : t);
+    if (selected?.entry.id === entryId && !selected.sub) draft = join(draft);
+    else drafts[entryId] = { text: join(drafts[entryId]?.text ?? ''), images: drafts[entryId]?.images ?? [] };
+  }
   function swapDraft(next: string) {
     if (selected) drafts[selected.entry.id + (selected.sub ? '/' + selected.sub.id : '')] = { text: draft, images: attachments };
     draft = drafts[next]?.text ?? '';
@@ -323,7 +334,10 @@
       const was = Object.values(tree).flatMap((t) => t.entries).find((x) => x.id === e.entry)?.state;
       setEntry(e.entry, { state: e.state as Entry['state'] });
       if (was && !LIVE_STATES.includes(was) && LIVE_STATES.includes(e.state)) refresh();  // which subagents run is the daemon's call
-      if (e.state !== 'working' && e.state !== 'waiting') { streaming[e.entry] = ''; thinkingLive[e.entry] = ''; queued[e.entry] = 0; }
+      if (e.state !== 'working' && e.state !== 'waiting') {
+        streaming[e.entry] = ''; thinkingLive[e.entry] = ''; queued[e.entry] = 0;
+        if (pendingQ[e.entry]?.length) { giveBack(e.entry, pendingQ[e.entry].map(msgText)); pendingQ[e.entry] = []; }  // the session ended with them unsent
+      }
     } else if (e.type === 'delta') {
       if (e.kind === 'thinking') thinkingLive[e.entry] = (thinkingLive[e.entry] ?? '') + e.text;
       else streaming[e.entry] = (streaming[e.entry] ?? '') + e.text;
@@ -352,6 +366,11 @@
       setEntry(e.entry, { usage: e });
     } else if (e.type === 'queued') {
       queued[e.entry] = e.count;
+      const q = pendingQ[e.entry] ?? [];
+      if (e.sent) {
+        if (selected?.entry.id === e.entry && !selected.sub) messages = [...messages, ...q.slice(0, e.sent)];
+        pendingQ[e.entry] = q.slice(e.sent);
+      } else if (e.dropped) { giveBack(e.entry, q.map(msgText)); pendingQ[e.entry] = []; }
     } else if (e.type === 'commands') {
       if (selected) loadCommands(selected.machine);
     } else if (e.type === 'notice') {
@@ -372,7 +391,10 @@
       const images = attachments.map(({ media_type, data }) => ({ media_type, data }));
       live()!.send(selected.entry.id, draft, images, sendNow);  // now: the daemon interrupts and sends this first
       const content = [...images.map((im) => ({ type: 'image', source: { type: 'base64', ...im } })), { type: 'text', text: draft }];
-      messages = [...messages, { type: 'user', uuid: crypto.randomUUID(), message: { role: 'user', content } }];
+      const msg: HistoryMessage = { type: 'user', uuid: crypto.randomUUID(), message: { role: 'user', content } };
+      const id = selected.entry.id;
+      if (selected.entry.state === 'working' || selected.entry.state === 'waiting') pendingQ[id] = sendNow ? [msg, ...(pendingQ[id] ?? [])] : [...(pendingQ[id] ?? []), msg];
+      else messages = [...messages, msg];
       draft = ''; attachments = []; liveErr = '';
     } catch (e) { liveErr = (e as Error).message; }
     sendNow = false;
@@ -778,7 +800,12 @@
           <div class="subnote muted small">Goes through <button class="link" onclick={() => open(selected!.machine, selected!.entry)}>{selected.entry.name}</button>, which passes it on with SendMessage (resuming the subagent if it has finished).</div>
         {:else}
         {#if liveErr}<div class="liveerr" role="alert">{liveErr}</div>{/if}
-        {#if queued[selected.entry.id]}<div class="queued muted small" aria-live="polite">{queued[selected.entry.id]} queued: sends when Claude finishes</div>{/if}
+        {#if pendingQ[selected.entry.id]?.length}
+          <div class="pendingq mono" role="list" aria-label="Queued messages">
+            {#each pendingQ[selected.entry.id] as m (m.uuid)}<div class="you" role="listitem"><span class="prompt">❯ </span>{msgText(m)}</div>{/each}
+          </div>
+        {/if}
+        {#if queued[selected.entry.id]}<div class="queued muted small" aria-live="polite">{queued[selected.entry.id]} queued: sends when Claude finishes (Esc puts {queued[selected.entry.id] === 1 ? 'it' : 'them'} back here)</div>{/if}
         {#if menu.length}
           <div class="cmdmenu" role="listbox" aria-label="Slash commands">
             {#each menu as c, i (c.name)}
@@ -1147,6 +1174,7 @@
   .todos li.in_progress { color: var(--text); font-weight: 600; } .todos li.in_progress .box { color: var(--peach); border-color: var(--peach); }
   .inputbar { display: flex; gap: 10px; align-items: center; padding: 12px 18px; border-top: 1px solid var(--s0); }
   .inputbar { align-items: flex-end; }
+  .pendingq { padding: 8px 18px 0; display: flex; flex-direction: column; gap: 4px; opacity: 0.75; white-space: pre-wrap; max-height: 25vh; overflow-y: auto; }
   .inputbar textarea { display: block; width: 100%; box-sizing: border-box; border: 0; background: none; color: var(--text); font: inherit; padding: 8px 10px; resize: none; max-height: 40vh; overflow-y: auto; line-height: 1.45; }
   .inputbar textarea:focus { outline: 1px solid var(--mauve); border-radius: 8px; }
   .inputbar .prompt { padding-bottom: 8px; }
