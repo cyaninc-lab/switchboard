@@ -1,6 +1,7 @@
 <script lang="ts">
   import * as api from '$lib/api';
   import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell, openExternal, appVersion, checkForUpdate, notify } from '$lib/shell';
+  import { backdrop } from '$lib/backdrop';
   import type { Update } from '$lib/shell';
   import { captureAppLog, buildReport, issueUrl } from '$lib/report';
   import type { ServiceStatus } from '$lib/shell';
@@ -183,10 +184,21 @@
   }, {} as Record<string, HistoryMessage[]>));
   const AGENT_TOOLS = ['Agent', 'Task'];
   let queued = $state<Record<string, number>>({});
+  // ponytail: per-window and in memory, a restart forgets it; move to the daemon if several clients need to agree
+  let unread = $state<Record<string, boolean>>({});
+  // waiting > working > unread > the entry's own state
+  const icon = (e: Entry) => (e.state === 'waiting' || e.state === 'working' ? e.state : unread[e.id] ? 'unread' : e.state);
   let expanded = $state<Record<string, boolean>>({});  // tool output shown in full
   const RESULT_LINES = 6;
   let prompts = $state<Record<string, { request_id: string; tool: string; kind: 'tool' | 'question' | 'plan'; input: any; remember: string[] }[]>>({});
   let draft = $state('');
+  // each session (and subagent view) keeps its own unsent text and images; ponytail: in memory, a restart forgets it
+  const drafts: Record<string, { text: string; images: typeof attachments }> = {};
+  function swapDraft(next: string) {
+    if (selected) drafts[selected.entry.id + (selected.sub ? '/' + selected.sub.id : '')] = { text: draft, images: attachments };
+    draft = drafts[next]?.text ?? '';
+    attachments = drafts[next]?.images ?? [];
+  }
   // follow new output while the view is at the bottom; leave it alone once the user scrolls up to read
   let logEl = $state<HTMLDivElement>();
   let stick = true;
@@ -293,14 +305,16 @@
     if (e.type === 'inbox_read' && m) { loadInbox(m); return; }
     if (e.type === 'subagents') { refresh(); if (selected?.sub && selected.entry.id === e.entry) loadSub(); return; }
     if (e.type === 'state') {
+      const was = Object.values(tree).flatMap((t) => t.entries).find((x) => x.id === e.entry)?.state;
       setEntry(e.entry, { state: e.state as Entry['state'] });
+      if (was && !LIVE_STATES.includes(was) && LIVE_STATES.includes(e.state)) refresh();  // which subagents run is the daemon's call
       if (e.state !== 'working' && e.state !== 'waiting') { streaming[e.entry] = ''; thinkingLive[e.entry] = ''; queued[e.entry] = 0; }
     } else if (e.type === 'delta') {
       if (e.kind === 'thinking') thinkingLive[e.entry] = (thinkingLive[e.entry] ?? '') + e.text;
       else streaming[e.entry] = (streaming[e.entry] ?? '') + e.text;
     } else if (e.type === 'message') {
       if (selected?.entry.id === e.entry && !selected.sub) messages = [...messages, e.message];
-      if (e.message.type === 'assistant') { streaming[e.entry] = ''; thinkingLive[e.entry] = ''; }
+      if (e.message.type === 'assistant') { streaming[e.entry] = ''; thinkingLive[e.entry] = ''; if (selected?.entry.id !== e.entry || selected.sub) unread[e.entry] = true; }
     } else if (e.type === 'permission_request') {
       prompts[e.entry] = [...(prompts[e.entry] ?? []), { request_id: e.request_id, tool: e.tool, kind: e.kind ?? 'tool', input: e.input, remember: e.remember ?? [] }];
       // a session you're not looking at needs you: say so outside the app too
@@ -405,7 +419,9 @@
 
   async function open(machine: Machine, entry: Entry) {
     if (termFor && termFor !== entry.id) termFor = null;
+    swapDraft(entry.id);
     selected = { machine, entry };
+    unread[entry.id] = false;
     stick = true;
     if (!cmdList[machine.url]) loadCommands(machine);
     loadModels(machine);
@@ -421,8 +437,25 @@
   }
 
   // ---- subagents: running ones nest under their session in the tree; finished ones open from their Agent step ----
-  const subRunning = (e: Entry, a: api.Sub) => !a.finished && !a.stopped && LIVE_STATES.includes(e.state);
-  let subOpen = $state<Record<string, boolean>>({});
+  // the daemon decides (0.1.9+); an older daemon doesn't send `running`
+  const subRunning = (e: Entry, a: api.Sub) => LIVE_STATES.includes(e.state) && (a.running ?? (!a.finished && !a.stopped));
+  // folded tree parts (project groups 'g:<machine>|<group>', subagent lists by entry id), remembered on this device
+  const FOLD_KEY = 'switchboard.folded';
+  let subOpen = $state<Record<string, boolean>>((() => { try { return JSON.parse(localStorage.getItem(FOLD_KEY) || '{}'); } catch { return {}; } })());
+  $effect(() => { const v = JSON.stringify(subOpen); try { localStorage.setItem(FOLD_KEY, v); } catch {} });
+
+  // ---- right-click menu on a tree entry ----
+  let ctx = $state<{ x: number; y: number; machine: Machine; entry: Entry } | null>(null);
+  function openMenu(ev: MouseEvent, machine: Machine, entry: Entry) {
+    ev.preventDefault();
+    // from the keyboard (ctx key) there's no pointer position: put it under the entry
+    const r = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+    ctx = ev.clientX || ev.clientY ? { x: ev.clientX, y: ev.clientY, machine, entry } : { x: r.left + 24, y: r.bottom, machine, entry };
+  }
+  function closeSession(m: Machine, e: Entry) {
+    ctx = null;
+    try { lives.get(m.url)!.stop(e.id); liveErr = ''; } catch (err) { liveErr = (err as Error).message; }
+  }
   function kids(e: Entry, parent: string | null) {
     const all = (e.subagents ?? []).filter((a) => subRunning(e, a));
     const ids = new Set(all.map((a) => a.id));
@@ -431,6 +464,7 @@
   }
   async function openSub(machine: Machine, entry: Entry, sub: api.Sub) {
     if (termFor) termFor = null;
+    swapDraft(entry.id + '/' + sub.id);
     selected = { machine, entry, sub };
     stick = true;
     messages = [];
@@ -458,7 +492,7 @@
   });
 
   const stateLabel: Record<string, string> = {
-    working: 'Working', waiting: 'Waiting for you', new: 'New: send a message to start it', stopped: 'Stopped: send a message to resume it', ready: 'Live and ready',
+    working: 'Working', waiting: 'Waiting for you', new: 'New: send a message to start it', stopped: 'Stopped: send a message to resume it', ready: 'Live and ready', unread: 'New message',
     terminal: 'Open in a terminal (read-only here)', missing: 'Session no longer on this machine', error: 'Error',
   };
 
@@ -527,7 +561,15 @@
   let counts = $derived(Object.values(tree).flatMap((t) => t.entries).reduce((a, e) => ({ ...a, [e.state]: (a[e.state] ?? 0) + 1 }), {} as Record<string, number>));
 </script>
 
-<svelte:window onkeydown={onKey} />
+<svelte:window onkeydown={(ev) => { if (ctx && ev.key === 'Escape') ctx = null; else onKey(ev); }} onclick={() => (ctx = null)} onblur={() => (ctx = null)} />
+
+{#if ctx}
+  {@const mm = ctx}
+  <div class="ctxmenu" role="menu" aria-label="{mm.entry.name} actions" style="left: {mm.x}px; top: {mm.y}px">
+    <button role="menuitem" disabled={!LIVE_STATES.includes(mm.entry.state)} title="Ends the Claude process; it stays in the tree and resumes on your next message"
+      onclick={() => closeSession(mm.machine, mm.entry)}>Close session</button>
+  </div>
+{/if}
 
 <div class="app">
   {#if update}
@@ -593,10 +635,14 @@
               <button class="tiny" title="Disconnect" aria-label="Disconnect {m.name}" onclick={() => disconnect(m)}>×</button>
             </div>
             {#each groups(m) as [g, es] (g)}
-              <div class="group">{g}</div>
-              {#each es as e (e.id)}
-                <button class="entry" class:sel={selected?.entry.id === e.id && !selected.sub} class:waiting={e.state === 'waiting'} title={stateLabel[e.state]} onclick={() => open(m, e)}>
-                  <span class="st {e.state}"></span>
+              {@const gk = `g:${m.url}|${g}`}
+              {@const gOpen = subOpen[gk] ?? true}
+              <button class="group" aria-expanded={gOpen} onclick={() => (subOpen[gk] = !gOpen)}>{gOpen ? '▾' : '▸'} {g}{#if !gOpen}<span class="muted small"> · {es.length}</span>
+                {@const hint = es.some((e) => icon(e) === 'waiting') ? 'waiting' : es.some((e) => icon(e) === 'unread') ? 'unread' : null}
+                {#if hint}<span class="st {hint} inline" title={stateLabel[hint]}></span>{/if}{/if}</button>
+              {#each gOpen ? es : [] as e (e.id)}
+                <button class="entry" class:sel={selected?.entry.id === e.id && !selected.sub} class:waiting={e.state === 'waiting'} title={stateLabel[icon(e)]} onclick={() => open(m, e)} oncontextmenu={(ev) => openMenu(ev, m, e)}>
+                  <span class="st {icon(e)}"></span>
                   {#if e.pinned}<span class="pin" aria-label="pinned">★</span>{/if}
                   <span class="ename">{e.name}</span>
                   <span class="muted small">{e.session ? ago(e.session.last_modified) : ''}</span>
@@ -795,7 +841,7 @@
 </div>
 
 {#if dialog === 'connect'}
-  <div class="backdrop" role="presentation" onclick={(e) => e.target === e.currentTarget && (dialog = null)}>
+  <div class="backdrop" role="presentation" {...backdrop(() => (dialog = null))}>
     <form class="dialog" aria-label="Connect a machine" onsubmit={connect}>
       <h2>Connect a machine</h2>
       <p class="muted">On that machine run <code>switchboard-daemon pair</code> and enter the code it prints.</p>
@@ -812,7 +858,7 @@
 {/if}
 
 {#if dialog === 'report'}
-  <div class="backdrop" role="presentation" onclick={(e) => e.target === e.currentTarget && (dialog = null)}>
+  <div class="backdrop" role="presentation" {...backdrop(() => (dialog = null))}>
     <form class="dialog" aria-label="Report a bug" onsubmit={sendReport}>
       <h2>Report a bug</h2>
       <label>What happened, and what did you expect?
@@ -830,7 +876,7 @@
 {/if}
 
 {#if dialog === 'settings'}
-  <div class="backdrop" role="presentation" onclick={(e) => e.target === e.currentTarget && (dialog = null)}>
+  <div class="backdrop" role="presentation" {...backdrop(() => (dialog = null))}>
     <div class="dialog" role="dialog" aria-label="Settings">
       <h2>Settings</h2>
       {#if !inShell()}
@@ -909,7 +955,7 @@
 {/if}
 
 {#if dialog === 'add'}
-  <div class="backdrop" role="presentation" onclick={(e) => e.target === e.currentTarget && (dialog = null)}>
+  <div class="backdrop" role="presentation" {...backdrop(() => (dialog = null))}>
     <form class="dialog wide" aria-label="Add to Switchboard" onsubmit={(e) => (aTab === 'new' ? createNew(e) : add(e))}>
       <h2>Add to Switchboard</h2>
       <div class="tabs" role="tablist" aria-label="Add from">
@@ -1006,7 +1052,9 @@
   .mname { font-weight: 600; flex: 1; }
   :global(.tiny.on) { border-color: var(--mauve); color: var(--text); }
   :global(.tiny) { background: none; border: 1px solid var(--s1); color: var(--sub0); border-radius: 6px; padding: 2px 8px; font-size: 12px; }
-  .group { padding: 6px 8px 2px 24px; color: var(--sub0); }
+  .group { display: block; width: 100%; text-align: left; border: 0; background: none; cursor: pointer; padding: 6px 8px 2px 12px; color: var(--sub0); font: inherit; }
+  .group:hover { color: var(--text); }
+  .st.inline { display: inline-grid; vertical-align: middle; margin-left: 6px; }
   .entry { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: 0; border-radius: 8px; padding: 6px 8px 6px 36px; background: none; color: var(--sub1); }
   .entry:hover { background: var(--base); }
   .entry.sel { background: var(--s0); color: var(--text); box-shadow: inset 2px 0 0 var(--mauve); }
@@ -1017,8 +1065,17 @@
   .entry.waiting { font-weight: 600; }
   .ename { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pin { color: var(--peach); font-size: 11px; }
+  .ctxmenu { position: fixed; z-index: 50; min-width: 160px; padding: 4px; background: var(--mantle); border: 1px solid var(--s1); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4); }
+  .ctxmenu button { display: block; width: 100%; text-align: left; border: 0; border-radius: 6px; padding: 6px 10px; background: none; color: var(--text); }
+  .ctxmenu button:hover:not(:disabled) { background: var(--s0); }
+  .ctxmenu button:disabled { color: var(--o1); }
   .st { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; box-sizing: border-box; border: 1.5px solid var(--o1); }
-  .st.working { background: var(--green); border: 0; } .st.ready { border: 2px solid var(--green); } .st.waiting { border: 2px solid var(--peach); }
+  .st.ready { border: 2px solid var(--green); } .st.unread { background: var(--green); border: 0; }
+  .st.working { border: 2px solid var(--green); border-top-color: transparent; animation: spin 0.8s linear infinite; }
+  .st.waiting { border: 0; border-radius: 0; width: 12px; height: 12px; margin: -2px; display: grid; place-items: center; font-size: 12px; line-height: 1; color: var(--green); animation: blink 1s step-end infinite; }
+  .st.waiting::before { content: '☀'; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .st.working, .st.waiting { animation: none; } }
   .st.new { border: 1.5px dashed var(--mauve); }
   .st.terminal { background: var(--sky); border: 0; border-radius: 2px; } .st.missing, .st.error { border-color: var(--red); }
   .navfoot { padding: 10px 12px; border-top: 1px solid var(--s0); }

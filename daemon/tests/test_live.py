@@ -1,5 +1,5 @@
 """Live sessions over the WebSocket, with the demo module standing in for the SDK (no Claude calls)."""
-import asyncio, os, sys
+import asyncio, os, sys, time
 from aiohttp.test_utils import TestClient, TestServer
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -104,22 +104,6 @@ def test_deny_interrupt_mode_stop(tmp_path, monkeypatch):
         assert m["state"] == "stopped"
         es = (await (await client.get("/v1/entries", headers=h)).json())["entries"]
         assert es[0]["state"] == "stopped"
-        await client.close()
-    asyncio.run(t())
-
-
-def test_idle_close(tmp_path, monkeypatch):
-    async def t():
-        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
-        runner = client.server.app[appmod.RUNNER]
-        await ws.send_json({"type": "send", "entry": e["id"], "text": "hi"})
-        await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
-        runner.live[e["id"]].last_active -= 10_000
-        monkeypatch.setattr("switchboard_daemon.runner.IDLE_CLOSE", 1)
-        task = asyncio.get_running_loop().create_task(runner.reap_idle())
-        m, _ = await until(ws, lambda m: m["type"] == "state", timeout=5)
-        task.cancel()
-        assert m["state"] == "stopped" and e["id"] not in runner.live
         await client.close()
     asyncio.run(t())
 
@@ -394,30 +378,6 @@ def test_turns_claude_takes_on_its_own(tmp_path, monkeypatch):
     asyncio.run(t())
 
 
-def test_background_work_keeps_the_session_open(tmp_path, monkeypatch):
-    """Idle-close skips a session whose background subagent/command is still running (closing would kill it)."""
-    async def t():
-        monkeypatch.setenv("SB_DEMO_BG_SECONDS", "3")
-        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
-        runner, eid = client.server.app[appmod.RUNNER], e["id"]
-        monkeypatch.setattr("switchboard_daemon.runner.IDLE_CLOSE", 1)
-        await ws.send_json({"type": "send", "entry": eid, "text": "start the background build"})
-        await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
-        assert runner.live[eid].tasks == {"bg1"}
-        runner.live[eid].last_active -= 10_000
-        reaper = asyncio.get_running_loop().create_task(runner.reap_idle())
-        await asyncio.sleep(1.5)
-        assert eid in runner.live  # not closed while the task runs
-        await until(ws, lambda m: m["type"] == "message" and "Done: background task finished" in str(m))
-        await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
-        assert runner.live[eid].tasks == set()
-        runner.live[eid].last_active -= 10_000
-        await until(ws, lambda m: m["type"] == "state" and m["state"] == "stopped")  # then it closes as usual
-        reaper.cancel()
-        await client.close()
-    asyncio.run(t())
-
-
 def test_subagent_tree_from_sidecars(tmp_path, monkeypatch):
     """Nested subagents come from Claude Code's meta sidecars, at any depth; their messages are served read-only."""
     import json
@@ -447,3 +407,62 @@ def test_subagent_tree_from_sidecars(tmp_path, monkeypatch):
         assert any("Check which videos lack dash_url" in json.dumps(x) for x in m["messages"])  # its nested Agent call
         await client.close()
     asyncio.run(t2())
+
+
+def test_sessions_message_each_other_and_wake_a_stopped_one(tmp_path, monkeypatch):
+    """The switchboard message_session tool reaches any tree session; a stopped one is resumed to receive it."""
+    async def t():
+        client, store, token, h, a, ws = await setup(tmp_path, monkeypatch)
+        runner = client.server.app[appmod.RUNNER]
+        b = await (await client.post("/v1/entries", headers=h, json={"session_id": "demo-3", "name": "Builder"})).json()
+        assert b["id"] not in runner.live  # stopped
+
+        await ws.send_json({"type": "send", "entry": a["id"], "text": "list sessions"})
+        m, _ = await until(ws, lambda m: m["type"] == "message" and m["entry"] == a["id"] and "Builder" in str(m))
+        assert "stopped (a message resumes it)" in str(m)
+        while runner.state(a["id"]) != "ready":  # its ready event may already be behind us
+            await asyncio.sleep(0.05)
+
+        await ws.send_json({"type": "send", "entry": a["id"], "text": "tell builder: hello there"})
+        _, seen = await until(ws, lambda m: m["type"] == "message" and m["entry"] == b["id"] and "Done:" in str(m), timeout=10)
+        got = [m for m in seen if m["type"] == "message" and m["entry"] == b["id"] and m["message"]["type"] == "user"]
+        assert 'Message from the session "' in str(got[0]) and "hello there" in str(got[0])  # announced to clients
+        assert any(m["type"] == "message" and m["entry"] == a["id"] and "is resuming now" in str(m) for m in seen)
+        assert b["id"] in runner.live
+        assert not any(m["type"] == "inbox" for m in seen)  # not a watch: nothing lands in the inbox
+
+        while runner.state(a["id"]) != "ready":  # its ready event may already be behind us
+            await asyncio.sleep(0.05)
+        await ws.send_json({"type": "send", "entry": a["id"], "text": "tell nobody: hi"})
+        await until(ws, lambda m: m["type"] == "message" and 'No session named "nobody"' in str(m))
+
+        # open in a terminal elsewhere: refused, pointing at SendMessage
+        while runner.state(a["id"]) != "ready":  # its ready event may already be behind us
+            await asyncio.sleep(0.05)
+        await runner.stop(b["id"])
+        monkeypatch.setattr(appmod, "open_in_terminal", lambda: {"demo-3"})
+        await ws.send_json({"type": "send", "entry": a["id"], "text": "tell Builder: hi"})
+        await until(ws, lambda m: m["type"] == "message" and "use SendMessage" in str(m))
+        assert b["id"] not in runner.live
+        await client.close()
+    asyncio.run(t())
+
+
+def test_old_unfinished_subagents_are_not_running(tmp_path, monkeypatch):
+    """Older Claude Code never wrote `finished`: only subagents active since the session's process started count as running."""
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        now = lambda: int(time.time() * 1000)
+        subs = lambda sid: [{"id": "old", "description": "47 days ago", "type": None, "parent": None, "tool_use_id": None, "finished": False, "stopped": False, "updated": now() - 47 * 86400_000},
+                            {"id": "new", "description": "just now", "type": None, "parent": None, "tool_use_id": None, "finished": False, "stopped": False, "updated": now() + 1000},
+                            {"id": "done", "description": "finished", "type": None, "parent": None, "tool_use_id": None, "finished": True, "stopped": False, "updated": now() + 1000}]
+        monkeypatch.setattr(appmod, "subagent_tree", subs)
+        running = lambda es: {a["id"]: a["running"] for a in es[0]["subagents"]}
+        es = (await (await client.get("/v1/entries", headers=h)).json())["entries"]
+        assert running(es) == {"old": False, "new": False, "done": False}  # not live: nothing runs
+        await ws.send_json({"type": "send", "entry": e["id"], "text": "hi"})
+        await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        es = (await (await client.get("/v1/entries", headers=h)).json())["entries"]
+        assert running(es) == {"old": False, "new": True, "done": False}
+        await client.close()
+    asyncio.run(t())

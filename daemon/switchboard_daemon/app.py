@@ -15,7 +15,7 @@ from . import logs
 from .logs import log
 
 STORE, NAME = web.AppKey("store", Store), web.AppKey("name", str)
-RUNNER, SOCKETS, REAPER = web.AppKey("runner", Runner), web.AppKey("sockets", set), web.AppKey("reaper", asyncio.Task)
+RUNNER, SOCKETS = web.AppKey("runner", Runner), web.AppKey("sockets", set)
 TTYS = web.AppKey("ttys", Terminals)
 NET = web.AppKey("net", Network)
 WATCHES, WATCH_TASK = web.AppKey("watches", Watches), web.AppKey("watch_task", asyncio.Task)
@@ -147,6 +147,11 @@ async def list_entries(request):
     for e in request.app[STORE].entries():
         v = _entry_view(e, await _off(sdk.get_session_info, e["session_id"]), live, runner)
         v["subagents"] = await _off(subagent_tree, e["session_id"])
+        # running = unfinished and active since this session's process started: a subagent from an earlier process died
+        # with it, and older Claude Code versions never wrote `finished`, so old ones would otherwise look alive forever
+        lv = runner.live.get(e["id"])
+        for a in v["subagents"]:
+            a["running"] = bool(lv) and not a["finished"] and not a["stopped"] and a["updated"] >= lv.started * 1000
         out.append(v)
     return web.json_response({"entries": out})
 
@@ -497,16 +502,15 @@ def make_app(store: Store, name=None):
     app[SOCKETS] = set()
     app[RUNNER] = Runner(store, sdk, lambda ev: _broadcast(app, ev))
     app[TTYS] = Terminals(lambda ev: _broadcast(app, ev))
+    app[RUNNER].elsewhere = lambda: open_in_terminal() - app[RUNNER].held_sessions() - app[TTYS].held_sessions()
     app[NET] = Network(store)
     app[WATCHES] = Watches(store, app[RUNNER], lambda ev: _broadcast(app, ev))
 
     async def start(app):
         scrub_env()
-        app[REAPER] = asyncio.get_running_loop().create_task(app[RUNNER].reap_idle())
         app[WATCH_TASK] = asyncio.get_running_loop().create_task(app[WATCHES].run())
 
     async def stop(app):
-        app[REAPER].cancel()
         app[WATCH_TASK].cancel()
         await app[TTYS].close_all()
         await app[RUNNER].close_all()

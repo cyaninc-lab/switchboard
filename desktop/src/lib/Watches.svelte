@@ -1,6 +1,7 @@
 <script lang="ts">
   // Watches on a machine: things its daemon checks on its own; when one fires it notifies you or wakes an agent.
   import * as api from './api';
+  import { backdrop } from './backdrop';
   import type { Machine, Entry, Watch, WatchKind } from './api';
 
   let { machines, entries, onClose }: { machines: Machine[]; entries: Record<string, Entry[]>; onClose: () => void } = $props();
@@ -68,7 +69,7 @@
   };
 </script>
 
-<div class="backdrop" role="presentation" onclick={(e) => e.target === e.currentTarget && onClose()}>
+<div class="backdrop" role="presentation" {...backdrop(onClose)}>
   <div class="dialog wide" role="dialog" aria-label="Watches">
     <h2>Watches</h2>
     <p class="muted small">Each machine's daemon runs its own watches. To keep them running with the app closed, turn on the background service in Settings.</p>

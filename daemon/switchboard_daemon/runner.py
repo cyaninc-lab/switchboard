@@ -5,10 +5,10 @@ Events (docs/protocol.md): state, delta, message, permission_request, permission
 import asyncio, dataclasses, os, shutil, time, uuid
 from .logs import log, scrub
 
-IDLE_CLOSE = int(os.environ.get("SWITCHBOARD_IDLE_CLOSE", 600))
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 MAX_IMAGE_B64 = 7_000_000  # ~5 MB of image per attachment
 MAX_IMAGES = 10
+TOOLS = ("mcp__switchboard__sessions", "mcp__switchboard__message_session")  # allowed without asking, like SendMessage
 MODES = {"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}
 EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 
@@ -51,17 +51,16 @@ class Live:
     entry_id: str
     client: object
     reader: asyncio.Task = None
+    started: float = dataclasses.field(default_factory=time.time)  # when this process started: older subagents died with theirs
     working: bool = False
-    last_active: float = dataclasses.field(default_factory=time.time)
     pending: dict = dataclasses.field(default_factory=dict)  # request id -> Future
     said: bool = False  # did this turn produce any assistant text (built-in commands may only return a result)
     queue: list = dataclasses.field(default_factory=list)  # messages sent while working, sent in order afterwards
-    origin: dict = None  # set when a watch started this turn: its reply goes to the inbox
+    origin: dict = None  # set when a watch (its reply goes to the inbox) or another session started this turn
     turn_text: list = dataclasses.field(default_factory=list)
     last_usage: dict = None  # usage of the latest main-thread API call: how full the context is now
     cost: float = 0.0  # API-equivalent cost of this live session so far
     restart: bool = False  # close after this turn (a setting that only applies at start changed)
-    tasks: set = dataclasses.field(default_factory=set)  # background subagents/commands still running: never reap then
 
 
 class Runner:
@@ -73,6 +72,7 @@ class Runner:
         self._models = None
         self.on_turn_end = None  # async (entry_id, reply_text, origin) for turns a watch started
         self.usage: dict[str, dict] = {}  # entry id -> last usage event (survives the session closing)
+        self.elsewhere = lambda: set()  # {session id} a process outside this daemon holds (set by the app)
 
     # ---- state ----
     def state(self, entry_id):
@@ -114,13 +114,61 @@ class Runner:
             **({"effort": entry["effort"]} if entry.get("effort") else {}),
             # SWITCHBOARD_MODEL overrides everything (tests run on Haiku); else the entry's choice; else Claude Code's default
             **({"model": m} if (m := os.environ.get("SWITCHBOARD_MODEL") or entry.get("model")) else {}),
-            **({"cli_path": self.cli_path} if self.cli_path else {}))
+            **({"cli_path": self.cli_path} if self.cli_path else {}),
+            mcp_servers={"switchboard": self._tools(entry["id"])}, allowed_tools=list(TOOLS))
         client = self.sdk.ClaudeSDKClient(options=opts)
         await client.connect()
         log.info("session %s live (entry %s, model %s, account %s)", entry["session_id"], entry["id"], entry.get("model") or "default", entry.get("account") or "machine")
         lv = holder["lv"] = self.live[entry["id"]] = Live(entry["id"], client)
         lv.reader = asyncio.get_running_loop().create_task(self._read(lv))
         return lv
+
+    # ---- messaging between tree sessions: Claude Code's own SendMessage only reaches running ones ----
+    def _tools(self, entry_id):
+        sdk = self.sdk
+        say = lambda text, err=False: {"content": [{"type": "text", "text": text}], **({"is_error": True} if err else {})}
+
+        def view(e):
+            held = self.state(e["id"])
+            if held:
+                return held
+            return "open in a terminal outside Switchboard" if e["session_id"] in self.elsewhere() else "stopped (a message resumes it)"
+
+        async def sessions(args):
+            others = [e for e in self.store.entries() if e["id"] != entry_id]
+            return say("\n".join(f'- "{e["name"]}" ({e["grp"]}): {view(e)}' for e in others) or "No other sessions in Switchboard on this machine.")
+
+        async def message(args):
+            want, text = str(args.get("session", "")).strip(), str(args.get("text", ""))
+            me = self.store.entry(entry_id)
+            hits = [e for e in self.store.entries() if e["id"] == want] or [e for e in self.store.entries() if e["name"].lower() == want.lower()]
+            if not hits:
+                return say(f'No session named "{want}". Use the sessions tool to see their names.', True)
+            if len(hits) > 1:
+                return say(f'{len(hits)} sessions are named "{want}"; use one of these ids instead: {", ".join(e["id"] for e in hits)}', True)
+            to = hits[0]
+            if to["id"] == entry_id:
+                return say("That's this session.", True)
+            if not text.strip():
+                return say("The message is empty.", True)
+            if to["session_id"] in self.elsewhere():
+                return say(f'"{to["name"]}" is open in a terminal outside Switchboard, so Switchboard can\'t message it; use SendMessage to reach it there.', True)
+            was = self.state(to["id"])
+            prompt = (f'Message from the session "{me["name"]}" (sent through Switchboard; to answer, use the switchboard '
+                      f'message_session tool with session "{me["name"]}"):\n\n{text}')
+            try:
+                await self.send(to, prompt, origin={"from": me["name"]})
+            except Exception as e:
+                return say(f'Couldn\'t deliver to "{to["name"]}": {e}', True)
+            return say(f'Delivered to "{to["name"]}"' + {None: " (it was stopped and is resuming now).", "working": " (it's busy; it gets the message when its turn ends)."}.get(was, "."))
+
+        return sdk.create_sdk_mcp_server("switchboard", tools=[
+            sdk.tool("sessions", "List the other Claude sessions in Switchboard on this machine, by name, with their state. "
+                     "Stopped ones are included: unlike SendMessage, message_session can reach them.", {})(sessions),
+            sdk.tool("message_session", "Send a message to another Switchboard session on this machine, by its name from the sessions tool. "
+                     "A stopped session is resumed to receive it. It arrives as a new prompt; the reply comes back the same way only "
+                     "if that session chooses to answer.", {"session": str, "text": str})(message),
+        ])
 
     async def send(self, entry, text, images=None, origin=None):
         images = images or []
@@ -136,7 +184,7 @@ class Runner:
             lv.queue.append((entry, text, images, origin))
             await self.broadcast({"type": "queued", "entry": entry["id"], "count": len(lv.queue)})
             return
-        lv.working, lv.last_active, lv.said = True, time.time(), False
+        lv.working, lv.said = True, False
         lv.origin, lv.turn_text = origin, []
         await self._emit_state(entry["id"])
         if origin:  # clients show what they typed themselves; a watch's prompt has to be announced
@@ -158,14 +206,8 @@ class Runner:
         message then got the previous answer."""
         try:
             async for m in lv.client.receive_messages():
-                lv.last_active = time.time()
                 sub, data = getattr(m, "subtype", None), getattr(m, "data", None) or {}
                 if sub in ("task_started", "task_notification", "task_updated") and data.get("task_id"):
-                    status = (data.get("patch") or {}).get("status") if sub == "task_updated" else None
-                    if sub == "task_started":
-                        lv.tasks.add(data["task_id"])
-                    elif sub == "task_notification" or status in ("completed", "failed", "stopped", "killed"):
-                        lv.tasks.discard(data["task_id"])
                     await self.broadcast({"type": "subagents", "entry": lv.entry_id})  # the tree re-reads its subagents
                     continue
                 if not lv.working and type(m).__name__ in ("AssistantMessage", "UserMessage", "StreamEvent"):  # a turn Claude started on its own
@@ -353,16 +395,6 @@ class Runner:
         except Exception:
             pass
         await self._emit_state(entry_id)
-
-    async def reap_idle(self):
-        """Close live sessions that have been quiet for IDLE_CLOSE seconds (they resume on the next message)."""
-        while True:
-            await asyncio.sleep(min(30, IDLE_CLOSE))
-            now = time.time()
-            for eid, lv in list(self.live.items()):
-                if not lv.working and not lv.pending and not lv.tasks and now - lv.last_active > IDLE_CLOSE:
-                    # ponytail: a background shell that never ends (a dev server) keeps its session open until stopped by hand
-                    await self.stop(eid)
 
     async def close_all(self):
         for eid in list(self.live):

@@ -70,7 +70,9 @@ SUBAGENTS = {
 
 
 def subagent_tree(session_id):
-    return list(SUBAGENTS.get(session_id, []))
+    # the unfinished ones are "still working": active now, as a real running subagent's transcript would be
+    now = int(time.time() * 1000)
+    return [a if a["finished"] or a["stopped"] else {**a, "updated": now} for a in SUBAGENTS.get(session_id, [])]
 
 
 def get_subagent_messages(session_id, agent_id, limit=None, offset=0):
@@ -96,8 +98,11 @@ def get_session_info(session_id):
     return next((s for s in SESSIONS if s.session_id == session_id), None)
 
 
+LIVE_LOG = {}  # session id -> turns taken live: like a real transcript, history read later includes them
+
+
 def get_session_messages(session_id, limit=None, offset=0):
-    return HISTORY[offset:offset + limit if limit else None] if get_session_info(session_id) else []
+    return (HISTORY + LIVE_LOG.get(session_id, []))[offset:offset + limit if limit else None] if get_session_info(session_id) else []
 
 
 # ---- fake live sessions (phase 2): same class names the runner looks for ----
@@ -173,6 +178,16 @@ class ClaudeAgentOptions:
     model: str = None
     env: dict = None
     effort: str = None
+    mcp_servers: dict = None
+    allowed_tools: list = None
+
+
+def tool(name, description, schema):  # in-process MCP tools: the demo calls them directly
+    return lambda fn: (name, fn)
+
+
+def create_sdk_mcp_server(name, version="1.0.0", tools=None):
+    return dict(tools or [])
 
 
 @dataclasses.dataclass
@@ -256,6 +271,13 @@ class ClaudeSDKClient:
             return
         if self.images:
             yield AssistantMessage([TextBlock(f"I can see {self.images} image(s).")])
+        tools = (self.options.mcp_servers or {}).get("switchboard", {})
+        if text.startswith("tell ") and ":" in text:  # "tell <session>: <words>" uses message_session
+            to, words = text[5:].split(":", 1)
+            r = await tools["message_session"]({"session": to.strip(), "text": words.strip()})
+            yield AssistantMessage([TextBlock(r["content"][0]["text"])])
+        if text == "list sessions":
+            yield AssistantMessage([TextBlock((await tools["sessions"]({}))["content"][0]["text"])])
         for word in "Looking into it.".split(" "):
             yield StreamEvent({"type": "content_block_delta", "delta": {"type": "text_delta", "text": word + " "}})
             await asyncio.sleep(0.05)
@@ -310,6 +332,10 @@ class ClaudeSDKClient:
                     return
                 await asyncio.sleep(0.1)
         acct = " (token account)" if (self.options.env or {}).get("CLAUDE_CODE_OAUTH_TOKEN") else ""
-        yield AssistantMessage([TextBlock(f"Done: {text}" + (f" [{self.options.model}]" if self.options.model else "") + acct)],
+        done = f"Done: {text}" + (f" [{self.options.model}]" if self.options.model else "") + acct
+        LIVE_LOG.setdefault(self.options.resume or self.options.session_id, []).extend([
+            {"type": "user", "uuid": f"live-{time.time_ns()}-u", "message": {"role": "user", "content": text}},
+            {"type": "assistant", "uuid": f"live-{time.time_ns()}-a", "message": {"role": "assistant", "content": [{"type": "text", "text": done}]}}])
+        yield AssistantMessage([TextBlock(done)],
                                usage={"input_tokens": 1200, "cache_read_input_tokens": 50000, "cache_creation_input_tokens": 800})
         yield ResultMessage()

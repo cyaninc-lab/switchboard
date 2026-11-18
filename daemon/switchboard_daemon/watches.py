@@ -140,6 +140,8 @@ class Watches:
             await self._inbox(w["name"], title, body, watch_id=w["id"], entry_id=w["entry_id"])
 
     async def _agent_replied(self, entry_id, text, origin):
+        if "watch_id" not in origin:
+            return  # started by another session's message, not a watch
         await self._inbox(origin["watch"], "agent replied", text or "(no reply text)", watch_id=origin["watch_id"], entry_id=entry_id, from_agent=True)
 
     async def _inbox(self, source, title, body, watch_id=None, entry_id=None, from_agent=False):

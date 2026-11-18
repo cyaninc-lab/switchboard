@@ -24,6 +24,17 @@ test('connect, add from a machine, read history, pin, remove', async ({ page }) 
   await page.getByRole('button', { name: '+ Add' }).click();
   const dialog = page.getByRole('form', { name: 'Add to Switchboard' });
   await expect(dialog.getByRole('button', { name: /Deploy #52 rolled back/ })).toBeVisible();
+  // a drag from the search box out onto the backdrop (selecting text) leaves the dialog open...
+  const box = (await dialog.getByRole('searchbox').or(dialog.locator('input').first()).first().boundingBox())!;
+  await page.mouse.move(box.x + 10, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(5, 5, { steps: 5 });
+  await page.mouse.up();
+  await expect(dialog).toBeVisible();
+  // ...but a click on the backdrop closes it
+  await page.mouse.click(5, 5);
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole('button', { name: '+ Add' }).click();
   await dialog.getByRole('button', { name: /Deploy #52 rolled back/ }).click();
   await dialog.getByLabel('Name in the tree').fill('Shorts deploy');
   await dialog.getByRole('button', { name: 'Add to tree' }).click();

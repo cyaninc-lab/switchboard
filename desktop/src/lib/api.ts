@@ -15,7 +15,7 @@ export type Entry = {
   subagents?: Sub[];
 };
 /** A subagent of a session; parent is the subagent that spawned it (null: the session itself did). */
-export type Sub = { id: string; description: string; type: string | null; parent: string | null; tool_use_id: string | null; finished: boolean; stopped: boolean; updated: number };
+export type Sub = { id: string; description: string; type: string | null; parent: string | null; tool_use_id: string | null; finished: boolean; stopped: boolean; updated: number; running?: boolean };
 export type HistoryMessage = { type: 'user' | 'assistant'; uuid: string; message: any; parent_tool_use_id?: string | null };
 
 const KEY = 'switchboard.machines';

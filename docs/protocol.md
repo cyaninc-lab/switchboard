@@ -75,8 +75,12 @@ Every subscribed client receives every event, so several clients stay live on on
 
 ## Daemon behaviour
 
-- One `ClaudeSDKClient` per active entry; closed after the idle timeout (default 10 min),
-  resumed on the next `send` or watch.
+- One `ClaudeSDKClient` per active entry. It stays open until a client sends `stop` (or the daemon exits);
+  a stopped entry is resumed on the next `send` or watch.
+- Every session the daemon opens gets an in-process MCP server `switchboard` with two tools, allowed without asking:
+  `sessions` (the other tree entries on this machine and their state) and `message_session(session, text)`
+  (by entry name or id). The message is sent to the target as a prompt (announced to clients like a watch's), resuming it if stopped
+  and queued if it's working. Targets open in a terminal outside the daemon are refused (Claude Code's SendMessage reaches those).
 - Spawned sessions get a clean environment (no inherited `CLAUDE*` vars) plus the entry's
   account token (`CLAUDE_CODE_OAUTH_TOKEN`) when it isn't the machine default.
 - Sessions load the user's own settings (`setting_sources` default), so their permission rules apply.
