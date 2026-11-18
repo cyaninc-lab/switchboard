@@ -5,6 +5,8 @@ Events (docs/protocol.md): state, delta, message, permission_request, permission
 import asyncio, dataclasses, os, shutil, time, uuid
 from .logs import log, scrub
 
+# one message from Claude Code (a Read of a big screenshot is one line of base64); the SDK's 1 MB default kills the session
+MAX_MESSAGE = 64 * 1024 * 1024
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 MAX_IMAGE_B64 = 7_000_000  # ~5 MB of image per attachment
 MAX_IMAGES = 10
@@ -115,7 +117,8 @@ class Runner:
             # SWITCHBOARD_MODEL overrides everything (tests run on Haiku); else the entry's choice; else Claude Code's default
             **({"model": m} if (m := os.environ.get("SWITCHBOARD_MODEL") or entry.get("model")) else {}),
             **({"cli_path": self.cli_path} if self.cli_path else {}),
-            mcp_servers={"switchboard": self._tools(entry["id"])}, allowed_tools=list(TOOLS))
+            mcp_servers={"switchboard": self._tools(entry["id"])}, allowed_tools=list(TOOLS),
+            max_buffer_size=MAX_MESSAGE)
         client = self.sdk.ClaudeSDKClient(options=opts)
         await client.connect()
         log.info("session %s live (entry %s, model %s, account %s)", entry["session_id"], entry["id"], entry.get("model") or "default", entry.get("account") or "machine")

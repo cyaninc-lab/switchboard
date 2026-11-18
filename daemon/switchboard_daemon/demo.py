@@ -180,6 +180,7 @@ class ClaudeAgentOptions:
     effort: str = None
     mcp_servers: dict = None
     allowed_tools: list = None
+    max_buffer_size: int = None
 
 
 def tool(name, description, schema):  # in-process MCP tools: the demo calls them directly
