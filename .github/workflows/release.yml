@@ -80,9 +80,13 @@ jobs:
   publish:
     needs: [draft, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # the signatures branch of this repo
     steps:
+      - uses: actions/checkout@v4
       - env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          HOME_TOKEN: ${{ github.token }}
         run: |
           # never publish a release without its files and the update manifest
           ASSETS=$(gh api "repos/cyaninc-lab/switchboard-releases/releases/${{ needs.draft.outputs.id }}/assets" --jq '.[].name')
@@ -90,4 +94,6 @@ jobs:
           echo "$ASSETS" | grep -qx latest.json || { echo "latest.json missing"; exit 1; }
           echo "$ASSETS" | grep -q '\.AppImage$' || { echo "AppImage missing"; exit 1; }
           echo "$ASSETS" | grep -q 'setup\.exe$' || { echo "Windows installer missing"; exit 1; }
+          # signatures go to this repo's `signatures` branch, not the releases page (latest.json already carries them)
+          tools/move-signatures.sh cyaninc-lab/switchboard-releases "${{ needs.draft.outputs.id }}" "${{ needs.draft.outputs.version }}"
           gh release edit "v${{ needs.draft.outputs.version }}" -R cyaninc-lab/switchboard-releases --draft=false --latest
