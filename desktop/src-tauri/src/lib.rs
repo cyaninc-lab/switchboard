@@ -110,6 +110,58 @@ fn service_status(state: tauri::State<Embedded>) -> ServiceStatus {
     }
 }
 
+// ---- file links in the chat: a path Claude wrote, on this machine ----
+// Claude writes these paths, so "opening" must never run anything: folders open in the file manager, files of
+// a harmless kind open in their default app, everything else (scripts, programs, unknown) is only shown in its folder.
+const SAFE_EXT: &[&str] = &[
+    "md", "markdown", "txt", "log", "csv", "tsv", "json", "jsonl", "yaml", "yml", "toml", "ini", "xml", "rst",
+    "pdf", "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "mp3", "wav", "flac", "ogg", "mp4", "mkv", "webm", "mov",
+    "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp",
+];
+
+#[derive(Debug, PartialEq)]
+enum Open { Folder, File, Reveal }
+
+fn decide(path: &std::path::Path, is_dir: bool) -> Open {
+    if is_dir { return Open::Folder; }
+    let ext = path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).unwrap_or_default();
+    if SAFE_EXT.contains(&ext.as_str()) { Open::File } else { Open::Reveal }
+}
+
+/// Open a path from the chat (see above). Returns what it did: "opened" or "revealed".
+#[tauri::command]
+fn open_local(path: String) -> Result<String, String> {
+    let p = match path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
+        Some(rest) => dirs_home().join(rest),
+        None => PathBuf::from(&path),
+    };
+    let meta = std::fs::metadata(&p).map_err(|_| format!("No such file or folder: {}", p.display()))?;
+    match decide(&p, meta.is_dir()) {
+        Open::Folder | Open::File => tauri_plugin_opener::open_path(&p, None::<&str>).map(|_| "opened".into()),
+        Open::Reveal => tauri_plugin_opener::reveal_item_in_dir(&p).map(|_| "revealed".into()),
+    }
+    .map_err(|e| e.to_string())
+}
+
+fn dirs_home() -> PathBuf {
+    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+    #[test]
+    fn opening_never_runs_anything() {
+        assert_eq!(decide(Path::new("/x/notes.md"), false), Open::File);
+        assert_eq!(decide(Path::new("C:/x/Shot.PNG"), false), Open::File);
+        assert_eq!(decide(Path::new("/x/src"), true), Open::Folder);
+        for p in ["/x/run.sh", "/x/a.exe", "/x/app.desktop", "/x/s.py", "/x/b.bat", "/x/c.ps1", "/x/Makefile", "/x/a.AppImage", "/x/page.html"] {
+            assert_eq!(decide(Path::new(p), false), Open::Reveal, "{p}");
+        }
+    }
+}
+
 /// Copy the daemon somewhere stable (the app's own path changes with updates), write the unit, and hand over:
 /// stop the app's own daemon, start the service. Same data dir, so the tree and tokens carry over.
 #[tauri::command]
@@ -217,7 +269,7 @@ pub fn run() {
             start_embedded(&app.state::<Embedded>());
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![local_daemon, service_status, service_install, service_uninstall])
+        .invoke_handler(tauri::generate_handler![local_daemon, service_status, service_install, service_uninstall, open_local])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import * as api from '$lib/api';
-  import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell, openExternal, appVersion, checkForUpdate, notify } from '$lib/shell';
+  import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell, openExternal, openLocal, appVersion, checkForUpdate, notify } from '$lib/shell';
   import { backdrop } from '$lib/backdrop';
   import { theme, THEMES, applyTheme, fonts, UI_FONTS, MONO_FONTS, SIZES, applyFonts } from '$lib/themes.svelte';
   applyTheme(theme.name);
@@ -16,10 +16,30 @@
     ev.preventDefault();
     if (['http:', 'https:', 'mailto:'].includes(url.protocol)) openExternal(url.href);
   }
+  // file paths in replies (inline code the markdown marked .path): open on this machine, else copy the path
+  let toast = $state('');
+  let toastTimer: ReturnType<typeof setTimeout> | undefined;
+  function say(t: string) { toast = t; clearTimeout(toastTimer); toastTimer = setTimeout(() => (toast = ''), 3000); }
+  const isLocal = (m: Machine) => ['127.0.0.1', 'localhost', '[::1]'].includes(new URL(m.url).hostname);
+  async function onPathClick(ev: MouseEvent) {
+    const el = (ev.target as Element | null)?.closest?.('code.path');
+    if (!el || !selected || el.closest('pre')) return;
+    const raw = el.textContent!.trim().replace(/:\d+(:\d+)?$/, '');
+    const cwd = selected.entry.session?.cwd ?? '';
+    const abs = /^(~[\/]|\/|[A-Za-z]:[\\/]|\\\\)/.test(raw) ? raw : `${cwd.replace(/[\/\\]$/, '')}/${raw.replace(/^\.\//, '')}`;
+    if (inShell() && isLocal(selected.machine)) {
+      try { if ((await openLocal(abs)) === 'revealed') say(`Shown in its folder: ${abs}`); }
+      catch (e) { say(String(e)); }
+    } else {
+      try { await navigator.clipboard.writeText(abs); say(`Copied: ${abs}${inShell() ? ` (it's on ${selected.machine.name})` : ''}`); }
+      catch { say(abs); }
+    }
+  }
   $effect(() => {
+    document.addEventListener('click', onPathClick);
     document.addEventListener('click', onLinkClick, true);
     document.addEventListener('auxclick', onLinkClick, true);  // middle-click too
-    return () => { document.removeEventListener('click', onLinkClick, true); document.removeEventListener('auxclick', onLinkClick, true); };
+    return () => { document.removeEventListener('click', onPathClick); document.removeEventListener('click', onLinkClick, true); document.removeEventListener('auxclick', onLinkClick, true); };
   });
   import type { Update } from '$lib/shell';
   import { captureAppLog, buildReport, issueUrl } from '$lib/report';
@@ -871,6 +891,7 @@
           <div class="subnote muted small">Goes through <button class="link" onclick={() => open(selected!.machine, selected!.entry)}>{selected.entry.name}</button>, which passes it on with SendMessage (resuming the subagent if it has finished).</div>
         {:else}
         {#if liveErr}<div class="liveerr" role="alert">{liveErr}</div>{/if}
+        {#if toast}<div class="toast muted small" role="status">{toast}</div>{/if}
         {#if pendingQ[selected.entry.id]?.length}
           <div class="pendingq mono" role="list" aria-label="Queued messages">
             {#each pendingQ[selected.entry.id] as m (m.uuid)}<div class="you" role="listitem"><span class="prompt">❯ </span>{msgText(m)}</div>{/each}
@@ -1265,6 +1286,9 @@
   .todos li.in_progress { color: var(--text); font-weight: 600; } .todos li.in_progress .box { color: var(--peach); border-color: var(--peach); }
   .inputbar { display: flex; gap: 10px; align-items: center; padding: 12px 18px; border-top: 1px solid var(--s0); }
   .inputbar { align-items: flex-end; }
+  .toast { padding: 4px 18px 0; word-break: break-all; }
+  .md :global(code.path) { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+  .md :global(code.path:hover) { color: var(--sky); }
   .pendingq { padding: 8px 18px 0; display: flex; flex-direction: column; gap: 4px; opacity: 0.75; white-space: pre-wrap; max-height: 25vh; overflow-y: auto; }
   .inputbar textarea { display: block; width: 100%; box-sizing: border-box; border: 0; background: none; color: var(--text); font: inherit; padding: 8px 10px; resize: none; max-height: 40vh; overflow-y: auto; line-height: 1.45; }
   .inputbar textarea:focus { outline: 1px solid var(--mauve); border-radius: 8px; }

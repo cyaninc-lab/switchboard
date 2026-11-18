@@ -68,6 +68,18 @@ test('diffs, to-dos, expandable output and the context/cost meter', async ({ pag
   expect(page.url()).toBe(here);  // the app didn't navigate away
   await expect(log).toContainText('Done: show a link');
 
+  // a file path in a reply is clickable; a command is not. Here (no desktop app) a click copies the full path
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await input.fill('mention a file');
+  await input.press('Enter');
+  const path = log.locator('code.path', { hasText: 'server/app.py:212' });
+  await expect(path).toBeVisible();
+  await expect(log.locator('code', { hasText: 'npm test' })).not.toHaveClass(/path/);
+  await path.click();
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copied).toMatch(/^\/srv\/agents\/[^ ]+\/server\/app\.py$/);  // the session's folder + the path, no :212
+  await expect(page.getByRole('status').filter({ hasText: 'Copied:' })).toContainText(copied);
+
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
   await page.getByRole('button', { name: 'Remove from tree' }).click();
 });
