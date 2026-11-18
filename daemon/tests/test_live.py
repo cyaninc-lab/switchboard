@@ -494,3 +494,16 @@ def test_send_now_interrupts_and_sends_first(tmp_path, monkeypatch):
         assert "Done: jump the queue" in dones[0] and "Done: queued earlier" in dones[1]  # first, and the old queue kept
         await client.close()
     asyncio.run(t())
+
+
+def test_interrupting_is_not_an_error(tmp_path, monkeypatch):
+    """Claude Code ends an interrupted turn as an error with no message; that was shown as an error saying "None"."""
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        await ws.send_json({"type": "send", "entry": e["id"], "text": "a slow job"})
+        await until(ws, lambda m: m["type"] == "state" and m["state"] == "working")
+        await ws.send_json({"type": "interrupt", "entry": e["id"]})
+        _, seen = await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready", timeout=5)
+        assert not [m for m in seen if m["type"] == "error"]
+        await client.close()
+    asyncio.run(t())

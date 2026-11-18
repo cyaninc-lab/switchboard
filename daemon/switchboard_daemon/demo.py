@@ -335,7 +335,8 @@ class ClaudeSDKClient:
         if "slow" in text.lower():
             for _ in range(300):
                 if self.interrupted:
-                    yield ResultMessage(is_error=False, result="interrupted")
+                    yield UserMessage([TextBlock("[Request interrupted by user]")])
+                    yield ResultMessage(is_error=True, result=None)  # as real Claude Code ends it
                     return
                 await asyncio.sleep(0.1)
         acct = " (token account)" if (self.options.env or {}).get("CLAUDE_CODE_OAUTH_TOKEN") else ""

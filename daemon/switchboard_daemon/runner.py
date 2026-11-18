@@ -63,6 +63,7 @@ class Live:
     last_usage: dict = None  # usage of the latest main-thread API call: how full the context is now
     cost: float = 0.0  # API-equivalent cost of this live session so far
     restart: bool = False  # close after this turn (a setting that only applies at start changed)
+    interrupted: bool = False  # this turn was interrupted on purpose: Claude Code then ends it as an error with no message
 
 
 class Runner:
@@ -187,7 +188,7 @@ class Runner:
             lv.queue.append((entry, text, images, origin))
             await self.broadcast({"type": "queued", "entry": entry["id"], "count": len(lv.queue)})
             return
-        lv.working, lv.said = True, False
+        lv.working, lv.said, lv.interrupted = True, False, False
         lv.origin, lv.turn_text = origin, []
         await self._emit_state(entry["id"])
         if origin:  # clients show what they typed themselves; a watch's prompt has to be announced
@@ -214,7 +215,7 @@ class Runner:
                     await self.broadcast({"type": "subagents", "entry": lv.entry_id})  # the tree re-reads its subagents
                     continue
                 if not lv.working and type(m).__name__ in ("AssistantMessage", "UserMessage", "StreamEvent"):  # a turn Claude started on its own
-                    lv.working, lv.said, lv.origin, lv.turn_text = True, False, None, []
+                    lv.working, lv.said, lv.origin, lv.turn_text, lv.interrupted = True, False, None, [], False
                     await self._emit_state(lv.entry_id)
                 if type(m).__name__ == "StreamEvent":
                     ev = m.event
@@ -239,7 +240,9 @@ class Runner:
                         await self.broadcast({"type": "notice", "entry": lv.entry_id, "text": "Conversation compacted"})
                 elif type(m).__name__ == "ResultMessage":
                     await self._usage(lv, m)
-                    if m.is_error:
+                    if m.is_error and lv.interrupted:
+                        log.info("entry %s turn interrupted", lv.entry_id)  # asked for, not an error to show
+                    elif m.is_error:
                         log.warning("entry %s turn ended with an error: %s", lv.entry_id, scrub(str(m.result))[:300])
                         await self.broadcast({"type": "error", "entry": lv.entry_id, "code": "result_error", "message": str(m.result)[:500]})
                     elif m.result and not lv.said:  # e.g. /usage, /context: output arrives only as the result
@@ -344,6 +347,7 @@ class Runner:
             for fut in list(lv.pending.values()):  # a pending prompt is moot once interrupted
                 if not fut.done():
                     fut.set_result({"allow": False, "message": "Interrupted", "remember": None, "answers": None, "response": None})
+            lv.interrupted = True
             await lv.client.interrupt()
 
     async def models(self):
