@@ -478,3 +478,19 @@ def test_sessions_accept_big_messages(tmp_path, monkeypatch):
         assert runner.live[e["id"]].client.options.max_buffer_size >= 32 * 1024 * 1024
         await client.close()
     asyncio.run(t())
+
+
+def test_send_now_interrupts_and_sends_first(tmp_path, monkeypatch):
+    """Ctrl+Enter (send now): the running turn is interrupted and this message goes ahead of anything already queued."""
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        await ws.send_json({"type": "send", "entry": e["id"], "text": "a slow job"})
+        await until(ws, lambda m: m["type"] == "state" and m["state"] == "working")
+        await ws.send_json({"type": "send", "entry": e["id"], "text": "queued earlier"})
+        await until(ws, lambda m: m["type"] == "queued" and m["count"] == 1)
+        await ws.send_json({"type": "send", "entry": e["id"], "text": "jump the queue", "now": True})
+        _, seen = await until(ws, lambda m: m["type"] == "message" and "Done: queued earlier" in str(m), timeout=8)
+        dones = [str(m) for m in seen if m["type"] == "message" and "Done: " in str(m)]
+        assert "Done: jump the queue" in dones[0] and "Done: queued earlier" in dones[1]  # first, and the old queue kept
+        await client.close()
+    asyncio.run(t())

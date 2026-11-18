@@ -224,7 +224,7 @@ export class Live {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(o));
     else throw new Error('Not connected to ' + this.m.name);
   }
-  send(entry: string, text: string, images: Image[] = []) { this.sendJson({ type: 'send', entry, text, images }); }
+  send(entry: string, text: string, images: Image[] = [], now = false) { this.sendJson({ type: 'send', entry, text, images, ...(now ? { now } : {}) }); }
   interrupt(entry: string) { this.sendJson({ type: 'interrupt', entry }); }
   stop(entry: string) { this.sendJson({ type: 'stop', entry }); }
   setMode(entry: string, mode: string) { this.sendJson({ type: 'set_mode', entry, mode }); }

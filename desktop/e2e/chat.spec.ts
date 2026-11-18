@@ -62,6 +62,15 @@ test('chat: stream, approve, deny, interrupt, auto mode, stop', async ({ page })
   await page.keyboard.press('Escape');
   await expect(entry).toHaveAttribute('title', 'Live and ready', { timeout: 5000 });
 
+  // Ctrl+Enter while working: interrupt and send (the slow job would take 30 s)
+  await input.fill('a slow job');
+  await input.press('Enter');
+  await expect(entry).toHaveAttribute('title', 'Working');
+  await input.fill('jump the queue');
+  await input.press('Control+Enter');
+  await expect(log).toContainText('Done: jump the queue', { timeout: 8000 });
+  await expect(entry).toHaveAttribute('title', 'Live and ready');
+
   // auto mode: no prompt
   await page.getByRole('contentinfo').getByLabel('Permission mode').selectOption('auto');
   await input.fill('run in auto');

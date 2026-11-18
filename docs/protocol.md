@@ -43,7 +43,7 @@ Client → daemon:
 | type | fields |
 | --- | --- |
 | `subscribe` | `entries: [id]` (or `"all"`) |
-| `send` | `entry, text, images?` (starts or resumes the session if stopped; images = `[{media_type, data(base64)}]`, PNG/JPEG/GIF/WebP, ≤5 MB each, ≤10) |
+| `send` | `entry, text, images?, now?` (starts or resumes the session if stopped; `now`: if it's working, interrupt and send this first, Claude Code's Ctrl+Enter; images = `[{media_type, data(base64)}]`, PNG/JPEG/GIF/WebP, ≤5 MB each, ≤10) |
 | `interrupt` / `stop` | `entry` |
 | `set_mode` | `entry, mode` (default, acceptEdits, plan, auto, dontAsk, bypassPermissions) |
 | `set_account` | `entry, account` (null = the machine's own login; closes a live session, which resumes on the new account at the next message) |

@@ -327,9 +327,18 @@ class Runner:
                 return True
         return False
 
-    async def interrupt(self, entry_id):
+    async def send_now(self, entry, text, images=None):
+        """Claude Code's Ctrl+Enter: interrupt the running turn and send this, ahead of anything already queued."""
+        lv = self.live.get(entry["id"])
+        if not lv or not lv.working:
+            return await self.send(entry, text, images)
+        lv.queue.insert(0, (entry, text, images or [], None))
+        await self.broadcast({"type": "queued", "entry": entry["id"], "count": len(lv.queue)})
+        await self.interrupt(entry["id"], keep_queue=True)
+
+    async def interrupt(self, entry_id, keep_queue=False):
         lv = self.live.get(entry_id)
-        if lv:
+        if lv and not keep_queue:
             lv.queue.clear()  # interrupting drops what was queued behind the current turn, as in Claude Code
         if lv and lv.working:
             for fut in list(lv.pending.values()):  # a pending prompt is moot once interrupted

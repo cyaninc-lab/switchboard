@@ -276,10 +276,12 @@
       .sort((a, b) => Number(!a.name.toLowerCase().startsWith(q)) - Number(!b.name.toLowerCase().startsWith(q))).slice(0, 8);
   });
   function complete(c: api.Command) { draft = `/${c.name} `; cmdIdx = 0; }
-  // multi-line box: Enter sends, Shift+Enter starts a new line (as in Claude Code)
+  // multi-line box: Enter sends, Shift+Enter starts a new line, Ctrl+Enter sends now (interrupts), as in Claude Code
+  let sendNow = false;
   function enterSends(ev: KeyboardEvent) {
     if (ev.key !== 'Enter' || ev.shiftKey || ev.isComposing || ev.defaultPrevented) return;
     ev.preventDefault();
+    sendNow = ev.ctrlKey || ev.metaKey;
     (ev.currentTarget as HTMLTextAreaElement).form?.requestSubmit();
   }
   function grow(el: HTMLTextAreaElement) {  // fit the text, up to the CSS max-height
@@ -368,11 +370,12 @@
     if (!selected || (!draft.trim() && !attachments.length)) return;
     try {
       const images = attachments.map(({ media_type, data }) => ({ media_type, data }));
-      live()!.send(selected.entry.id, draft, images);
+      live()!.send(selected.entry.id, draft, images, sendNow);  // now: the daemon interrupts and sends this first
       const content = [...images.map((im) => ({ type: 'image', source: { type: 'base64', ...im } })), { type: 'text', text: draft }];
       messages = [...messages, { type: 'user', uuid: crypto.randomUUID(), message: { role: 'user', content } }];
       draft = ''; attachments = []; liveErr = '';
     } catch (e) { liveErr = (e as Error).message; }
+    sendNow = false;
   }
   function sendSub(ev: Event) {  // Claude Code's way: the parent session relays it with SendMessage
     ev.preventDefault();
@@ -796,7 +799,7 @@
           <span class="prompt">❯</span>
           <label class="grow"><span class="sr">Message this session</span>
             <textarea rows="1" {@attach grow} bind:value={draft} onpaste={onPaste} onkeydown={onInputKey} disabled={selected.entry.state === 'terminal' || selected.entry.state === 'missing'}
-              placeholder={selected.entry.state === 'terminal' ? 'Open in a terminal elsewhere' : selected.entry.state === 'working' ? 'Working… messages are queued (Esc to interrupt)' : 'Message this session (Shift+Enter for a new line)'}></textarea></label>
+              placeholder={selected.entry.state === 'terminal' ? 'Open in a terminal elsewhere' : selected.entry.state === 'working' ? 'Working… Enter queues, Ctrl+Enter interrupts and sends (Esc to interrupt)' : 'Message this session (Shift+Enter for a new line)'}></textarea></label>
           <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden bind:this={fileInput} onchange={(e) => { addFiles((e.target as HTMLInputElement).files ?? []); (e.target as HTMLInputElement).value = ''; }} />
           <button type="button" class="tiny" aria-label="Attach images" title="Attach images (or paste / drop them)" onclick={() => fileInput?.click()}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" /></svg>

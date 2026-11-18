@@ -419,7 +419,7 @@ async def ws_handler(request):
                 elif t == "send":
                     if entry["session_id"] in await _off(open_in_terminal) - runner.held_sessions():
                         raise RuntimeError("open_in_terminal")
-                    await runner.send(entry, m.get("text", ""), m.get("images"))
+                    await (runner.send_now if m.get("now") else runner.send)(entry, m.get("text", ""), m.get("images"))
                 elif t == "interrupt":
                     await runner.interrupt(eid)
                 elif t == "stop":
