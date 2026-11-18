@@ -51,7 +51,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI3NkQyREU5RjAxQjUxOTgKUldTWVVSdnc2UzF0SjdvZ3laenNlSTZRUkhMQWR2OUMyRmtBaGU3TzFsQTJJZG00QlNkYTNpZTkK",
       "endpoints": [
-        "https://github.com/cyaninc-lab/switchboard-releases/releases/latest/download/latest.json"
+        "https://github.com/cyaninc-lab/switchboard/releases/latest/download/latest.json"
       ]
     }
   }

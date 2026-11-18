@@ -1070,7 +1070,7 @@
       {#if netError}<p class="error">{netError === 'only_from_this_machine' ? 'This can only be changed on that machine itself.' : netError}</p>{/if}
 
       <h3 class="sub">Updates</h3>
-      <p class="muted small">Switchboard {version || '…'}. Updates come from github.com/cyaninc-lab/switchboard-releases and are checked for a valid signature before installing.</p>
+      <p class="muted small">Switchboard {version || '…'}. Updates come from github.com/cyaninc-lab/switchboard and are checked for a valid signature before installing.</p>
       <div class="actions" style="justify-content: flex-start"><button type="button" class="btn ghost" onclick={() => checkUpdates(true)}>Check for updates</button></div>
       {#if updMsg}<p class="muted small" role="status">{updMsg}</p>{/if}
 
