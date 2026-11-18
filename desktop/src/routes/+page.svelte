@@ -700,6 +700,11 @@
             {#each api.render(msg) as line, li}
               {#if line.kind === 'image'}
                 <img class="shot" src={line.text} alt="Attachment" />
+              {:else if line.kind === 'mail'}
+                <div class="mail" class:out={line.dir === 'out'} role="note" aria-label="{line.dir === 'out' ? 'To' : 'From'} {line.who}">
+                  <div class="mailhead">✉ <b>{line.dir === 'out' ? 'To' : 'From'} {line.who}</b></div>
+                  <div class="md">{@html md(line.text)}</div>
+                </div>
               {:else if line.kind === 'text'}
                 {#if msg.type === 'user'}
                   <div class="you"><span class="prompt">❯ </span>{line.text}</div>
@@ -1016,7 +1021,7 @@
   :global(:root) {
     --crust: #11111b; --mantle: #181825; --base: #1e1e2e; --s0: #313244; --s1: #45475a; --s2: #585b70;
     --o1: #7f849c; --o2: #9399b2; --sub0: #a6adc8; --sub1: #bac2de; --text: #cdd6f4;
-    --mauve: #cba6f7; --green: #a6e3a1; --peach: #fab387; --sky: #89dceb; --red: #f38ba8;
+    --mauve: #cba6f7; --green: #a6e3a1; --peach: #fab387; --sky: #89dceb; --teal: #94e2d5; --red: #f38ba8;
   }
   :global(html, body) { margin: 0; height: 100%; background: var(--crust); color: var(--text); font: 13px/1.45 Inter, system-ui, sans-serif; }
   :global(button) { font: inherit; cursor: pointer; }
@@ -1090,6 +1095,11 @@
   .log { flex: 1; overflow: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; white-space: pre-wrap; word-break: break-word; }
   .you { color: var(--text); }
   .reply { display: flex; gap: 8px; white-space: normal; }
+  /* messages between sessions: their own box, sky for received, teal for sent */
+  .mail { border: 1px solid var(--s1); border-left: 3px solid var(--sky); border-radius: 8px; background: rgba(137, 220, 235, 0.06); padding: 8px 12px; white-space: normal; }
+  .mail.out { border-left-color: var(--teal); background: rgba(148, 226, 213, 0.05); }
+  .mailhead { font: 12px Inter, system-ui, sans-serif; color: var(--sky); margin-bottom: 4px; } .mail.out .mailhead { color: var(--teal); }
+  .mailhead b { font-weight: 600; }
   .md { min-width: 0; font-family: Inter, system-ui, sans-serif; line-height: 1.55; }
   .md :global(p) { margin: 0 0 8px; } .md :global(p:last-child) { margin-bottom: 0; }
   .md :global(h1), .md :global(h2), .md :global(h3) { font-size: 14px; margin: 10px 0 6px; color: var(--mauve); }

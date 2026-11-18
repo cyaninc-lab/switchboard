@@ -103,7 +103,15 @@ export type Line =
   | { kind: 'text' | 'result' | 'image' | 'thinking'; text: string }
   | { kind: 'tool'; text: string; name: string; id: string; input: any }
   | { kind: 'diff'; text: string; file: string; lines: DiffLine[]; note?: string }
-  | { kind: 'todos'; text: string; items: { content: string; status: string; activeForm?: string }[] };
+  | { kind: 'todos'; text: string; items: { content: string; status: string; activeForm?: string }[] }
+  | { kind: 'mail'; text: string; dir: 'in' | 'out'; who: string };  // a message between sessions (message_session)
+
+// how the daemon delivers another session's message (runner._tools); parsed so history renders it too
+const MAIL_IN = /^Message from the session "([^"]*)" \(sent through Switchboard[^\n]*\):\n\n([\s\S]*)$/;
+const userText = (msg: HistoryMessage, t: string): Line => {
+  const m = msg.type === 'user' ? MAIL_IN.exec(t) : null;
+  return m ? { kind: 'mail', dir: 'in', who: m[1], text: m[2] } : { kind: 'text', text: t };
+};
 
 /** Line diff by longest common subsequence; big inputs fall back to all-removed / all-added. */
 export function lineDiff(a: string, b: string): DiffLine[] {
@@ -137,10 +145,10 @@ function untag(t: string): string {
 
 export function render(msg: HistoryMessage): Line[] {
   const c = msg.message?.content;
-  if (typeof c === 'string') return [{ kind: 'text', text: untag(c) }];
+  if (typeof c === 'string') return [userText(msg, untag(c))];
   if (!Array.isArray(c)) return [];
   return c.flatMap((b: any): Line[] => {
-    if (b.type === 'text') return [{ kind: 'text' as const, text: untag(b.text) }];
+    if (b.type === 'text') return [userText(msg, untag(b.text))];
     if (b.type === 'thinking' && b.thinking) return [{ kind: 'thinking' as const, text: b.thinking }];
     if (b.type === 'image' && b.source?.type === 'base64') return [{ kind: 'image' as const, text: `data:${b.source.media_type};base64,${b.source.data}` }];
     if (b.type === 'tool_use') {
@@ -151,6 +159,8 @@ export function render(msg: HistoryMessage): Line[] {
         return i.edits.map((e: any, n: number) => ({ kind: 'diff' as const, text: `Edit(${i.file_path})`, file: i.file_path, lines: lineDiff(e.old_string ?? '', e.new_string ?? ''), note: `edit ${n + 1} of ${i.edits.length}` }));
       if (b.name === 'Write' && typeof i.content === 'string')
         return [{ kind: 'diff', text: `Write(${i.file_path})`, file: i.file_path, lines: i.content.split('\n').map((s: string) => ({ t: '+' as const, s })), note: 'new contents' }];
+      if (b.name === 'mcp__switchboard__message_session' && typeof i.text === 'string')
+        return [{ kind: 'mail', dir: 'out', who: String(i.session ?? ''), text: i.text }];
       if (b.name === 'TodoWrite' && Array.isArray(i.todos))
         return [{ kind: 'todos', text: 'To-dos', items: i.todos }];
       const arg = i.command ?? i.file_path ?? i.pattern ?? i.description ?? '';

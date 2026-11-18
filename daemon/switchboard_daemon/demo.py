@@ -264,6 +264,9 @@ class ClaudeSDKClient:
         text = self.prompt
         if self.options.session_id and not get_session_info(self.options.session_id):  # a new session now exists on "disk"
             SESSIONS.append(DemoSession(self.options.session_id, text[:40] or "New session", int(time.time() * 1000), self.options.cwd))
+        if text:  # the prompt is in the transcript from the start, as in a real session
+            LIVE_LOG.setdefault(self.options.resume or self.options.session_id, []).append(
+                {"type": "user", "uuid": f"live-{time.time_ns()}-u", "message": {"role": "user", "content": text}})
         if not self.started:
             self.started = True
             yield SystemMessage("init", {"slash_commands": ["compact", "clear", "usage", "deploy", "yt-add"]})
@@ -275,7 +278,10 @@ class ClaudeSDKClient:
         tools = (self.options.mcp_servers or {}).get("switchboard", {})
         if text.startswith("tell ") and ":" in text:  # "tell <session>: <words>" uses message_session
             to, words = text[5:].split(":", 1)
-            r = await tools["message_session"]({"session": to.strip(), "text": words.strip()})
+            args = {"session": to.strip(), "text": words.strip()}
+            yield AssistantMessage([ToolUseBlock("tm1", "mcp__switchboard__message_session", args)])
+            r = await tools["message_session"](args)
+            yield UserMessage([ToolResultBlock("tm1", r["content"][0]["text"], bool(r.get("is_error")))])
             yield AssistantMessage([TextBlock(r["content"][0]["text"])])
         if text == "list sessions":
             yield AssistantMessage([TextBlock((await tools["sessions"]({}))["content"][0]["text"])])
@@ -334,9 +340,8 @@ class ClaudeSDKClient:
                 await asyncio.sleep(0.1)
         acct = " (token account)" if (self.options.env or {}).get("CLAUDE_CODE_OAUTH_TOKEN") else ""
         done = f"Done: {text}" + (f" [{self.options.model}]" if self.options.model else "") + acct
-        LIVE_LOG.setdefault(self.options.resume or self.options.session_id, []).extend([
-            {"type": "user", "uuid": f"live-{time.time_ns()}-u", "message": {"role": "user", "content": text}},
-            {"type": "assistant", "uuid": f"live-{time.time_ns()}-a", "message": {"role": "assistant", "content": [{"type": "text", "text": done}]}}])
+        LIVE_LOG.setdefault(self.options.resume or self.options.session_id, []).append(
+            {"type": "assistant", "uuid": f"live-{time.time_ns()}-a", "message": {"role": "assistant", "content": [{"type": "text", "text": done}]}})
         yield AssistantMessage([TextBlock(done)],
                                usage={"input_tokens": 1200, "cache_read_input_tokens": 50000, "cache_creation_input_tokens": 800})
         yield ResultMessage()
