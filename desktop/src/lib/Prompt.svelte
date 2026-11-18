@@ -89,13 +89,13 @@
 
 <style>
   .card { border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; white-space: normal; font-family: Inter, system-ui, sans-serif; }
-  .perm { border: 1px solid rgba(250, 179, 135, 0.45); background: rgba(250, 179, 135, 0.08); }
-  .q { border: 1px solid rgba(137, 220, 235, 0.45); background: rgba(137, 220, 235, 0.07); }
-  .plan { border: 1px solid rgba(203, 166, 247, 0.45); background: rgba(203, 166, 247, 0.07); }
+  .perm { border: 1px solid color-mix(in srgb, var(--peach) 45%, transparent); background: color-mix(in srgb, var(--peach) 8%, transparent); }
+  .q { border: 1px solid color-mix(in srgb, var(--sky) 45%, transparent); background: color-mix(in srgb, var(--sky) 7%, transparent); }
+  .plan { border: 1px solid color-mix(in srgb, var(--mauve) 45%, transparent); background: color-mix(in srgb, var(--mauve) 7%, transparent); }
   .title { font-weight: 600; color: var(--peach); } .plan .title { color: var(--mauve); }
   .mono { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
   .qhead { display: flex; gap: 8px; align-items: baseline; }
-  .chip { font-size: 11px; color: var(--sky); border: 1px solid rgba(137, 220, 235, 0.5); border-radius: 999px; padding: 1px 8px; }
+  .chip { font-size: 11px; color: var(--sky); border: 1px solid color-mix(in srgb, var(--sky) 50%, transparent); border-radius: 999px; padding: 1px 8px; }
   .opts { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 6px; }
   .opts button { display: flex; flex-direction: column; gap: 2px; text-align: left; background: var(--mantle); border: 1px solid var(--s1); color: var(--text); border-radius: 8px; padding: 8px 10px; cursor: pointer; }
   .opts button.on { border-color: var(--sky); background: var(--s0); }
@@ -107,7 +107,7 @@
   .primary, .allow { background: var(--green); color: var(--crust); border: 0; font-weight: 600; }
   .primary:disabled { opacity: 0.5; }
   .quiet { background: none; color: var(--text); border: 1px solid var(--s1); }
-  .deny { background: none; color: var(--red); border: 1px solid rgba(243, 139, 168, 0.45); }
+  .deny { background: none; color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 45%, transparent); }
   .md :global(p) { margin: 0 0 6px; } .md :global(h2) { font-size: 13px; margin: 0 0 6px; color: var(--mauve); }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 </style>

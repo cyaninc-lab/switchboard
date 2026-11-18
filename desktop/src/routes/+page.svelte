@@ -2,6 +2,8 @@
   import * as api from '$lib/api';
   import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell, openExternal, appVersion, checkForUpdate, notify } from '$lib/shell';
   import { backdrop } from '$lib/backdrop';
+  import { theme, THEMES, applyTheme } from '$lib/themes.svelte';
+  applyTheme(theme.name);
   import type { Update } from '$lib/shell';
   import { captureAppLog, buildReport, issueUrl } from '$lib/report';
   import type { ServiceStatus } from '$lib/shell';
@@ -884,6 +886,8 @@
   <div class="backdrop" role="presentation" {...backdrop(() => (dialog = null))}>
     <div class="dialog" role="dialog" aria-label="Settings">
       <h2>Settings</h2>
+      <label>Theme<select value={theme.name} onchange={(e) => applyTheme((e.currentTarget as HTMLSelectElement).value)}>
+        {#each Object.entries(THEMES) as [k, t]}<option value={k}>{t.label}</option>{/each}</select></label>
       {#if !inShell()}
         <p class="muted">Settings for this machine are available in the desktop app.</p>
       {:else if svc && !svc.supported}
@@ -1064,7 +1068,7 @@
   .entry:hover { background: var(--base); }
   .entry.sel { background: var(--s0); color: var(--text); box-shadow: inset 2px 0 0 var(--mauve); }
   .entry.sub { font-size: 12.5px; padding-top: 4px; padding-bottom: 4px; }
-  .subtoggle { display: block; border: 0; background: none; color: var(--ov1, #7f849c); padding: 2px 8px 2px 50px; cursor: pointer; text-align: left; }
+  .subtoggle { display: block; border: 0; background: none; color: var(--o1); padding: 2px 8px 2px 50px; cursor: pointer; text-align: left; }
   .subtoggle:hover { color: var(--text); }
   .subnote { padding: 0 16px 8px; }
   .entry.waiting { font-weight: 600; }
@@ -1121,7 +1125,7 @@
   .diff { display: flex; flex-direction: column; border: 1px solid var(--s0); border-radius: 8px; overflow: hidden; }
   .diffhead { padding: 4px 10px; background: var(--mantle); color: var(--sub1); }
   .dl { padding: 0 10px; white-space: pre-wrap; font-size: 12px; } .dl .sign { display: inline-block; width: 14px; color: var(--o1); }
-  .dl.add { background: rgba(166, 227, 161, 0.12); color: var(--green); } .dl.del { background: rgba(243, 139, 168, 0.12); color: var(--red); }
+  .dl.add { background: color-mix(in srgb, var(--green) 12%, transparent); color: var(--green); } .dl.del { background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--red); }
   .diff .link { align-self: flex-start; margin: 4px 10px; }
   .todos { list-style: none; margin: 0; padding: 6px 10px; border: 1px solid var(--s0); border-radius: 8px; display: flex; flex-direction: column; gap: 2px; font-family: Inter, system-ui, sans-serif; white-space: normal; }
   .todos .box { display: inline-block; width: 14px; height: 14px; border: 1px solid var(--s2); border-radius: 3px; margin-right: 8px; text-align: center; line-height: 13px; font-size: 11px; vertical-align: -2px; }
@@ -1132,11 +1136,11 @@
   .placeholder { margin: auto; color: var(--o2); }
   .streaming { color: var(--text); } .cursor { color: var(--mauve); animation: blink 1s steps(2) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
-  .perm { border: 1px solid rgba(250, 179, 135, 0.45); background: rgba(250, 179, 135, 0.08); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; white-space: normal; }
+  .perm { border: 1px solid color-mix(in srgb, var(--peach) 45%, transparent); background: color-mix(in srgb, var(--peach) 8%, transparent); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; white-space: normal; }
   .permtitle { color: var(--peach); font-weight: 600; }
   .permactions { display: flex; gap: 8px; font-family: Inter, system-ui, sans-serif; }
   .allow { background: var(--green); color: var(--crust); border: 0; border-radius: 8px; padding: 8px 16px; font-weight: 600; }
-  .deny { background: none; color: var(--red); border: 1px solid rgba(243, 139, 168, 0.45); border-radius: 8px; padding: 8px 16px; }
+  .deny { background: none; color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 45%, transparent); border-radius: 8px; padding: 8px 16px; }
   .shot { max-width: 320px; max-height: 200px; border-radius: 8px; border: 1px solid var(--s1); display: block; margin: 4px 0 4px 18px; }
   .cmdmenu { margin: 0 18px; background: var(--mantle); border: 1px solid var(--s1); border-radius: 10px; padding: 4px; display: flex; flex-direction: column; }
   .cmdmenu button { display: grid; grid-template-columns: minmax(140px, auto) 1fr; gap: 12px; text-align: left; background: none; border: 0; color: var(--text); padding: 6px 10px; border-radius: 6px; }
@@ -1153,7 +1157,7 @@
 
   .status { display: flex; gap: 18px; padding: 6px 16px; background: var(--mantle); border-top: 1px solid var(--s0); font-size: 11px; color: var(--o2); }
 
-  :global(.backdrop) { position: fixed; inset: 0; background: rgba(17, 17, 27, 0.7); display: flex; align-items: center; justify-content: center; padding: 16px; }
+  :global(.backdrop) { position: fixed; inset: 0; background: color-mix(in srgb, var(--crust) 70%, transparent); display: flex; align-items: center; justify-content: center; padding: 16px; }
   :global(.dialog) { width: 100%; max-width: 440px; background: var(--base); border: 1px solid var(--s1); border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
   :global(.dialog.wide) { max-width: 780px; max-height: 90vh; overflow: auto; }
   :global(.dialog h2) { margin: 0; font-size: 16px; }
@@ -1166,9 +1170,9 @@
   .tabs button.on { border-bottom-color: var(--mauve); color: var(--text); font-weight: 600; }
   :global(.dialog select) { background: var(--base); border: 1px solid var(--s1); border-radius: 8px; padding: 8px 10px; color: var(--text); font: inherit; appearance: none; }
   .sub { margin: 8px 0 0; font-size: 13px; }
-  .paircode { border: 1px solid rgba(203, 166, 247, 0.45); background: rgba(203, 166, 247, 0.07); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+  .paircode { border: 1px solid color-mix(in srgb, var(--mauve) 45%, transparent); background: color-mix(in srgb, var(--mauve) 7%, transparent); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
   .big { font-size: 16px; letter-spacing: 1px; color: var(--mauve); }
-  .updbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 16px; background: rgba(203, 166, 247, 0.12); border-bottom: 1px solid rgba(203, 166, 247, 0.35); }
+  .updbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 16px; background: color-mix(in srgb, var(--mauve) 12%, transparent); border-bottom: 1px solid color-mix(in srgb, var(--mauve) 35%, transparent); }
   .updnotes { padding: 8px 16px 12px; background: var(--mantle); border-bottom: 1px solid var(--s0); max-height: 200px; overflow: auto; }
   :global(.btn.small) { padding: 5px 12px; }
   :global(.dialog textarea) { width: 100%; box-sizing: border-box; background: var(--base); border: 1px solid var(--s1); border-radius: 8px; padding: 8px 10px; color: var(--text); font: inherit; resize: vertical; }
