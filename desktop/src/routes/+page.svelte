@@ -347,6 +347,16 @@
       draft = ''; attachments = []; liveErr = '';
     } catch (e) { liveErr = (e as Error).message; }
   }
+  function sendSub(ev: Event) {  // Claude Code's way: the parent session relays it with SendMessage
+    ev.preventDefault();
+    const s = selected;
+    if (!s?.sub || !draft.trim()) return;
+    try {
+      live()!.send(s.entry.id, `Use the SendMessage tool to send this message to agent ${s.sub.id} (it resumes the subagent if it has finished). Send it as written and do nothing else:\n\n${draft}`, []);
+      messages = [...messages, { type: 'user', uuid: crypto.randomUUID(), message: { role: 'user', content: draft } }];
+      draft = ''; liveErr = '';
+    } catch (e) { liveErr = (e as Error).message; }
+  }
   function act(fn: (l: api.Live, id: string) => void) {
     if (!selected) return;
     try { fn(live()!, selected.entry.id); liveErr = ''; } catch (e) { liveErr = (e as Error).message; }
@@ -410,11 +420,11 @@
     loadingHistory = false;
   }
 
-  // ---- subagents: nested under their session in the tree, opened read-only ----
+  // ---- subagents: running ones nest under their session in the tree; finished ones open from their Agent step ----
   const subRunning = (e: Entry, a: api.Sub) => !a.finished && !a.stopped && LIVE_STATES.includes(e.state);
   let subOpen = $state<Record<string, boolean>>({});
   function kids(e: Entry, parent: string | null) {
-    const all = e.subagents ?? [];
+    const all = (e.subagents ?? []).filter((a) => subRunning(e, a));
     const ids = new Set(all.map((a) => a.id));
     // a subagent whose parent isn't listed still shows, at the top
     return all.filter((a) => (parent === null ? !a.parent || !ids.has(a.parent) : a.parent === parent));
@@ -436,8 +446,8 @@
   }
   $effect(() => {  // a running subagent's view follows along (its steps are written to its own transcript)
     const s = selected;
-    if (!s?.sub || !subRunning(s.entry, s.sub)) return;
-    const t = setInterval(loadSub, 2500);
+    if (!s?.sub) return;
+    const t = setInterval(loadSub, 2500); // ponytail: polls even a finished one, since a message can resume it; a local file read
     return () => clearInterval(t);
   });
   $effect(() => {  // keep the open subagent's status current after a tree refresh
@@ -591,11 +601,11 @@
                   <span class="ename">{e.name}</span>
                   <span class="muted small">{e.session ? ago(e.session.last_modified) : ''}</span>
                 </button>
-                {#if e.subagents?.length}
-                  {@const running = e.subagents.filter((a) => subRunning(e, a)).length}
-                  {@const shown = subOpen[e.id] ?? running > 0}
+                {@const running = (e.subagents ?? []).filter((a) => subRunning(e, a)).length}
+                {#if running}
+                  {@const shown = subOpen[e.id] ?? true}
                   <button class="subtoggle small" aria-expanded={shown} onclick={() => (subOpen[e.id] = !shown)}>
-                    {shown ? '▾' : '▸'} {e.subagents.length} subagent{e.subagents.length === 1 ? '' : 's'}{running ? ` · ${running} running` : ''}
+                    {shown ? '▾' : '▸'} {running} subagent{running === 1 ? '' : 's'} running
                   </button>
                   {#if shown}<div role="group" aria-label="Subagents of {e.name}">{@render subs(m, e, null, 1)}</div>{/if}
                 {/if}
@@ -693,7 +703,12 @@
           </div>
         </div>
         {#if selected.sub}
-          <div class="subnote muted small">Read-only: a subagent can't be messaged. Talk to <button class="link" onclick={() => open(selected!.machine, selected!.entry)}>{selected.entry.name}</button> instead.</div>
+          <form class="inputbar mono" onsubmit={sendSub}>
+            <span class="prompt">❯</span>
+            <label class="grow"><span class="sr">Message this subagent</span>
+              <input bind:value={draft} placeholder="Message {selected.sub.description}" /></label>
+          </form>
+          <div class="subnote muted small">Goes through <button class="link" onclick={() => open(selected!.machine, selected!.entry)}>{selected.entry.name}</button>, which passes it on with SendMessage (resuming the subagent if it has finished).</div>
         {:else}
         {#if liveErr}<div class="liveerr" role="alert">{liveErr}</div>{/if}
         {#if queued[selected.entry.id]}<div class="queued muted small" aria-live="polite">{queued[selected.entry.id]} queued: sends when Claude finishes</div>{/if}
@@ -998,7 +1013,7 @@
   .entry.sub { font-size: 12.5px; padding-top: 4px; padding-bottom: 4px; }
   .subtoggle { display: block; border: 0; background: none; color: var(--ov1, #7f849c); padding: 2px 8px 2px 50px; cursor: pointer; text-align: left; }
   .subtoggle:hover { color: var(--text); }
-  .subnote { padding: 10px 16px; border-top: 1px solid var(--s0); }
+  .subnote { padding: 0 16px 8px; }
   .entry.waiting { font-weight: 600; }
   .ename { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pin { color: var(--peach); font-size: 11px; }

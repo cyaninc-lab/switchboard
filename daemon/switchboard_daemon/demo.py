@@ -58,11 +58,11 @@ def list_sessions():
     return list(SESSIONS)
 
 
-# subagents of demo-1: one spawned another, which spawned a third (still running)
+# subagents of demo-1: one spawned another, which spawned a third (the last two still running)
 SUBAGENTS = {
     "demo-1": [
         {"id": "a1", "description": "Investigate the failed deploy", "type": "general-purpose", "parent": None, "tool_use_id": "t9", "finished": True, "stopped": False, "updated": NOW - 5 * 60 * 1000},
-        {"id": "a2", "description": "Read the feed handler", "type": "Explore", "parent": "a1", "tool_use_id": "t10", "finished": True, "stopped": False, "updated": NOW - 4 * 60 * 1000},
+        {"id": "a2", "description": "Read the feed handler", "type": "Explore", "parent": "a1", "tool_use_id": "t10", "finished": False, "stopped": False, "updated": NOW - 4 * 60 * 1000},
         {"id": "a3", "description": "Check which videos lack dash_url", "type": "general-purpose", "parent": "a2", "tool_use_id": "t11", "finished": False, "stopped": False, "updated": NOW - 60 * 1000},
         {"id": "a4", "description": "Summarise the logs", "type": "Explore", "parent": None, "tool_use_id": "t12", "finished": True, "stopped": False, "updated": NOW - 3 * 60 * 1000},
     ],

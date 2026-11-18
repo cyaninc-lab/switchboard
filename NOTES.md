@@ -1,5 +1,4 @@
-## Switchboard 0.1.7
+## Switchboard 0.1.8
 
-- **Subagents in the tree.** When a session starts subagents, they appear nested under it, and subagents they start appear under them, to any depth. Running ones show live, and the list opens by itself while any are running. Click one to see what it's doing (read-only, since subagents can't be messaged). An Agent call in a session also has an "open subagent →" link.
-- **Updating on Windows** no longer stops with "Error opening file for writing: switchboard-daemon.exe" (the installer now closes the background helper first).
-- **New session:** a folder suggestion that loads late no longer gets mixed into the folder you're typing.
+- **The tree only lists subagents that are running.** Finished and stopped ones no longer pile up under their session; you can still open one from the "open subagent →" link on the Agent step that started it.
+- **You can message a subagent.** Its view now has a message box. Like Claude Code, the message goes through the session that owns the subagent, which passes it on with SendMessage, and resumes the subagent if it had finished.
