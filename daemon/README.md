@@ -15,7 +15,6 @@ Data (paired clients, the tree) lives in one SQLite file in the platform data di
 (`~/.local/share/switchboard`, `~/Library/Application Support/switchboard`, `%LOCALAPPDATA%\switchboard`)
 or `--data`.
 
-Phase 1 is read-only: pairing, machine info, sessions, tree entries, history. Running and chatting
-with sessions comes in phase 2. No TLS yet: keep non-localhost addresses on a private network.
+No TLS yet: keep non-localhost addresses on a private network.
 
 Tests: `python -m pytest daemon/tests`

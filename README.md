@@ -7,6 +7,6 @@ Self-hosted session manager for Claude Code, powered by Claude.
 - Any entry can become an agent: watches (GitHub, schedules, HTTP checks, webhooks, plugins) wake it and it messages you first.
 - Same power and permission modes as Claude Code on that machine; Switchboard only adds the remote access.
 
-Status: design done, phase 0 spike next. Nothing to install yet.
+Status: desktop app for Windows and Linux, in daily use. Install from [the releases page](https://github.com/cyaninc-lab/switchboard-releases/releases/latest); it updates itself.
 
-Layout (planned): `daemon/` (Python), `desktop/` (Tauri + Svelte), `mobile/` (later), `spike/` (phase 0 experiments).
+Layout: `daemon/` (Python), `desktop/` (Tauri + Svelte), `mobile/` (later), `spike/` (phase 0 experiments). Working on it: `CLAUDE.md`, then `docs/HANDOVER.md`.
