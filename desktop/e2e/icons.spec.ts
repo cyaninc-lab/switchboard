@@ -28,7 +28,7 @@ test('tree icons: ring when live, spinner when working, sun when waiting, dot wh
     await dialog.getByRole('button', { name: 'Create session' }).click();
     await expect(tree.getByRole('button', { name: new RegExp(name) })).toBeVisible();
   }
-  const a = tree.getByRole('button', { name: /Icon A/ }), b = tree.getByRole('button', { name: /Icon B/ });
+  const a = tree.getByRole('button', { name: /^Icon A(?! renamed)/ }), b = tree.getByRole('button', { name: /Icon B/ });
   const st = (e: typeof a) => e.locator('.st');
   const input = page.getByLabel('Message this session');
 
@@ -93,6 +93,29 @@ test('tree icons: ring when live, spinner when working, sun when waiting, dot wh
   await q.getByLabel(/Other answer to/).press('Enter');
   await expect(q).toHaveCount(0);
   await expect(st(b)).toHaveClass(/ready/);
+
+  // right-click > Rename: edit in place, Enter saves, Escape cancels; a project renames for all its sessions
+  await a.click({ button: 'right' });
+  await page.getByRole('menu', { name: 'Icon A actions' }).getByRole('menuitem', { name: 'Rename' }).click();
+  const box = tree.getByLabel('Rename Icon A');
+  await expect(box).toBeFocused();
+  await box.fill('Icon A renamed');
+  await box.press('Enter');
+  const a2 = tree.getByRole('button', { name: /Icon A renamed/ });
+  await expect(a2).toBeVisible();
+  await a2.click({ button: 'right' });
+  await page.getByRole('menu', { name: 'Icon A renamed actions' }).getByRole('menuitem', { name: 'Rename' }).click();
+  await tree.getByLabel('Rename Icon A renamed').fill('nope');
+  await tree.getByLabel('Rename Icon A renamed').press('Escape');
+  await expect(a2).toBeVisible();
+  const groupA = folders[0].split('/').pop()!;
+  await tree.getByRole('button', { name: new RegExp(groupA) }).click({ button: 'right' });
+  await page.getByRole('menu', { name: `${groupA} project actions` }).getByRole('menuitem', { name: 'Rename project' }).click();
+  await tree.getByLabel(`Rename project ${groupA}`).fill('Renamed project');
+  await tree.getByLabel(`Rename project ${groupA}`).press('Enter');
+  await expect(tree.getByRole('button', { name: /Renamed project/ })).toBeVisible();
+  await expect(tree.getByRole('button', { name: new RegExp(groupA) })).toHaveCount(0);
+  await expect(a2).toBeVisible();
 
   // right-click > Close session ends the live session; it stays in the tree
   const menu = page.getByRole('menu', { name: 'Icon B actions' });

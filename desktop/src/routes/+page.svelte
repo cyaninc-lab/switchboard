@@ -483,13 +483,36 @@
   $effect(() => { const v = JSON.stringify(subOpen); try { localStorage.setItem(FOLD_KEY, v); } catch {} });
 
   // ---- right-click menu on a tree entry ----
-  let ctx = $state<{ x: number; y: number; machine: Machine; entry: Entry } | null>(null);
-  function openMenu(ev: MouseEvent, machine: Machine, entry: Entry) {
+  // the menu is for a session (entry) or a project (group)
+  let ctx = $state<{ x: number; y: number; machine: Machine; entry?: Entry; group?: string } | null>(null);
+  function openMenu(ev: MouseEvent, machine: Machine, entry?: Entry, group?: string) {
     ev.preventDefault();
-    // from the keyboard (ctx key) there's no pointer position: put it under the entry
+    // from the keyboard (menu key) there's no pointer position: put it under the row
     const r = (ev.currentTarget as HTMLElement).getBoundingClientRect();
-    ctx = ev.clientX || ev.clientY ? { x: ev.clientX, y: ev.clientY, machine, entry } : { x: r.left + 24, y: r.bottom, machine, entry };
+    const at = ev.clientX || ev.clientY ? { x: ev.clientX, y: ev.clientY } : { x: r.left + 24, y: r.bottom };
+    ctx = { ...at, machine, entry, group };
   }
+
+  // ---- rename in place (sessions and projects) ----
+  let renaming = $state<{ key: string; value: string } | null>(null);  // key: 'e:<entry id>' or 'g:<machine>|<group>'
+  function startRename(key: string, value: string) { ctx = null; renaming = { key, value }; }
+  async function commitRename(m: Machine, entry?: Entry, group?: string) {
+    const name = renaming?.value.trim();
+    renaming = null;
+    if (!name) return;
+    try {
+      if (entry && name !== entry.name) { await api.updateEntry(m, entry.id, { name }); setEntry(entry.id, { name }); }
+      // a project is the group name its sessions share: renaming it moves them all
+      if (group !== undefined && name !== group)
+        await Promise.all((tree[m.url]?.entries ?? []).filter((e) => e.group === group).map((e) => api.updateEntry(m, e.id, { group: name })));
+    } catch (e) { liveErr = (e as Error).message; }
+    await refresh();
+  }
+  function renameKeys(ev: KeyboardEvent, m: Machine, entry?: Entry, group?: string) {
+    if (ev.key === 'Enter') { ev.preventDefault(); commitRename(m, entry, group); }
+    else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); renaming = null; }
+  }
+  const focusSelect = (el: HTMLInputElement) => { el.focus(); el.select(); };
   function closeSession(m: Machine, e: Entry) {
     ctx = null;
     try { lives.get(m.url)!.stop(e.id); liveErr = ''; } catch (err) { liveErr = (err as Error).message; }
@@ -603,10 +626,19 @@
 
 {#if ctx}
   {@const mm = ctx}
-  <div class="ctxmenu" role="menu" aria-label="{mm.entry.name} actions" style="left: {mm.x}px; top: {mm.y}px">
-    <button role="menuitem" disabled={!LIVE_STATES.includes(mm.entry.state)} title="Ends the Claude process; it stays in the tree and resumes on your next message"
-      onclick={() => closeSession(mm.machine, mm.entry)}>Close session</button>
-  </div>
+  {#if mm.entry}
+    {@const me = mm.entry}
+    <div class="ctxmenu" role="menu" aria-label="{me.name} actions" style="left: {mm.x}px; top: {mm.y}px">
+      <button role="menuitem" onclick={() => startRename('e:' + me.id, me.name)}>Rename</button>
+      <button role="menuitem" disabled={!LIVE_STATES.includes(me.state)} title="Ends the Claude process; it stays in the tree and resumes on your next message"
+        onclick={() => closeSession(mm.machine, me)}>Close session</button>
+    </div>
+  {:else if mm.group !== undefined}
+    {@const g = mm.group}
+    <div class="ctxmenu" role="menu" aria-label="{g} project actions" style="left: {mm.x}px; top: {mm.y}px">
+      <button role="menuitem" onclick={() => startRename(`g:${mm.machine.url}|${g}`, g)}>Rename project</button>
+    </div>
+  {/if}
 {/if}
 
 <div class="app">
@@ -675,16 +707,26 @@
             {#each groups(m) as [g, es] (g)}
               {@const gk = `g:${m.url}|${g}`}
               {@const gOpen = subOpen[gk] ?? true}
-              <button class="group" aria-expanded={gOpen} onclick={() => (subOpen[gk] = !gOpen)}>{gOpen ? '▾' : '▸'} {g}{#if !gOpen}<span class="muted small"> · {es.length}</span>
+              {#if renaming?.key === gk}
+                <div class="group"><input class="rename" aria-label="Rename project {g}" bind:value={renaming.value} {@attach focusSelect}
+                  onkeydown={(ev) => renameKeys(ev, m, undefined, g)} onblur={() => commitRename(m, undefined, g)} /></div>
+              {:else}
+              <button class="group" aria-expanded={gOpen} onclick={() => (subOpen[gk] = !gOpen)} oncontextmenu={(ev) => openMenu(ev, m, undefined, g)}>{gOpen ? '▾' : '▸'} {g}{#if !gOpen}<span class="muted small"> · {es.length}</span>
                 {@const hint = es.some((e) => icon(e) === 'waiting') ? 'waiting' : es.some((e) => icon(e) === 'unread') ? 'unread' : null}
                 {#if hint}<span class="st {hint} inline" title={stateLabel[hint]}></span>{/if}{/if}</button>
+              {/if}
               {#each gOpen ? es : [] as e (e.id)}
+                {#if renaming?.key === 'e:' + e.id}
+                <div class="entry"><span class="st {icon(e)}"></span><input class="rename" aria-label="Rename {e.name}" bind:value={renaming.value} {@attach focusSelect}
+                  onkeydown={(ev) => renameKeys(ev, m, e)} onblur={() => commitRename(m, e)} /></div>
+                {:else}
                 <button class="entry" class:sel={selected?.entry.id === e.id && !selected.sub} class:waiting={e.state === 'waiting'} title={stateLabel[icon(e)]} onclick={() => open(m, e)} oncontextmenu={(ev) => openMenu(ev, m, e)}>
                   <span class="st {icon(e)}"></span>
                   {#if e.pinned}<span class="pin" aria-label="pinned">★</span>{/if}
                   <span class="ename">{e.name}</span>
                   <span class="muted small">{e.session ? ago(e.session.last_modified) : ''}</span>
                 </button>
+                {/if}
                 {@const running = (e.subagents ?? []).filter((a) => subRunning(e, a)).length}
                 {#if running}
                   {@const shown = subOpen[e.id] ?? true}
@@ -1119,6 +1161,7 @@
   .ctxmenu button { display: block; width: 100%; text-align: left; border: 0; border-radius: 6px; padding: 6px 10px; background: none; color: var(--text); }
   .ctxmenu button:hover:not(:disabled) { background: var(--s0); }
   .ctxmenu button:disabled { color: var(--o1); }
+  input.rename { padding: 2px 6px; font-size: inherit; border-radius: 6px; }
   .st { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; box-sizing: border-box; border: 1.5px solid var(--o1); }
   .st.ready { border: 2px solid var(--green); } .st.unread { background: var(--green); border: 0; }
   .st.working { border: 2px solid var(--green); border-top-color: transparent; animation: spin 0.8s linear infinite; }
