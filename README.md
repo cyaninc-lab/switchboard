@@ -10,3 +10,7 @@ Self-hosted session manager for Claude Code, powered by Claude.
 Status: desktop app for Windows and Linux, in daily use. Install from [the releases page](https://github.com/cyaninc-lab/switchboard-releases/releases/latest); it updates itself.
 
 Layout: `daemon/` (Python), `desktop/` (Tauri + Svelte), `mobile/` (later), `spike/` (phase 0 experiments). Working on it: `CLAUDE.md`, then `docs/HANDOVER.md`.
+
+## Licence
+
+[AGPL-3.0](LICENSE): free to use, change and share; if you run a modified version for others to use over a network, share your changes too.
