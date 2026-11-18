@@ -149,7 +149,8 @@
   let aQuery = $state('');
   let aSessions = $state<Session[]>([]);
   let aTotal = $state(0);
-  let aPick = $state<Session | null>(null);
+  let aPicks = $state<Session[]>([]);  // several can be added at once
+  const aPick = $derived(aPicks.length === 1 ? aPicks[0] : null);
   let aName = $state('');
   let aGroup = $state('');
   let aError = $state('');
@@ -582,7 +583,7 @@
 
   // ---- add ----
   async function openAdd() {
-    dialog = 'add'; aError = ''; aPick = null; nTyped = false;
+    dialog = 'add'; aError = ''; aPicks = []; nTyped = false;
     aMachine = aMachine ?? machines[0] ?? null;
     await search();
   }
@@ -591,20 +592,23 @@
     try { const r = await api.sessions(aMachine, aQuery, 30); aSessions = r.sessions; aTotal = r.total; }
     catch (e) { aError = (e as Error).message; }
   }
-  function pick(s: Session) {
+  function pick(s: Session) {  // toggles: pick several to add them together
     if (s.entry_id) return;
-    aPick = s;
-    aName = s.custom_title || s.summary || 'Untitled';
-    aGroup = '';
+    aPicks = aPicks.some((x) => x.session_id === s.session_id) ? aPicks.filter((x) => x.session_id !== s.session_id) : [...aPicks, s];
+    if (aPicks.length === 1) aName = aPicks[0].custom_title || aPicks[0].summary || 'Untitled';
   }
   async function add(ev: Event) {
     ev.preventDefault();
-    if (!aMachine || !aPick) return;
+    const m = aMachine;
+    if (!m || !aPicks.length) return;
     try {
-      const e = await api.addEntry(aMachine, { session_id: aPick.session_id, name: aName, group: aGroup || undefined });
-      dialog = null;
+      // one: the name typed here; several: each keeps its own title. The group applies to all.
+      const added = [];
+      for (const s of aPicks)
+        added.push(await api.addEntry(m, { session_id: s.session_id, name: aPicks.length === 1 ? aName : undefined, group: aGroup || undefined }));
+      dialog = null; aGroup = '';
       await refresh();
-      open(aMachine, e);
+      open(m, added[0]);
     } catch (e) { aError = (e as Error).message; }
   }
   async function remove() {
@@ -1061,7 +1065,7 @@
       <div class="pills">
         <span class="muted small">Machine</span>
         {#each machines as m (m.url)}
-          <button type="button" class="pill" class:on={aMachine?.url === m.url} onclick={() => { aMachine = m; aPick = null; aTab === 'new' ? newTab() : search(); }}>{m.name}</button>
+          <button type="button" class="pill" class:on={aMachine?.url === m.url} onclick={() => { aMachine = m; aPicks = []; aTab === 'new' ? newTab() : search(); }}>{m.name}</button>
         {/each}
       </div>
       {#if aTab === 'new'}
@@ -1084,24 +1088,25 @@
         <div class="actions"><button type="button" class="btn ghost" onclick={() => (dialog = null)}>Cancel</button><button class="btn primary">Create session</button></div>
       {:else}
       <label class="search"><span class="sr">Search</span><input type="search" placeholder="Search sessions on {aMachine?.name}…" bind:value={aQuery} oninput={search} /></label>
-      <div class="slist" role="radiogroup" aria-label="Sessions">
+      <div class="slist" role="group" aria-label="Sessions">
         {#each aSessions as s (s.session_id)}
-          <button type="button" class="srow" class:on={aPick?.session_id === s.session_id} class:intree={!!s.entry_id} disabled={!!s.entry_id} onclick={() => pick(s)}>
+          <button type="button" class="srow" class:on={aPicks.some((x) => x.session_id === s.session_id)} aria-pressed={aPicks.some((x) => x.session_id === s.session_id)} class:intree={!!s.entry_id} disabled={!!s.entry_id} onclick={() => pick(s)}>
             <span class="stitle">{s.custom_title || s.summary || 'Untitled'}{#if s.entry_id}<span class="badge">in tree</span>{/if}</span>
             <span class="mono muted small ellip">{s.cwd}{s.git_branch ? ` · ${s.git_branch}` : ''}</span>
             <span class="muted small">{ago(s.last_modified)}</span>
           </button>
         {/each}
-        <p class="muted small">Showing {aSessions.length} of {aTotal}</p>
+        <p class="muted small">Showing {aSessions.length} of {aTotal} · click to pick, click more to add several</p>
       </div>
-      {#if aPick}
+      {#if aPicks.length}
         <div class="grid2">
-          <label>Name in the tree<input bind:value={aName} required /></label>
+          {#if aPick}<label>Name in the tree<input bind:value={aName} required /></label>
+          {:else}<p class="muted small">{aPicks.length} sessions, each named after its title</p>{/if}
           <label>Group<input bind:value={aGroup} placeholder="default: the project folder" /></label>
         </div>
       {/if}
       {#if aError}<p class="error">{aError}</p>{/if}
-      <div class="actions"><button type="button" class="btn ghost" onclick={() => (dialog = null)}>Cancel</button><button class="btn primary" disabled={!aPick}>Add to tree</button></div>
+      <div class="actions"><button type="button" class="btn ghost" onclick={() => (dialog = null)}>Cancel</button><button class="btn primary" disabled={!aPicks.length}>{aPicks.length > 1 ? `Add ${aPicks.length} to tree` : 'Add to tree'}</button></div>
       {/if}
     </form>
   </div>
