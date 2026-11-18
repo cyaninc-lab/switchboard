@@ -24,6 +24,10 @@ export const serviceStatus = () => (inShell() ? call<ServiceStatus>('service_sta
 export const serviceInstall = () => call<void>('service_install');
 export const serviceUninstall = () => call<void>('service_uninstall');
 
+/** Open a path from the chat on this machine: folders and harmless files open, anything else is shown in its folder
+ *  (the rule lives in the desktop app, lib.rs open_local). Returns "opened" or "revealed". */
+export const openLocal = (path: string) => import('@tauri-apps/api/core').then(({ invoke }) => invoke<string>('open_local', { path }));
+
 /** Open a URL in the user's browser (the system one in the desktop app). */
 export async function openExternal(url: string) {
   if (inShell()) {
