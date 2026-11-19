@@ -747,3 +747,38 @@ def test_new_session_defaults(tmp_path, monkeypatch):
         assert store.entry(e["id"])["mode"] is None  # the session added before keeps its own
         await client.close()
     asyncio.run(t())
+
+
+def test_removed_list_restore_and_add_again(tmp_path, monkeypatch):
+    """Remove keeps a session's name, project and settings in a Removed list: restore it, or add it again (it comes back
+    as it was), or delete it for good from there."""
+    async def t():
+        monkeypatch.setattr(demo, "SESSIONS", list(demo.SESSIONS))
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        await client.patch(f"/v1/entries/{e['id']}", headers=h, json={"name": "My deploy", "group": "ops", "mode": "plan"})
+        assert (await client.delete(f"/v1/entries/{e['id']}", headers=h)).status == 204
+        assert (await (await client.get("/v1/entries", headers=h)).json())["entries"] == []
+        gone = (await (await client.get("/v1/entries/removed", headers=h)).json())["entries"]
+        assert [(x["name"], x["group"], x["mode"]) for x in gone] == [("My deploy", "ops", "plan")] and gone[0]["removed"]
+        sessions = (await (await client.get("/v1/sessions", headers=h)).json())["sessions"]
+        assert next(x for x in sessions if x["session_id"] == e["session_id"])["entry_id"] is None  # addable again
+        # restore: back in the tree as it was
+        r = await (await client.post(f"/v1/entries/{e['id']}/restore", headers=h)).json()
+        assert (r["id"], r["name"], r["group"], r["mode"]) == (e["id"], "My deploy", "ops", "plan")
+        # remove, then add it again with + Add: same entry, same settings
+        await client.delete(f"/v1/entries/{e['id']}", headers=h)
+        r = await client.post("/v1/entries", headers=h, json={"session_id": e["session_id"]})
+        again = await r.json()
+        assert r.status == 200 and (again["id"], again["name"], again["mode"]) == (e["id"], "My deploy", "plan")
+        assert again["group"] != "ops"  # + Add's project: the folder's, as for any add (Restore keeps the old one)
+        await client.delete(f"/v1/entries/{e['id']}", headers=h)
+        again = await (await client.post("/v1/entries", headers=h, json={"session_id": e["session_id"], "name": "Renamed on add", "group": "new home"})).json()
+        assert (again["name"], again["group"], again["mode"]) == ("Renamed on add", "new home", "plan")  # picked now wins; settings kept
+        # delete for good from the Removed list
+        await client.delete(f"/v1/entries/{e['id']}", headers=h)
+        assert (await client.delete(f"/v1/entries/{e['id']}", headers=h)).status == 404  # already removed
+        assert (await client.delete(f"/v1/entries/{e['id']}?forever=1", headers=h)).status == 204
+        assert (await (await client.get("/v1/entries/removed", headers=h)).json())["entries"] == []
+        assert store.entry(e["id"]) is None
+        await client.close()
+    asyncio.run(t())

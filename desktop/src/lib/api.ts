@@ -110,6 +110,9 @@ export const addEntry = (m: Machine, body: { session_id?: string; new?: { cwd: s
   call<Entry>(m, '/v1/entries', { method: 'POST', body: JSON.stringify(body) });
 export const updateEntry = (m: Machine, id: string, body: Partial<{ name: string; group: string; pinned: boolean }>) =>
   call<Entry>(m, `/v1/entries/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+// sessions taken off the tree (kept with their name, project and settings), and putting one back
+export const removedEntries = (m: Machine) => call<{ entries: (Entry & { removed: number })[] }>(m, '/v1/entries/removed').then((d) => d.entries);
+export const restoreEntry = (m: Machine, id: string) => call<Entry>(m, `/v1/entries/${id}/restore`, { method: 'POST' });
 // off the tree (the session stays on its machine), or forever: the session itself is deleted from its machine
 export const removeEntry = (m: Machine, id: string, forever = false) => call<void>(m, `/v1/entries/${id}${forever ? '?forever=1' : ''}`, { method: 'DELETE' });
 export const folders = (m: Machine) => call<{ home: string; folders: string[] }>(m, '/v1/folders');

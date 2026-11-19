@@ -53,6 +53,8 @@ class Store:
             self.db.execute("ALTER TABLE entries ADD COLUMN model TEXT")  # None = Claude Code's default
         if "effort" not in cols:
             self.db.execute("ALTER TABLE entries ADD COLUMN effort TEXT")  # None = the model's default
+        if "removed" not in cols:
+            self.db.execute("ALTER TABLE entries ADD COLUMN removed REAL")  # when it came off the tree (kept, restorable); None = in the tree
 
     # settings (daemon-wide, e.g. whether to listen on the Tailscale address)
     def setting(self, key, default=None):
@@ -164,7 +166,11 @@ class Store:
 
     # tree entries
     def entries(self):
-        return [dict(r) for r in self.db.execute("SELECT * FROM entries ORDER BY pinned DESC, grp, name")]
+        """The tree: entries not removed."""
+        return [dict(r) for r in self.db.execute("SELECT * FROM entries WHERE removed IS NULL ORDER BY pinned DESC, grp, name")]
+
+    def removed_entries(self):
+        return [dict(r) for r in self.db.execute("SELECT * FROM entries WHERE removed IS NOT NULL ORDER BY removed DESC")]
 
     def entry(self, entry_id):
         r = self.db.execute("SELECT * FROM entries WHERE id = ?", (entry_id,)).fetchone()
@@ -192,4 +198,13 @@ class Store:
         self.db.execute("UPDATE entries SET session_id = ? WHERE id = ?", (session_id, entry_id))
 
     def remove_entry(self, entry_id):
+        """Off the tree, but kept (name, project, settings) so it can be restored."""
+        return self.db.execute("UPDATE entries SET removed = ? WHERE id = ?", (time.time(), entry_id)).rowcount > 0
+
+    def restore_entry(self, entry_id):
+        self.db.execute("UPDATE entries SET removed = NULL WHERE id = ?", (entry_id,))
+        return self.entry(entry_id)
+
+    def purge_entry(self, entry_id):
+        """Gone from Switchboard entirely (Delete for good)."""
         return self.db.execute("DELETE FROM entries WHERE id = ?", (entry_id,)).rowcount > 0
