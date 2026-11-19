@@ -360,7 +360,41 @@
     const fit = () => { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; };
     $effect(() => { void draft; fit(); });  // also shrinks back after sending
   }
+  // @-mentions: "@" then letters lists files in the session's folder; picking one inserts @path (Claude Code reads it)
+  let atQ = $state<string | null>(null);
+  let atList = $state<string[]>([]);
+  let atIdx = $state(0);
+  let inputEl = $state<HTMLTextAreaElement>();
+  let atSeq = 0;
+  function onDraftInput() {
+    const el = inputEl;
+    if (!el || !selected || selected.sub) return void (atQ = null);
+    const m = el.value.slice(0, el.selectionStart).match(/(?:^|\s)@([^\s@"]*)$/);
+    atQ = m ? m[1] : null;
+    if (atQ === null) { atList = []; return; }
+    const s = selected, q = atQ, mine = ++atSeq;
+    setTimeout(async () => {
+      if (mine !== atSeq) return;  // typed on: only the latest asks
+      try { const r = await api.files(s.machine, s.entry.id, q); if (mine === atSeq) { atList = r.files.slice(0, 8); atIdx = 0; } }
+      catch { if (mine === atSeq) atList = []; }
+    }, 120);
+  }
+  function pickAt(f: string) {
+    const el = inputEl;
+    if (!el) return;
+    const pos = el.selectionStart;
+    const before = draft.slice(0, pos).replace(/@([^\s@"]*)$/, '@' + (/\s/.test(f) ? `"${f}"` : f) + ' ');
+    draft = before + draft.slice(pos);
+    atQ = null; atList = []; atSeq++;
+    tick().then(() => { el.focus(); el.selectionStart = el.selectionEnd = before.length; });
+  }
   function onInputKey(ev: KeyboardEvent) {
+    if (atQ !== null && atList.length) {
+      if (ev.key === 'ArrowDown') { ev.preventDefault(); atIdx = (atIdx + 1) % atList.length; return; }
+      if (ev.key === 'ArrowUp') { ev.preventDefault(); atIdx = (atIdx - 1 + atList.length) % atList.length; return; }
+      if (ev.key === 'Tab' || ev.key === 'Enter') { ev.preventDefault(); pickAt(atList[atIdx]); return; }
+      if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); atQ = null; atList = []; atSeq++; return; }
+    }
     if (!menu.length) return enterSends(ev);
     if (ev.key === 'ArrowDown') { ev.preventDefault(); cmdIdx = (cmdIdx + 1) % menu.length; }
     else if (ev.key === 'ArrowUp') { ev.preventDefault(); cmdIdx = (cmdIdx - 1 + menu.length) % menu.length; }
@@ -1171,6 +1205,15 @@
           </div>
         {/if}
         {#if queued[selected.entry.id]}<div class="queued muted small" aria-live="polite">{queued[selected.entry.id]} queued: sends when Claude finishes (Esc puts {queued[selected.entry.id] === 1 ? 'it' : 'them'} back here)</div>{/if}
+        {#if atQ !== null && atList.length}
+          <div class="cmdmenu" role="listbox" aria-label="Files">
+            {#each atList as f, i (f)}
+              <button type="button" role="option" aria-selected={i === atIdx} class:on={i === atIdx} onmousedown={(e) => e.preventDefault()} onclick={() => pickAt(f)}>
+                <span class="mono">@{f.split('/').pop()}</span><span class="muted small">{f}</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
         {#if menu.length}
           <div class="cmdmenu" role="listbox" aria-label="Slash commands">
             {#each menu as c, i (c.name)}
@@ -1190,7 +1233,7 @@
         <form class="inputbar mono" onsubmit={sendDraft} ondragover={(e) => e.preventDefault()} ondrop={onDrop}>
           <span class="prompt">❯</span>
           <label class="grow"><span class="sr">Message this session</span>
-            <textarea rows="1" {@attach grow} bind:value={draft} onpaste={onPaste} onkeydown={onInputKey} disabled={selected.entry.state === 'terminal' || selected.entry.state === 'missing'}
+            <textarea rows="1" {@attach grow} bind:value={draft} bind:this={inputEl} oninput={onDraftInput} onblur={() => setTimeout(() => (atQ = null), 150)} onpaste={onPaste} onkeydown={onInputKey} disabled={selected.entry.state === 'terminal' || selected.entry.state === 'missing'}
               placeholder={selected.entry.state === 'terminal' ? 'Open in a terminal elsewhere' : selected.entry.state === 'working' ? 'Working… Enter queues, Ctrl+Enter interrupts and sends (Esc to interrupt)' : 'Message this session (Shift+Enter for a new line)'}></textarea></label>
           <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden bind:this={fileInput} onchange={(e) => { addFiles((e.target as HTMLInputElement).files ?? []); (e.target as HTMLInputElement).value = ''; }} />
           <button type="button" class="tiny" aria-label="Attach images" title="Attach images (or paste / drop them)" onclick={() => fileInput?.click()}>

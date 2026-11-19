@@ -586,3 +586,27 @@ def test_project_order_setting(tmp_path, monkeypatch):
         assert (await (await client.get("/v1/settings", headers=h)).json())["project_order"] == ["b", "a"]
         await client.close()
     asyncio.run(t())
+
+
+def test_files_for_at_mentions(tmp_path, monkeypatch):
+    """Files in the session's folder, best matches first; heavy folders skipped, git's ignore rules honoured."""
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        d = tmp_path / "proj"
+        (d / "src").mkdir(parents=True); (d / "node_modules" / "x").mkdir(parents=True)
+        for f in ["README.md", "src/readme_helper.py", "src/app.py", "node_modules/x/readme.md", "notes/old-readme.txt"]:
+            (d / f).parent.mkdir(parents=True, exist_ok=True); (d / f).write_text("x")
+        new = await (await client.post("/v1/entries", headers=h, json={"new": {"cwd": str(d)}, "name": "files"})).json()
+        got = (await (await client.get(f"/v1/entries/{new['id']}/files?q=readme", headers=h)).json())["files"]
+        assert got == ["README.md", "src/readme_helper.py", "notes/old-readme.txt"]  # name starts with > name contains; node_modules skipped
+        assert "src/app.py" in (await (await client.get(f"/v1/entries/{new['id']}/files?q=", headers=h)).json())["files"]
+        # a git checkout: .gitignore'd files stay out
+        import subprocess
+        subprocess.run(["git", "init", "-q", str(d)], check=True)
+        (d / ".gitignore").write_text("notes/\n")
+        from switchboard_daemon import files as filesmod
+        filesmod._cache.clear()
+        got = (await (await client.get(f"/v1/entries/{new['id']}/files?q=readme", headers=h)).json())["files"]
+        assert got == ["README.md", "src/readme_helper.py"]
+        await client.close()
+    asyncio.run(t())

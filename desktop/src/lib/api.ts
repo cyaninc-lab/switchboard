@@ -80,6 +80,7 @@ export const removeAccount = (m: Machine, name: string) => call<void>(m, `/v1/ac
 export type Network = { listen_tailscale: boolean; active: string[]; error: string | null; port: number;
   url: string | null; tailscale: { name: string | null; dns: string | null; ips: string[] } | null };
 export const network = (m: Machine) => call<Network>(m, '/v1/network');
+export const files = (m: Machine, entry: string, q: string) => call<{ files: string[] }>(m, `/v1/entries/${entry}/files?q=${encodeURIComponent(q)}`);
 export const machineInfo = (m: Machine) => call<{ name: string; daemon: string; sdk: string; os: string }>(m, '/v1/machine');
 export type DaemonSettings = { idle_close_minutes: number; project_order?: string[] };
 export const settings = (m: Machine) => call<DaemonSettings>(m, '/v1/settings');
