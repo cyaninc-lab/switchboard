@@ -79,3 +79,61 @@ export async function notify(title: string, body: string) {
     }
   } catch (e) { console.warn('notification failed', e); }
 }
+
+// ---- pop-out windows: one session in its own window. A session is open in one place only; the main window owns the
+// tree, inbox, unread dots and notifications, a popped-out window is just that session's chat. ----
+export type Handoff = { url: string; entry: string; text: string; images: unknown[] };
+const HANDOFF = 'switchboard.handoff.';
+export const windowLabel = (entry: string) => 's-' + entry.replace(/[^a-zA-Z0-9_-]/g, '_');
+/** The session this window shows, when it's a popped-out window (null in the main window). */
+export const soloOf = () => {
+  if (typeof location === 'undefined') return null;
+  const p = new URLSearchParams(location.search);
+  return p.get('solo') && p.get('machine') ? { url: p.get('machine')!, entry: p.get('solo')! } : null;
+};
+/** Open a session in its own window (or bring its window to the front), carrying its draft along. */
+export async function popOut(h: Handoff, title: string) {
+  const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+  const label = windowLabel(h.entry);
+  const have = await WebviewWindow.getByLabel(label);
+  if (have) return void (await have.setFocus());
+  try { localStorage.setItem(HANDOFF + h.entry, JSON.stringify(h)); } catch {}
+  const w = new WebviewWindow(label, { url: `/?machine=${encodeURIComponent(h.url)}&solo=${encodeURIComponent(h.entry)}`, title: `${title} · Switchboard`,
+    width: 760, height: 820, minWidth: 420, minHeight: 360 });
+  await new Promise<void>((ok, fail) => { w.once('tauri://created', () => ok()); w.once('tauri://error', (e) => fail(new Error(String(e.payload)))); });
+}
+/** In a popped-out window: the draft the main window handed over (once). */
+export function takeHandoff(entry: string): Handoff | null {
+  try { const v = localStorage.getItem(HANDOFF + entry); localStorage.removeItem(HANDOFF + entry); return v ? JSON.parse(v) : null; } catch { return null; }
+}
+export async function focusWindow(entry: string) {
+  const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+  const w = await WebviewWindow.getByLabel(windowLabel(entry));
+  if (w) { await w.unminimize(); await w.setFocus(); return true; }
+  return false;
+}
+/** In a popped-out window: hand the session (with its draft) back to the main window as it closes. */
+export async function onSoloClosing(get: () => Handoff) {
+  const { getCurrentWindow } = await import('@tauri-apps/api/window');
+  const { emitTo } = await import('@tauri-apps/api/event');
+  const w = getCurrentWindow();
+  await w.onCloseRequested(async () => { await emitTo('main', 'solo-closed', get()); });
+}
+/** In the main window: popped-out windows opening and closing. */
+export async function onSoloEvents(opened: (entry: string) => void, closed: (h: Handoff) => void) {
+  const { listen } = await import('@tauri-apps/api/event');
+  await listen<string>('solo-opened', (e) => opened(e.payload));
+  await listen<Handoff>('solo-closed', (e) => closed(e.payload));
+}
+export async function soloOpened(entry: string) {
+  const { emitTo } = await import('@tauri-apps/api/event');
+  await emitTo('main', 'solo-opened', entry);
+}
+export async function closeThisWindow() {
+  const { getCurrentWindow } = await import('@tauri-apps/api/window');
+  await getCurrentWindow().close();
+}
+export async function setOnTop(on: boolean) {
+  const { getCurrentWindow } = await import('@tauri-apps/api/window');
+  await getCurrentWindow().setAlwaysOnTop(on);
+}

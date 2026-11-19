@@ -270,6 +270,12 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![local_daemon, service_status, service_install, service_uninstall, open_local])
+        // popped-out session windows belong to the main one: closing it closes the app, not just that window
+        .on_window_event(|w, e| {
+            if w.label() == "main" && matches!(e, tauri::WindowEvent::Destroyed) {
+                w.app_handle().exit(0);
+            }
+        })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
