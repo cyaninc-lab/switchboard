@@ -529,3 +529,46 @@ def test_queue_reports_sent_and_dropped(tmp_path, monkeypatch):
         await until(ws, lambda m: m["type"] == "queued" and m["count"] == 0 and m.get("dropped"))
         await client.close()
     asyncio.run(t())
+
+
+def test_idle_close_is_opt_in(tmp_path, monkeypatch):
+    """Off by default; when set, a quiet session closes, but never one working, waiting or with a background task."""
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        eid, runner = e["id"], client.app[appmod.RUNNER]
+        assert (await (await client.get("/v1/settings", headers=h)).json()) == {"idle_close_minutes": 0}
+        await ws.send_json({"type": "send", "entry": eid, "text": "hello"})
+        await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        later = time.time() + 10 * 3600
+        await runner.reap_idle(later)
+        assert eid in runner.live  # off: stays open however long it's quiet
+        assert (await client.put("/v1/settings", headers=h, json={"idle_close_minutes": 7})).status == 400
+        r = await client.put("/v1/settings", headers=h, json={"idle_close_minutes": 10})
+        assert (await r.json()) == {"idle_close_minutes": 10}
+        await runner.reap_idle(time.time() + 5 * 60)
+        assert eid in runner.live  # not quiet for long enough
+        runner.live[eid].tasks.add("bg")
+        await runner.reap_idle(later)
+        assert eid in runner.live  # a background task keeps it open
+        runner.live[eid].tasks.clear()
+        await runner.reap_idle(later)
+        assert eid not in runner.live
+        await until(ws, lambda m: m["type"] == "state" and m["entry"] == eid and m["state"] not in ("ready", "working"))
+        # it resumes on the next message
+        await ws.send_json({"type": "send", "entry": eid, "text": "back again"})
+        await until(ws, lambda m: m["type"] == "message" and "Done: back again" in str(m))
+        await client.close()
+    asyncio.run(t())
+
+
+def test_background_task_is_tracked(tmp_path, monkeypatch):
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        eid, runner = e["id"], client.app[appmod.RUNNER]
+        await ws.send_json({"type": "send", "entry": eid, "text": "start the background build"})
+        await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        assert runner.live[eid].tasks == {"bg1"}
+        await until(ws, lambda m: m["type"] == "message" and "Done: background task finished" in str(m))
+        assert runner.live[eid].tasks == set()
+        await client.close()
+    asyncio.run(t())

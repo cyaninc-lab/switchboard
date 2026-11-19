@@ -31,6 +31,7 @@ Tauri-specific code. Everything is under `/v1`; breaking changes get `/v2`.
 | `GET /v1/commands` | slash commands for the menu, with descriptions where known |
 | `GET/POST /v1/watches` · `PATCH/DELETE /v1/watches/{id}` | watches: `{name, kind: schedule|command|http|github, config, action: notify|wake, entry_id?, instructions?, mode?, enabled}`; command watches run shell commands on the daemon's machine (same trust as a paired client) |
 | `POST /v1/watches/{id}/test` | run the check now and fire even if nothing changed |
+| `GET /v1/settings` · `PUT /v1/settings` | daemon-wide settings: `{idle_close_minutes}`, one of 0 (off, the default), 10, 30, 60, 240 |
 | `GET /v1/inbox` · `POST /v1/inbox/read` · `POST /v1/inbox/{id}/read` · `DELETE /v1/inbox/{id}` | what watches and woken agents have to say (last 500 kept) |
 
 ## WebSocket `/v1/ws`
@@ -75,7 +76,8 @@ Every subscribed client receives every event, so several clients stay live on on
 
 ## Daemon behaviour
 
-- One `ClaudeSDKClient` per active entry. It stays open until a client sends `stop` (or the daemon exits);
+- One `ClaudeSDKClient` per active entry. It stays open until a client sends `stop`, the daemon exits, or (only when
+  `idle_close_minutes` is set) it has been quiet that long with nothing working, pending, queued or running in the background;
   a stopped entry is resumed on the next `send` or watch.
 - Every session the daemon opens gets an in-process MCP server `switchboard` with two tools, allowed without asking:
   `sessions` (the other tree entries on this machine and their state) and `message_session(session, text)`

@@ -32,17 +32,15 @@ Done: pairing (one-time code, tokens hashed), multi-machine tree, live chat with
 7. Code-sign the Windows installer (SmartScreen warns today).
 
 ### From daily use (the user's list, 2026-11-18)
-Shipped in 0.1.9–0.1.14: multiline input, Ctrl+Enter send-now, queued messages at the bottom, rename from the right-click menu, project dropdown + "New project" when adding, add several at once, inbox delete, Catppuccin themes, text size and fonts, boxes for messages between sessions, a band for your own messages, clickable file links, web links in the default browser, collapsible projects.
+Shipped in 0.1.9–0.1.14: multiline input, Ctrl+Enter send-now, queued messages at the bottom, rename from the right-click menu, project dropdown + "New project" when adding, add several at once, inbox delete, Catppuccin themes, text size and fonts, boxes for messages between sessions, a band for your own messages, clickable file links, web links in the default browser, collapsible projects. After 0.1.15 (unreleased until the user says): collapsible session tree, idle close as a per-machine setting.
 
 Left, **(S)** small, **(M)** medium, **(L)** large. Separate PRs, batched into a release when the user says so:
 - **Order agents within a project by last activity** **(S/M)**: pinned stay on top; hold the order still while the pointer is over the tree.
-- **Collapsible left sidebar**, automatic when the window is narrow **(S/M)**; still shows the sun when a session needs you.
 - **Line numbers on diffs** **(M)**: probably from Claude Code's structured patch in the tool result; not checked.
 - **Drag an agent to another project** **(M)**; **drag projects to reorder** **(M)** (needs a stored project order).
 - **Archive**, or better: make Remove keep name/project/settings, with a "Removed" list to restore from **(M)**.
 - **Settings defaults** for new sessions (mode, model, effort, account), and sessions show real values instead of "default" **(M)**; a changed default affects new sessions only.
 - **Pop out a session or tabs** **(L)**: one or the other. Links could open in a Switchboard window then.
-- **Idle close as an opt-in setting** **(S)**, only if wanted; say what closing forgets.
 - **Say when another machine runs an older Switchboard** **(S)** (e.g. inbox Delete against an old daemon fails silently today); maybe show each machine's version on its chip.
 
 ## Traps learned the hard way

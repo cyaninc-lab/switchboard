@@ -7,6 +7,8 @@ from .logs import log, scrub
 
 # one message from Claude Code (a Read of a big screenshot is one line of base64); the SDK's 1 MB default kills the session
 MAX_MESSAGE = 64 * 1024 * 1024
+IDLE_SETTING = "idle_close_minutes"
+IDLE_CHOICES = (0, 10, 30, 60, 240)
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 MAX_IMAGE_B64 = 7_000_000  # ~5 MB of image per attachment
 MAX_IMAGES = 10
@@ -64,6 +66,8 @@ class Live:
     cost: float = 0.0  # API-equivalent cost of this live session so far
     restart: bool = False  # close after this turn (a setting that only applies at start changed)
     interrupted: bool = False  # this turn was interrupted on purpose: Claude Code then ends it as an error with no message
+    last_active: float = dataclasses.field(default_factory=time.time)
+    tasks: set = dataclasses.field(default_factory=set)  # background subagents/commands still running: never idle-close then
 
 
 class Runner:
@@ -190,7 +194,7 @@ class Runner:
             lv.queue.append((entry, text, images, origin))
             await self.broadcast({"type": "queued", "entry": entry["id"], "count": len(lv.queue)})
             return
-        lv.working, lv.said, lv.interrupted = True, False, False
+        lv.working, lv.said, lv.interrupted, lv.last_active = True, False, False, time.time()
         lv.origin, lv.turn_text = origin, []
         await self._emit_state(entry["id"])
         if origin:  # clients show what they typed themselves; a watch's prompt has to be announced
@@ -212,8 +216,14 @@ class Runner:
         message then got the previous answer."""
         try:
             async for m in lv.client.receive_messages():
+                lv.last_active = time.time()
                 sub, data = getattr(m, "subtype", None), getattr(m, "data", None) or {}
                 if sub in ("task_started", "task_notification", "task_updated") and data.get("task_id"):
+                    status = (data.get("patch") or {}).get("status") if sub == "task_updated" else None
+                    if sub == "task_started":
+                        lv.tasks.add(data["task_id"])
+                    elif sub == "task_notification" or status in ("completed", "failed", "stopped", "killed"):
+                        lv.tasks.discard(data["task_id"])
                     await self.broadcast({"type": "subagents", "entry": lv.entry_id})  # the tree re-reads its subagents
                     continue
                 if not lv.working and type(m).__name__ in ("AssistantMessage", "UserMessage", "StreamEvent"):  # a turn Claude started on its own
@@ -415,6 +425,27 @@ class Runner:
         except Exception:
             pass
         await self._emit_state(entry_id)
+
+    # ---- idle close: off unless the user sets it (Settings; the daemon-wide setting IDLE_SETTING, in minutes) ----
+    async def reap_idle(self, now=None):
+        """Close live sessions quiet for longer than the setting (they resume on the next message, with their history)."""
+        minutes = int(self.store.setting(IDLE_SETTING, "0") or 0)
+        if not minutes:
+            return
+        now = now or time.time()
+        for eid, lv in list(self.live.items()):
+            if not lv.working and not lv.pending and not lv.tasks and not lv.queue and now - lv.last_active > minutes * 60:
+                # ponytail: a background shell that never ends (a dev server) keeps its session open until closed by hand
+                log.info("closing idle session for entry %s", eid)
+                await self.stop(eid)
+
+    async def reap_loop(self):
+        while True:
+            await asyncio.sleep(30)
+            try:
+                await self.reap_idle()
+            except Exception:
+                log.exception("idle close")
 
     async def close_all(self):
         for eid in list(self.live):
