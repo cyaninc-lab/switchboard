@@ -637,3 +637,31 @@ def test_remove_from_tree_or_delete_for_good(tmp_path, monkeypatch):
         assert (await client.delete(f"/v1/entries/{new['id']}?forever=1", headers=h)).status == 204
         await client.close()
     asyncio.run(t())
+
+
+def test_clear_moves_the_entry_to_the_new_session(tmp_path, monkeypatch):
+    """/clear starts a new session (real Claude Code does): the entry follows it, so history and a later resume
+    are the new conversation, not the cleared one."""
+    async def t():
+        monkeypatch.setattr(demo, "SESSIONS", list(demo.SESSIONS))
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        eid, old = e["id"], e["session_id"]
+        await ws.send_json({"type": "send", "entry": eid, "text": "remember magenta"})
+        await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        await ws.send_json({"type": "send", "entry": eid, "text": "/clear"})
+        m, _ = await until(ws, lambda m: m["type"] == "session_reset")
+        new = m["session_id"]
+        assert m["entry"] == eid and new != old and store.entry(eid)["session_id"] == new
+        await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        await ws.send_json({"type": "send", "entry": eid, "text": "after the clear"})
+        await until(ws, lambda m: m["type"] == "message" and "Done: after the clear" in str(m))
+        hist = str(await (await client.get(f"/v1/entries/{eid}/messages", headers=h)).json())
+        assert "after the clear" in hist and "remember magenta" not in hist  # the new conversation, not the old
+        # stop and resume: it resumes the new session
+        await ws.send_json({"type": "stop", "entry": eid})
+        await until(ws, lambda m: m["type"] == "state" and m["entry"] == eid and m["state"] not in ("ready", "working"))
+        await ws.send_json({"type": "send", "entry": eid, "text": "still here"})
+        await until(ws, lambda m: m["type"] == "message" and "Done: still here" in str(m))
+        assert client.app[appmod.RUNNER].live[eid].client.options.resume == new
+        await client.close()
+    asyncio.run(t())

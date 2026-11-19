@@ -279,6 +279,13 @@ class ClaudeSDKClient:
         if not self.started:
             self.started = True
             yield SystemMessage("init", {"slash_commands": ["compact", "clear", "usage", "deploy", "yt-add"]})
+        if text.strip() == "/clear":  # as real Claude Code: a fresh session with a new id, announced by a new init
+            new = f"demo-clear-{time.time_ns()}"
+            SESSIONS.append(DemoSession(new, "New session", int(time.time() * 1000), self.options.cwd))
+            self.options.resume, self.options.session_id = new, None  # later turns go to the new transcript
+            yield SystemMessage("init", {"session_id": new, "slash_commands": ["compact", "clear", "usage", "deploy", "yt-add"]})
+            yield ResultMessage()
+            return
         if text.startswith("/usage"):  # built-in commands answer only with a result
             yield ResultMessage(result="**Plan usage:** 12% of this week's limit")
             return
