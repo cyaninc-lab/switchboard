@@ -39,6 +39,11 @@ test('paths in step headers (Edit, Read) are clickable like those in replies', a
   await expect(log.locator('.tool code.path', { hasText: 'notes.md' })).toBeVisible();  // Read(notes.md)
   const path = log.locator('.diffhead code.path', { hasText: 'notes.md' });  // Edit(notes.md)
   await expect(path).toBeVisible();
+  // the edit's diff has line numbers, from Claude Code's result (its hunks), not just the before/after text
+  const diff = log.locator('.diff', { has: page.locator('.diffhead', { hasText: 'notes.md' }) });
+  await expect(diff.locator('.dl .ln')).toHaveText(['41', '42', '42', '43']);
+  await expect(diff.locator('.dl.del')).toContainText('draft');
+  await expect(diff.locator('.dl.add')).toContainText('final');
   // outside the desktop app (or for another machine's session) a click copies the full path
   await path.click();
   await expect(page.locator('.toast')).toContainText(`${dir}/notes.md`);

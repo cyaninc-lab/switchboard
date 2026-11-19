@@ -167,3 +167,21 @@ def test_delete_inbox_item(env):
         assert (await client.delete(f"/v1/inbox/{gone['id']}", headers=h)).status == 404
         assert (await client.delete(f"/v1/inbox/{keep['id']}")).status == 401  # needs pairing like everything else
     run(store, t)
+
+
+def test_edit_hunks_from_the_transcript(tmp_path, monkeypatch):
+    """Line numbers for diffs: the structuredPatch Claude Code writes into an Edit's tool result, read back by tool_use id."""
+    import json
+    from switchboard_daemon import patches
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    d = tmp_path / "projects" / "-home-u-proj"; d.mkdir(parents=True)
+    hunk = {"oldStart": 210, "oldLines": 3, "newStart": 210, "newLines": 3, "lines": [" def feed(v):", "-    dash = v['dash_url']", "+    dash = v.get('dash_url')"]}
+    rows = [{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Edit", "input": {}}]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}, "toolUseResult": {"structuredPatch": [hunk]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t2", "content": "ok"}]}, "toolUseResult": {"stdout": "x"}}]
+    (d / "s1.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\nnot json\n")
+    assert patches.for_session("s1") == {"t1": [hunk]}
+    assert patches.for_session("s1", wanted={"t2"}) == {}
+    assert patches.for_session("nope") == {}
+    assert patches.from_result("t9", {"structuredPatch": [hunk]}) == {"t9": [hunk]}
+    assert patches.from_result("t9", {"structuredPatch": []}) == {} and patches.from_result("t9", "text") == {}

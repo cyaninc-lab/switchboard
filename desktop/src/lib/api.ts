@@ -20,7 +20,9 @@ export type Entry = {
 };
 /** A subagent of a session; parent is the subagent that spawned it (null: the session itself did). */
 export type Sub = { id: string; description: string; type: string | null; parent: string | null; tool_use_id: string | null; finished: boolean; stopped: boolean; updated: number; running?: boolean };
-export type HistoryMessage = { type: 'user' | 'assistant'; uuid: string; message: any; parent_tool_use_id?: string | null };
+// patches: an edit's hunks by tool_use id (Claude Code's structuredPatch), for line numbers in its diff
+export type Hunk = { oldStart: number; oldLines: number; newStart: number; newLines: number; lines: string[] };
+export type HistoryMessage = { type: 'user' | 'assistant'; uuid: string; message: any; parent_tool_use_id?: string | null; patches?: Record<string, Hunk[]> };
 
 const KEY = 'switchboard.machines';
 
@@ -113,14 +115,32 @@ export const commands = (m: Machine) => call<{ commands: Command[] }>(m, '/v1/co
 export const subagentHistory = (m: Machine, id: string, agent: string, limit = 400) =>
   call<{ messages: HistoryMessage[] }>(m, `/v1/entries/${id}/subagents/${encodeURIComponent(agent)}/messages?limit=${limit}`).then((d) => d.messages);
 export const history = (m: Machine, id: string, limit = 400) =>
-  call<{ messages: HistoryMessage[] }>(m, `/v1/entries/${id}/messages?limit=${limit}`).then((d) => d.messages);
+  call<{ messages: HistoryMessage[]; patches?: Record<string, Hunk[]> }>(m, `/v1/entries/${id}/messages?limit=${limit}`).then((d) => {
+    if (d.patches && Object.keys(d.patches).length) d.messages.push({ type: 'user', uuid: 'patches', message: { content: [] }, patches: d.patches });  // carried like live ones
+    return d.messages;
+  });
+/** An edit's hunks as diff lines with line numbers (the new file's for kept and added lines, the old one's for removed). */
+export function hunkLines(hunks: Hunk[]): DiffLine[] {
+  const out: DiffLine[] = [];
+  hunks.forEach((h, i) => {
+    if (i) out.push({ t: '…', s: '' });
+    let o = h.oldStart, n = h.newStart;
+    for (const l of h.lines) {
+      const t = l[0] === '+' || l[0] === '-' ? l[0] : ' ';
+      out.push({ t, s: l.slice(1), n: t === '-' ? o : n });
+      if (t !== '+') o++;
+      if (t !== '-') n++;
+    }
+  });
+  return out;
+}
 
 /** Flatten an SDK message into display lines: text, tool calls and tool results. */
-export type DiffLine = { t: '+' | '-' | ' '; s: string };
+export type DiffLine = { t: '+' | '-' | ' ' | '…'; s: string; n?: number };
 export type Line =
   | { kind: 'text' | 'result' | 'image' | 'thinking'; text: string }
   | { kind: 'tool'; text: string; name: string; id: string; input: any }
-  | { kind: 'diff'; text: string; file: string; lines: DiffLine[]; note?: string }
+  | { kind: 'diff'; text: string; file: string; lines: DiffLine[]; note?: string; id?: string }
   | { kind: 'todos'; text: string; items: { content: string; status: string; activeForm?: string }[] }
   | { kind: 'mail'; text: string; dir: 'in' | 'out'; who: string };  // a message between sessions (message_session)
 
@@ -172,11 +192,11 @@ export function render(msg: HistoryMessage): Line[] {
     if (b.type === 'tool_use') {
       const i = b.input ?? {};
       if (b.name === 'Edit' && typeof i.old_string === 'string')
-        return [{ kind: 'diff', text: `Edit(${i.file_path})`, file: i.file_path, lines: lineDiff(i.old_string, i.new_string ?? ''), note: i.replace_all ? 'all occurrences' : undefined }];
+        return [{ kind: 'diff', text: `Edit(${i.file_path})`, file: i.file_path, lines: lineDiff(i.old_string, i.new_string ?? ''), note: i.replace_all ? 'all occurrences' : undefined, id: b.id }];
       if (b.name === 'MultiEdit' && Array.isArray(i.edits))
         return i.edits.map((e: any, n: number) => ({ kind: 'diff' as const, text: `Edit(${i.file_path})`, file: i.file_path, lines: lineDiff(e.old_string ?? '', e.new_string ?? ''), note: `edit ${n + 1} of ${i.edits.length}` }));
       if (b.name === 'Write' && typeof i.content === 'string')
-        return [{ kind: 'diff', text: `Write(${i.file_path})`, file: i.file_path, lines: i.content.split('\n').map((s: string) => ({ t: '+' as const, s })), note: 'new contents' }];
+        return [{ kind: 'diff', text: `Write(${i.file_path})`, file: i.file_path, lines: i.content.split('\n').map((s: string) => ({ t: '+' as const, s })), note: 'new contents', id: b.id }];
       if (b.name === 'mcp__switchboard__message_session' && typeof i.text === 'string')
         return [{ kind: 'mail', dir: 'out', who: String(i.session ?? ''), text: i.text }];
       if (b.name === 'TodoWrite' && Array.isArray(i.todos))

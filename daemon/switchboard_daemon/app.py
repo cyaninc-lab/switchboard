@@ -11,6 +11,7 @@ from .tty import Terminals
 from .procs import alive
 from . import files as filesmod
 from . import github
+from . import patches as patchmod
 from .net import Network, SETTING as NET_SETTING
 from .watches import Watches, KINDS, ACTIONS
 from .runner import MODES, IDLE_SETTING, IDLE_CHOICES
@@ -462,9 +463,12 @@ async def messages(request):
         return web.json_response({"messages": [], "total": 0})  # new, nothing said yet
     # the most recent `limit` messages: the SDK's offset counts from the start, which showed long sessions only their
     # beginning (it parses the whole file either way, so reading everything costs nothing extra)
-    msgs = await _off(sdk.get_session_messages, e["session_id"])
-    return web.json_response({"messages": [_plain(m) for m in msgs[-limit:]], "total": len(msgs)},
-                             dumps=lambda o: json.dumps(o, default=str))
+    msgs = [_plain(m) for m in (await _off(sdk.get_session_messages, e["session_id"]))]
+    shown = msgs[-limit:]
+    blocks = lambda m: (m.get("message") or {}).get("content") if isinstance(m, dict) and isinstance(m.get("message"), dict) else None
+    edits = {b.get("id") for m in shown for b in (blocks(m) if isinstance(blocks(m), list) else []) if isinstance(b, dict) and b.get("type") == "tool_use"}
+    patches = await _off(patchmod.for_session, e["session_id"], edits) if edits else {}
+    return web.json_response({"messages": shown, "total": len(msgs), "patches": patches}, dumps=lambda o: json.dumps(o, default=str))
 
 
 async def subagent_messages(request):
