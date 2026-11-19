@@ -87,7 +87,7 @@
   let loadingHistory = $state(false);
   let openSeq = 0;
   let filter = $state('');
-  let dialog = $state<'connect' | 'add' | 'settings' | 'report' | 'watches' | 'delete' | null>(null);
+  let dialog = $state<'connect' | 'add' | 'settings' | 'report' | 'watches' | 'delete' | 'removed' | null>(null);
 
   // inbox: per machine, merged newest first
   let inboxBy = $state<Record<string, api.InboxItem[]>>({});
@@ -1016,6 +1016,16 @@
     if (selected?.entry.id === e.id && curKey) closeTab(curKey);
     refresh();
   }
+  // the Removed list: sessions taken off the tree, per machine, to restore or delete for good
+  let removedBy = $state<Record<string, (Entry & { removed: number })[] | null>>({});
+  async function openRemoved() {
+    dialog = 'removed';
+    for (const m of machines) api.removedEntries(m).then((v) => (removedBy[m.url] = v), () => (removedBy[m.url] = null));
+  }
+  async function restore(m: Machine, e: Entry) {
+    try { await api.restoreEntry(m, e.id); removedBy[m.url] = (removedBy[m.url] ?? []).filter((x) => x.id !== e.id); await refresh(); say(`${e.name} is back in the tree`); }
+    catch (err) { say(`Couldn't restore it: ${(err as Error).message}`); }
+  }
   // delete for good: tucked at the bottom of the right-click menu, and the name has to be typed to confirm
   let doomed = $state<{ machine: Machine; entry: Entry } | null>(null);
   let doomTyped = $state('');
@@ -1024,7 +1034,11 @@
     ev.preventDefault();
     const d = doomed;
     if (!d || doomTyped.trim() !== d.entry.name.trim()) return;
-    try { await removeEntry(d.machine, d.entry, true); dialog = null; doomed = null; say(`Deleted ${d.entry.name} from ${d.machine.name}`); }
+    try {
+      await removeEntry(d.machine, d.entry, true);
+      removedBy[d.machine.url] = (removedBy[d.machine.url] ?? []).filter((x) => x.id !== d.entry.id);
+      dialog = null; doomed = null; say(`Deleted ${d.entry.name} from ${d.machine.name}`);
+    }
     catch (e) { const c = (e as Error).message; doomErr = c === 'open_elsewhere' ? "It's open in a terminal on that machine: close it there first." : c; }
   }
   async function togglePin() {
@@ -1051,7 +1065,7 @@
       <button role="menuitem" disabled={!LIVE_STATES.includes(me.state)} title="Ends the Claude process; it stays in the tree and resumes on your next message"
         onclick={() => closeSession(mm.machine, me)}>Close session</button>
       {#if inShell() && !solo}<button role="menuitem" onclick={async () => { const m = mm.machine, en = me; ctx = null; await open(m, en, 'keep'); if (!inWindow[en.id]) popOutCurrent(); }}>Open in new window</button>{/if}
-      <button role="menuitem" title="Takes it off the tree; the session stays on its machine (add it back with + Add)"
+      <button role="menuitem" title="Takes it off the tree; the session stays on its machine (find it under Removed to restore)"
         onclick={() => { const m = mm.machine, en = me; ctx = null; removeEntry(m, en); }}>Remove from tree</button>
       <hr />
       <button role="menuitem" class="danger" onclick={() => { doomed = { machine: mm.machine, entry: me }; ctx = null; doomTyped = ''; doomErr = ''; dialog = 'delete'; }}>Delete for good…</button>
@@ -1183,6 +1197,7 @@
       <div class="navfoot">
         <button class="btn" disabled={!machines.length} onclick={openAdd}>+ Add</button>
         <button class="btn" disabled={!machines.length} onclick={() => (dialog = 'watches')}>Watches</button>
+        <button class="btn ghost" disabled={!machines.length} onclick={openRemoved} title="Sessions you removed from the tree: restore them or delete them for good">Removed</button>
       </div>
     </nav>
 
@@ -1229,7 +1244,7 @@
           {:else}
             {#if inShell()}<button class="tiny" onclick={popOutCurrent} title="Open this session in its own window">Pop out</button>{/if}
             <button class="tiny" onclick={togglePin}>{selected.entry.pinned ? 'Unpin' : 'Pin'}</button>
-            <button class="tiny" onclick={remove} title="Takes it off the tree; the session stays on its machine">Remove from tree</button>
+            <button class="tiny" onclick={remove} title="Takes it off the tree; the session stays on its machine (find it under Removed to restore)">Remove from tree</button>
           {/if}
         </div>
         {/if}
@@ -1449,6 +1464,32 @@
 
 {#if dialog === 'watches'}
   <WatchesView {machines} entries={Object.fromEntries(Object.entries(tree).map(([u, t]) => [u, t.entries]))} onClose={() => (dialog = null)} />
+{/if}
+
+{#if dialog === 'removed'}
+  <div class="backdrop" role="presentation" {...backdrop(() => (dialog = null))}>
+    <div class="dialog" role="dialog" aria-label="Removed sessions">
+      <h2>Removed sessions</h2>
+      <p class="muted small">Taken off the tree with their name, project and settings. Restore puts one back as it was (so does adding it again with + Add).</p>
+      {#each machines as m (m.url)}
+        {@const list = removedBy[m.url]}
+        {#if machines.length > 1}<h3 class="sub">{m.name}</h3>{/if}
+        {#if list === null}<p class="muted small">Needs a newer Switchboard on {m.name}.</p>
+        {:else if list === undefined}<p class="muted small">Loading…</p>
+        {:else if !list.length}<p class="muted small">Nothing removed{machines.length > 1 ? ` on ${m.name}` : ''}.</p>
+        {:else}
+          <ul class="removedlist" aria-label="Removed on {m.name}">
+            {#each list as e (e.id)}
+              <li><span class="rinfo"><span class="rname">{e.name}</span><span class="muted small">{e.group} · removed {ago(e.removed)} ago</span></span>
+                <button type="button" class="tiny" onclick={() => restore(m, e)}>Restore</button>
+                <button type="button" class="tiny danger" onclick={() => { doomed = { machine: m, entry: e }; doomTyped = ''; doomErr = ''; dialog = 'delete'; }}>Delete for good…</button></li>
+            {/each}
+          </ul>
+        {/if}
+      {/each}
+      <div class="actions"><button type="button" class="btn ghost" onclick={() => (dialog = null)}>Close</button></div>
+    </div>
+  </div>
 {/if}
 
 {#if dialog === 'delete' && doomed}
@@ -1768,6 +1809,11 @@
   .defaults { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin-bottom: 12px; }
   .defaults .dname { grid-column: 1 / -1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
   .defaults label { font-size: 12px; }
+  .removedlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .removedlist li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--mantle); border: 1px solid var(--s0); border-radius: 8px; }
+  .removedlist .rinfo { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+  .removedlist .rname { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .removedlist button { white-space: nowrap; flex: none; } .tiny.danger { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
   .ctxmenu hr { border: 0; border-top: 1px solid var(--s0); margin: 4px 2px; }
   .ctxmenu button.danger { color: var(--red); }
   :global(.btn.danger) { background: var(--red); color: var(--crust); border-color: var(--red); font-weight: 600; }

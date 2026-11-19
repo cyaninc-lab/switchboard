@@ -143,7 +143,7 @@ async def sessions(request):
     store, out = request.app[STORE], []
     for s in found[offset:offset + limit]:
         e = store.entry_by_session(s.session_id)
-        out.append({**_plain(s), "entry_id": e["id"] if e else None})
+        out.append({**_plain(s), "entry_id": e["id"] if e and not e["removed"] else None})  # a removed one can be added (restored)
     return web.json_response({"total": len(found), "sessions": out})
 
 
@@ -199,8 +199,14 @@ async def add_entry(request):
     info = await _off(sdk.get_session_info, body["session_id"])
     if info is None:
         raise web.HTTPNotFound(text=json.dumps({"code": "no_such_session"}), content_type="application/json")
-    if store.entry_by_session(info.session_id):
-        raise web.HTTPConflict(text=json.dumps({"code": "already_in_tree"}), content_type="application/json")
+    if (old := store.entry_by_session(info.session_id)):
+        if not old["removed"]:
+            raise web.HTTPConflict(text=json.dumps({"code": "already_in_tree"}), content_type="application/json")
+        # added again after being removed: + Add's name and project apply (as for any add), its settings come back
+        # (Restore, from the Removed list, puts it back exactly as it was)
+        e = store.restore_entry(old["id"])
+        e = store.update_entry(e["id"], name=body.get("name") or e["name"], grp=body.get("group") or _default_group(info.cwd))
+        return web.json_response(_entry_view(e, info, await _live(request), request.app[RUNNER]), status=200)
     e = store.add_entry(info.session_id, body.get("name") or info.custom_title or info.summary or "Untitled",
                         body.get("group") or _default_group(info.cwd),
                         body.get("account") or None, body.get("mode"))
@@ -227,6 +233,8 @@ async def remove_entry(request):
     if not e:
         raise web.HTTPNotFound()
     forever = request.query.get("forever") == "1"
+    if e["removed"] and not forever:
+        raise web.HTTPNotFound()  # already off the tree (Delete for good still works from the Removed list)
     if forever and e["session_id"] in await _live(request):
         raise web.HTTPConflict(text=json.dumps({"code": "open_elsewhere"}), content_type="application/json")
     await request.app[RUNNER].stop(eid)
@@ -237,8 +245,28 @@ async def remove_entry(request):
         except FileNotFoundError:
             pass  # a new session that never ran has no transcript yet
         log.info("deleted session %s for good (entry %s)", e["session_id"], eid)
-    request.app[STORE].remove_entry(eid)
+        request.app[STORE].purge_entry(eid)
+    else:
+        request.app[STORE].remove_entry(eid)  # kept in the Removed list
     return web.Response(status=204)
+
+
+async def removed_entries(request):
+    """Sessions taken off the tree, newest first, to restore or delete for good."""
+    out = []
+    for e in request.app[STORE].removed_entries():
+        v = _entry_view(e, await _off(sdk.get_session_info, e["session_id"]), set())
+        v["removed"] = int(e["removed"] * 1000)
+        out.append(v)
+    return web.json_response({"entries": out})
+
+
+async def restore_entry(request):
+    e = request.app[STORE].entry(request.match_info["id"])
+    if not e:
+        raise web.HTTPNotFound()
+    e = request.app[STORE].restore_entry(e["id"])
+    return web.json_response(_entry_view(e, await _off(sdk.get_session_info, e["session_id"]), await _live(request), request.app[RUNNER]))
 
 
 def _bad(code):
@@ -669,6 +697,7 @@ def make_app(store: Store, name=None):
     app.add_routes([
         web.post("/v1/pair", pair), web.get("/v1/machine", machine), web.get("/v1/sessions", sessions),
         web.get("/v1/entries", list_entries), web.post("/v1/entries", add_entry),
+        web.get("/v1/entries/removed", removed_entries), web.post("/v1/entries/{id}/restore", restore_entry),
         web.patch("/v1/entries/{id}", update_entry), web.delete("/v1/entries/{id}", remove_entry),
         web.get("/v1/entries/{id}/messages", messages), web.get("/v1/entries/{id}/files", entry_files), web.get("/v1/entries/{id}/subagents/{agent}/messages", subagent_messages), web.get("/v1/ws", ws_handler), web.get("/v1/commands", commands), web.get("/v1/folders", folders), web.get("/v1/models", models), web.get("/v1/logs", get_logs),
         web.get("/v1/network", get_network), web.put("/v1/network", set_network),
