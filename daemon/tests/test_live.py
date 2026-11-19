@@ -782,3 +782,37 @@ def test_removed_list_restore_and_add_again(tmp_path, monkeypatch):
         assert store.entry(e["id"]) is None
         await client.close()
     asyncio.run(t())
+
+
+def test_btw_side_chat(tmp_path, monkeypatch):
+    """/btw: a side chat on a fork of the session. Answers stream back; the session's own history never sees it; the
+    fork stays out of the sessions list and is deleted when the side chat closes."""
+    async def t():
+        monkeypatch.setattr(demo, "SESSIONS", list(demo.SESSIONS))
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        eid, runner = e["id"], client.app[appmod.RUNNER]
+        await ws.send_json({"type": "btw", "entry": eid, "text": "which file has the bug?"})
+        m, seen = await until(ws, lambda m: m["type"] == "btw" and m["kind"] == "done")
+        assert [x["kind"] for x in seen if x["type"] == "btw"][0] == "asked"
+        assert any(x["type"] == "btw" and x["kind"] == "answer" and "Side answer: which file has the bug?" in x["text"] for x in seen)
+        assert not any(x["type"] == "message" for x in seen)  # nothing reached the session's own chat
+        fork = runner.side[eid].fork
+        sessions = (await (await client.get("/v1/sessions", headers=h)).json())["sessions"]
+        assert all(s["session_id"] != fork for s in sessions)  # not offered in + Add
+        hist = str(await (await client.get(f"/v1/entries/{eid}/messages", headers=h)).json())
+        assert "which file has the bug" not in hist  # the real history is untouched
+        # a follow-up uses the same side chat
+        await ws.send_json({"type": "btw", "entry": eid, "text": "and why?"})
+        await until(ws, lambda m: m["type"] == "btw" and m["kind"] == "done")
+        assert runner.side[eid].fork == fork
+        # close: the fork is deleted
+        await ws.send_json({"type": "btw_close", "entry": eid})
+        await until(ws, lambda m: m["type"] == "btw" and m["kind"] == "closed")
+        assert eid not in runner.side and demo.get_session_info(fork) is None
+        # a brand-new session has nothing to ask about yet
+        new = await (await client.post("/v1/entries", headers=h, json={"new": {"cwd": str(tmp_path)}})).json()
+        await ws.send_json({"type": "btw", "entry": new["id"], "text": "hi"})
+        m, _ = await until(ws, lambda m: m["type"] == "error")
+        assert "nothing_to_ask_about" in str(m)
+        await client.close()
+    asyncio.run(t())

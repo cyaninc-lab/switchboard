@@ -6,7 +6,7 @@ from aiohttp import web
 import claude_agent_sdk as sdk
 from . import __version__
 from .store import Store
-from .runner import Runner, scrub_env
+from .runner import Runner, scrub_env, BTW_TITLE
 from .tty import Terminals
 from .procs import alive
 from . import files as filesmod
@@ -137,7 +137,7 @@ async def machine(request):
 async def sessions(request):
     q = request.query.get("q", "").lower()
     limit, offset = int(request.query.get("limit", 50)), int(request.query.get("offset", 0))
-    found = await _off(sdk.list_sessions)
+    found = [s for s in await _off(sdk.list_sessions) if getattr(s, "custom_title", None) != BTW_TITLE]  # side-chat forks aren't sessions to add
     if q:
         found = [s for s in found if q in (s.summary or "").lower() or q in (s.cwd or "").lower()]
     store, out = request.app[STORE], []
@@ -568,7 +568,7 @@ async def ws_handler(request):
                 m = json.loads(msg.data)
                 t, eid = m.get("type"), m.get("entry")
                 entry = store.entry(eid) if eid else None
-                if t in ("send", "interrupt", "stop", "stop_task", "set_mode", "set_model", "set_account", "set_effort") or t.startswith("terminal_"):
+                if t in ("send", "interrupt", "stop", "stop_task", "btw", "btw_close", "set_mode", "set_model", "set_account", "set_effort") or t.startswith("terminal_"):
                     if not entry:
                         raise LookupError("no_such_entry")
                 if t == "terminal_open":
@@ -596,6 +596,10 @@ async def ws_handler(request):
                     await runner.stop(eid)
                 elif t == "stop_task":
                     await runner.stop_task(eid, m.get("task_id"))
+                elif t == "btw":
+                    await runner.btw(eid, str(m.get("text", ""))[:20000])
+                elif t == "btw_close":
+                    await runner.close_btw(eid)
                 elif t == "set_mode":
                     await runner.set_mode(eid, m["mode"])
                     await _broadcast(request.app, {"type": "mode", "entry": eid, "mode": m["mode"]})

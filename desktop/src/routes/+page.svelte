@@ -416,7 +416,8 @@
   let menu = $derived.by(() => {
     if (!selected || !/^\/\S*$/.test(draft)) return [];
     const q = draft.slice(1).toLowerCase();
-    return (cmdList[selected.machine.url] ?? []).filter((c) => c.name.toLowerCase().includes(q))
+    const btw = { name: 'btw', description: "Ask a side question: the answer opens on the right and doesn't go into the session" };
+    return [btw, ...(cmdList[selected.machine.url] ?? []).filter((c) => c.name !== 'btw')].filter((c) => c.name.toLowerCase().includes(q))
       .sort((a, b) => Number(!a.name.toLowerCase().startsWith(q)) - Number(!b.name.toLowerCase().startsWith(q))).slice(0, 8);
   });
   function complete(c: api.Command) { draft = `/${c.name} `; cmdIdx = 0; }
@@ -554,14 +555,39 @@
       if (e.entry === termFor) termSink?.(e.data);
     } else if (e.type === 'terminal_closed') {
       if (e.entry === termFor) { termFor = null; if (selected) open(selected.machine, selected.entry); }  // back to chat, fresh history
+    } else if (e.type === 'btw') {
+      const c = (btwChats[e.entry] ??= { items: [], streaming: '', busy: false });
+      if (e.kind === 'asked') { c.items.push({ who: 'you', text: e.text ?? '' }); c.busy = true; c.streaming = ''; }
+      else if (e.kind === 'delta') c.streaming += e.text ?? '';
+      else if (e.kind === 'answer') {
+        c.items.push({ who: 'claude', text: e.text ?? '' }); c.streaming = '';
+        if (selected?.entry.id !== e.entry || selected.sub) unread[e.entry] = true;
+      } else if (e.kind === 'done') { c.busy = false; c.streaming = ''; if (e.error) c.items.push({ who: 'claude', text: "_Couldn't answer that._" }); }
+      else if (e.kind === 'closed') delete btwChats[e.entry];
     } else if (e.type === 'error') {
-      if (!e.entry || e.entry === selected?.entry.id) liveErr = e.message;
+      if (e.message === 'nothing_to_ask_about' && e.entry && btwChats[e.entry]) { btwChats[e.entry].busy = false; btwChats[e.entry].items.push({ who: 'claude', text: '_Say something in this session first: a side question is about what has been said._' }); }
+      else if (!e.entry || e.entry === selected?.entry.id) liveErr = e.message;
     }
   }
   const live = () => (selected ? lives.get(selected.machine.url) : undefined);
+  // ---- /btw: a side question in a panel on the right; the session's history never sees it (daemon: a fork) ----
+  let btwChats = $state<Record<string, { items: { who: 'you' | 'claude'; text: string }[]; streaming: string; busy: boolean }>>({});
+  let btwDraft = $state('');
+  function askBtw(text: string) {
+    const s = selected;
+    if (!s) return;
+    btwChats[s.entry.id] ??= { items: [], streaming: '', busy: false };
+    if (!text.trim()) return;  // "/btw" alone just opens the panel
+    try { live()!.btw(s.entry.id, text.trim()); } catch (e) { liveErr = (e as Error).message; }
+  }
+  function closeBtw(entry: string) {
+    try { live()?.btwClose(entry); } catch {}
+    delete btwChats[entry];
+  }
   function sendDraft(ev: Event) {
     ev.preventDefault();
     if (!selected || (!draft.trim() && !attachments.length)) return;
+    if (/^\/btw(\s|$)/.test(draft) && !selected.sub) { askBtw(draft.slice(4)); draft = ''; return; }
     try {
       const images = attachments.map(({ media_type, data }) => ({ media_type, data }));
       live()!.send(selected.entry.id, draft, images, sendNow);  // now: the daemon interrupts and sends this first
@@ -1508,7 +1534,26 @@
       </section>
     {/if}
     </div>
-    {#if showInbox && machines.length && !solo}
+    {#if selected && !selected.sub && btwChats[selected.entry.id]}
+      {@const c = btwChats[selected.entry.id]}
+      {@const eid = selected.entry.id}
+      <aside class="btw" aria-label="Side chat">
+        <div class="btwhead"><b>Side chat</b><span class="muted small">/btw</span><span class="grow"></span>
+          <button class="tiny" aria-label="Close side chat" title="Close it (nothing from it stays)" onclick={() => closeBtw(eid)}>×</button></div>
+        <p class="muted small btwnote">Answers from what's been said so far. Nothing here goes into the session.</p>
+        <div class="btwlog" role="log" aria-label="Side chat answers">
+          {#each c.items as it, i (i)}
+            {#if it.who === 'you'}<div class="you"><span class="prompt">❯ </span>{it.text}</div>
+            {:else}<div class="md btwans">{@html md(it.text)}</div>{/if}
+          {/each}
+          {#if c.streaming}<div class="btwans">{c.streaming}<span class="cursor">▌</span></div>{:else if c.busy}<div class="muted small">Thinking…</div>{/if}
+        </div>
+        <form class="btwask" onsubmit={(ev) => { ev.preventDefault(); askBtw(btwDraft); btwDraft = ''; }}>
+          <label class="grow"><span class="sr">Side question</span>
+            <input bind:value={btwDraft} placeholder={c.items.length ? 'Ask a follow-up…' : 'Ask a side question…'} {@attach focusOnMount} /></label>
+        </form>
+      </aside>
+    {:else if showInbox && machines.length && !solo}
       <InboxView items={inboxItems} onOpen={openFromInbox} onRead={readItem} onDelete={deleteItem} onReadAll={readAll} onClose={() => (showInbox = false)} />
     {/if}
   </div>
@@ -1923,6 +1968,13 @@
   .removedlist .rinfo { display: flex; flex-direction: column; min-width: 0; flex: 1; }
   .removedlist .rname { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .removedlist button { white-space: nowrap; flex: none; } .tiny.danger { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
+  /* /btw side chat: where the inbox is */
+  .btw { width: 340px; flex: 0 0 340px; display: flex; flex-direction: column; background: var(--mantle); border-left: 1px solid var(--s0); min-height: 0; }
+  .btwhead { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--s0); }
+  .btwnote { margin: 8px 12px 0; }
+  .btwlog { flex: 1; overflow: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; font-family: var(--chat-font, Inter, system-ui, sans-serif); }
+  .btwans { white-space: pre-wrap; } .btwans.md { white-space: normal; }
+  .btwask { padding: 10px 12px; border-top: 1px solid var(--s0); display: flex; }
   .ctxmenu hr { border: 0; border-top: 1px solid var(--s0); margin: 4px 2px; }
   .ctxmenu button.danger { color: var(--red); }
   :global(.btn.danger) { background: var(--red); color: var(--crust); border-color: var(--red); font-weight: 600; }
