@@ -384,6 +384,7 @@
     if (selected?.entry.id === id) Object.assign(selected.entry, patch);
   }
   function onEvent(e: api.LiveEvent, m?: Machine) {
+    if ('entry' in e && e.entry && (e.type === 'message' || e.type === 'delta' || (e.type === 'state' && e.state === 'working'))) seen[e.entry] = Date.now();
     if (e.type === 'inbox' && m) {
       inboxBy[m.url] = [e.item, ...(inboxBy[m.url] ?? [])];
       if (!solo) notify(`${e.item.source}${e.item.from_agent ? ' (agent)' : ''}`, `${e.item.title}: ${e.item.body}`);
@@ -537,10 +538,23 @@
     return () => clearInterval(t);
   });
 
+  // within a project: pinned first, then the most recently active (the session file's last change, or a live event
+  // seen just now); the order holds still while the pointer is over the tree, so nothing jumps under a click
+  let seen = $state<Record<string, number>>({});
+  const activity = (e: Entry) => Math.max(e.session?.last_modified ?? 0, seen[e.id] ?? 0);
+  let held = $state<Record<string, number> | null>(null);  // entry id -> position, while held
+  function holdOrder() {
+    const pos: Record<string, number> = {};
+    for (const m of machines) for (const [, es] of groups(m)) es.forEach((e, i) => (pos[e.id] = i));
+    held = pos;
+  }
   function groups(m: Machine) {
     const es = (tree[m.url]?.entries ?? []).filter((e) => !filter || (e.name + ' ' + e.group).toLowerCase().includes(filter.toLowerCase()));
     const g: Record<string, Entry[]> = {};
     for (const e of es) (g[e.group] ??= []).push(e);
+    const h = held;
+    for (const list of Object.values(g))
+      list.sort(h ? (a, b) => (h[a.id] ?? 1e9) - (h[b.id] ?? 1e9) : (a, b) => Number(b.pinned) - Number(a.pinned) || activity(b) - activity(a));
     return Object.entries(g);
   }
 
@@ -930,7 +944,7 @@
         {@render subs(m, e, a.id, depth + 1)}
       {/each}
     {/snippet}
-    <nav class="tree" class:folded={!sideOpen || !!solo} aria-label="Sessions">
+    <nav class="tree" class:folded={!sideOpen || !!solo} aria-label="Sessions" onpointerenter={holdOrder} onpointerleave={() => (held = null)}>
       <label class="search"><span class="sr">Filter</span><input type="search" placeholder="Filter…" bind:value={filter} /></label>
       <div class="scroll">
         {#if machines.length === 0}

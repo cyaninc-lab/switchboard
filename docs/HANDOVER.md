@@ -35,7 +35,6 @@ Done: pairing (one-time code, tokens hashed), multi-machine tree, live chat with
 Shipped in 0.1.9–0.1.14: multiline input, Ctrl+Enter send-now, queued messages at the bottom, rename from the right-click menu, project dropdown + "New project" when adding, add several at once, inbox delete, Catppuccin themes, text size and fonts, boxes for messages between sessions, a band for your own messages, clickable file links, web links in the default browser, collapsible projects. In 0.1.16–0.1.18: collapsible session tree, idle close as a per-machine setting, a tag on a machine's chip when it runs an older/newer Switchboard, tabs, pop-out windows, option previews in questions. Next up (the user's pick, 2026-11-19): thin scroll bars, order by last activity within a project, drag projects to reorder, drag a tab out to pop it out, `@` file mentions, copy buttons.
 
 Left, **(S)** small, **(M)** medium, **(L)** large. Separate PRs, batched into a release when the user says so:
-- **Order agents within a project by last activity** **(S/M)**: pinned stay on top; hold the order still while the pointer is over the tree.
 - **Line numbers on diffs** **(M)**: probably from Claude Code's structured patch in the tool result; not checked.
 - **Drag an agent to another project** **(M)**; **drag projects to reorder** **(M)** (needs a stored project order).
 - **Archive**, or better: make Remove keep name/project/settings, with a "Removed" list to restore from **(M)**.
