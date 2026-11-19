@@ -11,6 +11,7 @@ from .tty import Terminals
 from .procs import alive
 from . import files as filesmod
 from . import github
+from . import webui
 from . import patches as patchmod
 from .net import Network, SETTING as NET_SETTING
 from .watches import Watches, KINDS, ACTIONS
@@ -112,8 +113,8 @@ async def cors(request, handler):
 
 @web.middleware
 async def auth(request, handler):
-    if request.path in ("/v1/pair", "/v1/ws"):  # /v1/ws authenticates with its first message
-        return await handler(request)
+    if request.path in ("/v1/pair", "/v1/ws") or not request.path.startswith("/v1/"):  # /v1/ws authenticates with its first message;
+        return await handler(request)  # outside /v1 is the web app's public files
     token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
     if not token or not request.app[STORE].client_for(token):
         raise web.HTTPUnauthorized(text=json.dumps({"code": "unauthorized"}), content_type="application/json")
@@ -713,4 +714,5 @@ def make_app(store: Store, name=None):
         web.get("/v1/inbox", list_inbox), web.post("/v1/inbox/read", read_inbox), web.post("/v1/inbox/{id}/read", read_inbox), web.delete("/v1/inbox/{id}", delete_inbox),
         web.get("/v1/accounts", list_accounts), web.post("/v1/accounts", add_account), web.delete("/v1/accounts/{name}", remove_account),
     ])
+    app.router.add_get("/{tail:(?!v1/).*}", webui.handler(webui.find()))  # the web app, last: the API routes come first
     return app

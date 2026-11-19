@@ -255,7 +255,8 @@
   }
 
   // connect dialog
-  let cUrl = $state('http://127.0.0.1:7878');
+  // opened from a daemon's own address (a phone over Tailscale): that's the machine to connect to
+  let cUrl = $state(typeof location !== 'undefined' && !inShell() && location.port === '7878' ? location.origin : 'http://127.0.0.1:7878');
   let cCode = $state('');
   let cError = $state('');
 

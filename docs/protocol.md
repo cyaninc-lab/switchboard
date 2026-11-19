@@ -15,6 +15,8 @@ Tauri-specific code. Everything is under `/v1`; breaking changes get `/v2`.
 
 ## HTTP
 
+Outside `/v1/`, the daemon serves the web app (the same UI as the desktop app, bundled into the daemon; `SWITCHBOARD_WEBUI` points elsewhere): its files are public, with unknown paths answered by `index.html`. So a phone or another computer on the tailnet can open `http://<machine>:7878/` and pair with a code.
+
 | Method + path | Does |
 | --- | --- |
 | `GET /v1/machine` | name, daemon + SDK versions, accounts (labels only), default account and mode |

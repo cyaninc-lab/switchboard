@@ -37,17 +37,20 @@ jobs:
       - run: pip install -e "./daemon[test]" pyinstaller
       - name: daemon tests on Windows
         run: python -m pytest -q daemon/tests
-      - name: freeze the daemon (sidecar)
-        run: PY=python daemon/build-sidecar.sh
       - uses: actions/setup-node@v5
         with:
           node-version: "24"
+      - name: build the web app (the daemon bundles it)
+        working-directory: desktop
+        run: npm ci && npm run build
+      - name: freeze the daemon (sidecar)
+        run: PY=python daemon/build-sidecar.sh
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri
       - name: build the app
         working-directory: desktop
-        run: npm ci && npx tauri build --no-bundle
+        run: npx tauri build --no-bundle
       - name: tauri-driver for driving the real window
         run: cargo install tauri-driver --version 2.0.6 --locked
       - name: collect
