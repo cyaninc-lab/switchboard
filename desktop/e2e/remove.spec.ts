@@ -52,3 +52,26 @@ test('right-click: Remove from tree, and a tucked-away Delete for good that need
   await expect(tree.getByRole('button', { name: /Gone for good/ })).toHaveCount(0);
   await expect(page.locator('.toast')).toContainText('Deleted Gone for good');
 });
+
+test('a right-click menu near the bottom of the window stays inside it', async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 420 });
+  await page.goto('/');
+  await page.getByRole('button', { name: '+ Connect a machine' }).click();
+  await page.getByLabel('Daemon address').fill(`http://127.0.0.1:${DAEMON_PORT}`);
+  await page.getByLabel('One-time code').fill(execFileSync(daemon, ['--data', DATA, 'pair']).toString().trim());
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  const tree = page.getByRole('navigation', { name: 'Sessions' });
+  await page.getByRole('button', { name: '+ Add' }).click();
+  const dialog = page.getByRole('form', { name: 'Add to Switchboard' });
+  await dialog.getByRole('tab', { name: 'New session' }).click();
+  await dialog.getByLabel(/Folder on/).fill(mkdtempSync(join(tmpdir(), 'sb-edge-')));
+  await dialog.getByLabel('Name in the tree').fill('Edge menu');
+  await dialog.getByRole('button', { name: 'Create session' }).click();
+  await tree.getByRole('button', { name: /Edge menu/ }).click({ button: 'right', position: { x: 20, y: 5 } });
+  // open it as if right-clicked at the very bottom
+  await page.evaluate(() => document.querySelector('nav.tree .entry')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 40, clientY: innerHeight - 4 })));
+  const menu = page.getByRole('menu', { name: /actions$/ });
+  const box = (await menu.boundingBox())!;
+  expect(box.y + box.height).toBeLessThanOrEqual(420);
+  await expect(menu.getByRole('menuitem', { name: 'Delete for good…' })).toBeInViewport();
+});
