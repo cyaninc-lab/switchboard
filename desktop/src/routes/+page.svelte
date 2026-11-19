@@ -245,6 +245,7 @@
     return acc;
   }, {} as Record<string, HistoryMessage[]>));
   const AGENT_TOOLS = ['Agent', 'Task'];
+  const FILE_TOOLS = ['Read', 'NotebookEdit', 'NotebookRead'];  // Edit/Write are diffs, whose header carries the path too
   let queued = $state<Record<string, number>>({});
   // ponytail: per-window and in memory, a restart forgets it; move to the daemon if several clients need to agree
   let unread = $state<Record<string, boolean>>({});
@@ -1070,11 +1071,14 @@
                   <div class="agentbody">{#each kids as k (k.uuid)}{@render lines(k)}{/each}</div>
                 </details>
                 {/if}
+              {:else if line.kind === 'tool' && FILE_TOOLS.includes(line.name) && line.input?.file_path}
+                <!-- the path opens like one in a reply (onPathClick) -->
+                <div><span class="bullet">⏺ </span><span class="tool">{line.name}(<code class="path">{line.input.file_path}</code>)</span></div>
               {:else if line.kind === 'tool'}
                 <div><span class="bullet">⏺ </span><span class="tool">{line.text}</span></div>
               {:else if line.kind === 'diff'}
                 <div class="diff" aria-label="{line.text}">
-                  <div class="diffhead"><span class="bullet">⏺ </span>{line.text}{#if line.note}<span class="muted small"> · {line.note}</span>{/if}</div>
+                  <div class="diffhead"><span class="bullet">⏺ </span>{line.text.slice(0, line.text.indexOf('(') + 1)}<code class="path">{line.file}</code>){#if line.note}<span class="muted small"> · {line.note}</span>{/if}</div>
                   {#each expanded[msg.uuid + li] ? line.lines : line.lines.slice(0, 40) as d}<div class="dl {d.t === '+' ? 'add' : d.t === '-' ? 'del' : ''}"><span class="sign">{d.t}</span>{d.s}</div>{/each}
                   {#if line.lines.length > 40}<button class="link small" onclick={() => (expanded[msg.uuid + li] = !expanded[msg.uuid + li])}>{expanded[msg.uuid + li] ? 'Show less' : `Show all ${line.lines.length} lines`}</button>{/if}
                 </div>
@@ -1537,6 +1541,9 @@
   .inputbar { display: flex; gap: 10px; align-items: center; padding: 12px 18px; border-top: 1px solid var(--s0); }
   .inputbar { align-items: flex-end; }
   .toast { padding: 4px 18px 0; word-break: break-all; }
+  /* paths in step headers (Read(...), Edit(...)): clickable like those in replies, without the code pill */
+  .tool code.path, .diffhead code.path { background: none; padding: 0; font-size: inherit; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+  .tool code.path:hover, .diffhead code.path:hover { color: var(--sky); }
   .md :global(code.path) { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
   .md :global(code.path:hover) { color: var(--sky); }
   .pendingq { padding: 8px 18px 0; display: flex; flex-direction: column; gap: 4px; opacity: 0.75; white-space: pre-wrap; max-height: 25vh; overflow-y: auto; }
