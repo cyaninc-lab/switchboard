@@ -1511,7 +1511,9 @@
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   code { background: var(--s0); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
 
-  .app { display: flex; flex-direction: column; height: 100vh; background: var(--base); }
+  /* pinned to the window's edges rather than 100vh: under the text-size zoom, WebView2 doesn't scale vh but WebKitGTK
+     does, so 100vh overflowed on Windows (the whole window scrolled) and a calc() on it broke Linux instead */
+  .app { display: flex; flex-direction: column; position: fixed; inset: 0; background: var(--base); }
   .titlebar[hidden] { display: none; }
   .titlebar { display: flex; align-items: center; gap: 16px; padding: 10px 16px; background: var(--mantle); border-bottom: 1px solid var(--s0); flex-wrap: wrap; }
   .brand { display: flex; gap: 8px; align-items: center; font-weight: 600; font-size: 14px; }

@@ -55,6 +55,9 @@ test('themes: pick a Catppuccin palette in Settings; it applies everywhere and i
     expect(l.zoom, when).toBe('120%');
     expect(l.mono, when).toContain('Fira Code');
     expect(l.ui, when).toMatch(/^system-ui/);
+    // a bigger size still fits the window: the page itself never scrolls, the footer sits at the bottom edge
+    expect(await page.evaluate(() => { scrollTo(0, 99999); const y = scrollY; scrollTo(0, 0); return y; }), when).toBe(0);
+    expect(await page.evaluate(() => !!document.elementFromPoint(innerWidth / 2, innerHeight - 3)?.closest('footer')), when).toBe(true);
     if (when === 'now') { await page.reload(); await entry.click(); await expect(page.getByRole('log', { name: 'Session history' })).toBeVisible(); }
   }
   await page.getByRole('button', { name: 'Settings' }).click();
