@@ -628,6 +628,8 @@
     const i = tabs.findIndex((t) => tabKey(t) === curKey);
     showTab(tabs[(i + step + tabs.length) % tabs.length]);
   }
+  // middle-click opens/closes tabs; without this Windows (WebView2) starts autoscroll on the button going down
+  const noAutoscroll = (ev: MouseEvent) => { if (ev.button === 1) ev.preventDefault(); };
   let dragTab: string | null = null;
   function dropTab(target: string) {
     const from = tabs.findIndex((t) => tabKey(t) === dragTab), to = tabs.findIndex((t) => tabKey(t) === target);
@@ -860,7 +862,7 @@
       <button role="menuitem" onclick={() => startRename('e:' + me.id, me.name)}>Rename</button>
       <button role="menuitem" disabled={!LIVE_STATES.includes(me.state)} title="Ends the Claude process; it stays in the tree and resumes on your next message"
         onclick={() => closeSession(mm.machine, me)}>Close session</button>
-      {#if inShell() && !solo}<button role="menuitem" onclick={async () => { ctx = null; await open(mm.machine, me, 'keep'); if (!inWindow[me.id]) popOutCurrent(); }}>Open in new window</button>{/if}
+      {#if inShell() && !solo}<button role="menuitem" onclick={async () => { const m = mm.machine, en = me; ctx = null; await open(m, en, 'keep'); if (!inWindow[en.id]) popOutCurrent(); }}>Open in new window</button>{/if}
     </div>
   {:else if mm.group !== undefined}
     {@const g = mm.group}
@@ -957,7 +959,7 @@
                   onkeydown={(ev) => renameKeys(ev, m, e)} onblur={() => commitRename(m, e)} /></div>
                 {:else}
                 <button class="entry" class:sel={selected?.entry.id === e.id && !selected.sub} class:waiting={e.state === 'waiting'} title={stateLabel[icon(e)]} onclick={(ev) => open(m, e, ev.ctrlKey || ev.metaKey ? 'new' : 'preview')} ondblclick={() => keepTab()}
-                  onauxclick={(ev) => { if (ev.button === 1) { ev.preventDefault(); open(m, e, 'new'); } }} oncontextmenu={(ev) => openMenu(ev, m, e)}>
+                  onmousedown={noAutoscroll} onauxclick={(ev) => { if (ev.button === 1) { ev.preventDefault(); open(m, e, 'new'); } }} oncontextmenu={(ev) => openMenu(ev, m, e)}>
                   <span class="st {icon(e)}"></span>
                   {#if e.pinned}<span class="pin" aria-label="pinned">★</span>{/if}
                   <span class="ename">{e.name}</span>
@@ -996,7 +998,7 @@
               {@const k = tabKey(t)}
               <div class="tab" class:on={k === curKey} class:preview={t.preview} role="presentation" draggable="true"
                 ondragstart={() => (dragTab = k)} ondragover={(ev) => ev.preventDefault()} ondrop={(ev) => { ev.preventDefault(); dropTab(k); }}
-                onauxclick={(ev) => { if (ev.button === 1) { ev.preventDefault(); closeTab(k); } }}>
+                onmousedown={noAutoscroll} onauxclick={(ev) => { if (ev.button === 1) { ev.preventDefault(); closeTab(k); } }}>
                 <button class="tabname" role="tab" aria-selected={k === curKey} title={t.preview ? `${name} (preview: the next session you open replaces it; double-click to keep)` : name}
                   onclick={() => k !== curKey && showTab(t)} ondblclick={() => (t.preview = false)}>
                   <span class="st {t.sub ? (a && subRunning(e, a) ? 'working' : 'stopped') : icon(e)}"></span><span class="tlabel">{name}</span></button>
@@ -1476,10 +1478,12 @@
   :global(.btn.ghost) { width: auto; padding: 9px 16px; }
 
   .term { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--base); }
-  .tabs { display: flex; gap: 2px; padding: 6px 8px 0; background: var(--mantle); border-bottom: 1px solid var(--s0); overflow-x: auto; scrollbar-width: thin; flex: none; }
+  /* the bottom line is drawn inside the bar (inset shadow) so the active tab can cover it without overflowing the bar,
+     which made Windows show a vertical scrollbar */
+  .tabs { display: flex; gap: 2px; padding: 6px 8px 0; background: var(--mantle); box-shadow: inset 0 -1px 0 var(--s0); overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; flex: none; }
   .tab { display: flex; align-items: center; max-width: 220px; min-width: 0; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; color: var(--sub0); }
   .tab:hover { background: var(--s0); }
-  .tab.on { background: var(--base); border-color: var(--s0); color: var(--text); margin-bottom: -1px; }
+  .tab.on { background: var(--base); border-color: var(--s0); color: var(--text); }
   .tab.preview .tlabel { font-style: italic; }
   .tabname { display: flex; align-items: center; gap: 8px; min-width: 0; background: none; border: 0; color: inherit; font: inherit; font-size: 13px; padding: 7px 4px 7px 10px; cursor: pointer; }
   .tlabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

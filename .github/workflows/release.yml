@@ -1,8 +1,6 @@
 name: release
 # Merging a PR that changes VERSION ships it: a draft release in this repo, signed builds for Linux and Windows
 # uploaded to it with latest.json, then the draft is published (apps only see complete releases).
-# Bridge (0.1.15): installs up to 0.1.14 look for updates in cyaninc-lab/switchboard-releases, so a real release
-# also puts its latest.json there (links pointing here). Remove the `bridge` step once everyone is on 0.1.15+.
 on:
   push:
     branches: [main]
@@ -96,20 +94,3 @@ jobs:
           # signatures go to this repo's `signatures` branch, not the releases page (latest.json already carries them)
           tools/move-signatures.sh "${{ github.repository }}" "${{ needs.draft.outputs.id }}" "${{ needs.draft.outputs.version }}"
           gh release edit "v${{ needs.draft.outputs.version }}" -R "${{ github.repository }}" --draft=false --latest
-      - name: bridge
-        # real releases only (not a manual test run): old installs read switchboard-releases' latest release
-        if: github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
-        run: |
-          V="v${{ needs.draft.outputs.version }}"
-          GH_TOKEN=${{ github.token }} gh release download "$V" -R "${{ github.repository }}" -p latest.json -D bridge
-          # tauri-action links to …/releases/latest/download/…, so check the repo, not the tag; every link must point here
-          python3 -c "import json,sys; urls={v['url'] for v in json.load(open('bridge/latest.json'))['platforms'].values()}; bad=[u for u in urls if not u.startswith('https://github.com/${{ github.repository }}/releases/')]; print('links:', sorted(urls)); sys.exit(1 if bad or not urls else 0)" || { echo "latest.json doesn't point here"; exit 1; }
-          if gh release view "$V" -R cyaninc-lab/switchboard-releases >/dev/null 2>&1; then
-            gh release upload "$V" bridge/latest.json --clobber -R cyaninc-lab/switchboard-releases
-          else
-            gh release create "$V" bridge/latest.json -R cyaninc-lab/switchboard-releases --target main --latest \
-              --title "Switchboard ${{ needs.draft.outputs.version }}" \
-              --notes "Downloads are now at https://github.com/${{ github.repository }}/releases ; this release only points installed apps there."
-          fi
