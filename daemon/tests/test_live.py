@@ -536,7 +536,7 @@ def test_idle_close_is_opt_in(tmp_path, monkeypatch):
     async def t():
         client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
         eid, runner = e["id"], client.app[appmod.RUNNER]
-        assert (await (await client.get("/v1/settings", headers=h)).json()) == {"idle_close_minutes": 0}
+        assert (await (await client.get("/v1/settings", headers=h)).json())["idle_close_minutes"] == 0
         await ws.send_json({"type": "send", "entry": eid, "text": "hello"})
         await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
         later = time.time() + 10 * 3600
@@ -544,7 +544,7 @@ def test_idle_close_is_opt_in(tmp_path, monkeypatch):
         assert eid in runner.live  # off: stays open however long it's quiet
         assert (await client.put("/v1/settings", headers=h, json={"idle_close_minutes": 7})).status == 400
         r = await client.put("/v1/settings", headers=h, json={"idle_close_minutes": 10})
-        assert (await r.json()) == {"idle_close_minutes": 10}
+        assert (await r.json())["idle_close_minutes"] == 10
         await runner.reap_idle(time.time() + 5 * 60)
         assert eid in runner.live  # not quiet for long enough
         runner.live[eid].tasks.add("bg")
@@ -570,5 +570,19 @@ def test_background_task_is_tracked(tmp_path, monkeypatch):
         assert runner.live[eid].tasks == {"bg1"}
         await until(ws, lambda m: m["type"] == "message" and "Done: background task finished" in str(m))
         assert runner.live[eid].tasks == set()
+        await client.close()
+    asyncio.run(t())
+
+
+def test_project_order_setting(tmp_path, monkeypatch):
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        assert (await (await client.get("/v1/settings", headers=h)).json())["project_order"] == []
+        assert (await client.put("/v1/settings", headers=h, json={"project_order": "nope"})).status == 400
+        assert (await client.put("/v1/settings", headers=h, json={"project_order": [1, 2]})).status == 400
+        r = await (await client.put("/v1/settings", headers=h, json={"project_order": ["b", "a"]})).json()
+        assert r["project_order"] == ["b", "a"] and r["idle_close_minutes"] == 0
+        await until(ws, lambda m: m["type"] == "settings")  # other clients hear about it
+        assert (await (await client.get("/v1/settings", headers=h)).json())["project_order"] == ["b", "a"]
         await client.close()
     asyncio.run(t())

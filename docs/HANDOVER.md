@@ -36,7 +36,7 @@ Shipped in 0.1.9–0.1.14: multiline input, Ctrl+Enter send-now, queued messages
 
 Left, **(S)** small, **(M)** medium, **(L)** large. Separate PRs, batched into a release when the user says so:
 - **Line numbers on diffs** **(M)**: probably from Claude Code's structured patch in the tool result; not checked.
-- **Drag an agent to another project** **(M)**; **drag projects to reorder** **(M)** (needs a stored project order).
+- **Drag an agent to another project** **(M)**.
 - **Archive**, or better: make Remove keep name/project/settings, with a "Removed" list to restore from **(M)**.
 - **Settings defaults** for new sessions (mode, model, effort, account), and sessions show real values instead of "default" **(M)**; a changed default affects new sessions only.
 - **Split view** **(M)**: two tabs side by side in one window, now that tabs exist.
@@ -44,6 +44,7 @@ Left, **(S)** small, **(M)** medium, **(L)** large. Separate PRs, batched into a
 - **`/btw` side chat** **(M)**: `/btw` opens a chat panel on the right (where the inbox is) for side questions about the session: like Claude Code's `/btw`, it sees the session's context but doesn't go into its history or interrupt it. Kept per session like drafts (only the current session's shows; × clears it; not saved across restarts); an answer arriving while you're elsewhere gives the session its unread dot.
 
 ## Traps learned the hard way
+- HTML drag and drop (tabs, projects, dropping images) needs Tauri's `dragDropEnabled: false` on every window, or Windows' WebView2 never delivers the drag to the page. Set in tauri.conf.json and in shell.ts `popOut`.
 - Pop-out windows: a session is open in one place only (a tab or its own window). The window is the same page with `?machine=&solo=`; the draft goes over in localStorage (`switchboard.handoff.<id>`) and comes back in a `solo-closed` event to the main window, which owns tree, inbox, unread dots and notifications. Tauri's `onCloseRequested` ends by destroying the window, so `core:window:allow-destroy` is needed or the window never closes. Closing the main window exits the app (lib.rs `on_window_event`).
 - Real-window tests share the installed app's data (same identifier) and its daemon on 7878: `e2e-real/windows.mjs` isolates itself with `XDG_*` dirs and a demo daemon on 7899; copy that.
 - A new repo whose automatic Actions runs never start (push/PR do nothing, a manual `workflow_dispatch` works): GitHub's Actions setup for it got stuck at creation. Turning Actions off and on fixes it: `gh api -X PUT repos/OWNER/REPO/actions/permissions -F enabled=false`, then `-F enabled=true -f allowed_actions=all`. Seen 2026-11-18 when the repo went public.

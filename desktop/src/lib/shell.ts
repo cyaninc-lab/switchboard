@@ -99,7 +99,8 @@ export async function popOut(h: Handoff, title: string) {
   if (have) return void (await have.setFocus());
   try { localStorage.setItem(HANDOFF + h.entry, JSON.stringify(h)); } catch {}
   const w = new WebviewWindow(label, { url: `/?machine=${encodeURIComponent(h.url)}&solo=${encodeURIComponent(h.entry)}`, title: `${title} · Switchboard`,
-    width: 760, height: 820, minWidth: 420, minHeight: 360 });
+    width: 760, height: 820, minWidth: 420, minHeight: 360,
+    dragDropEnabled: false });  // as the main window (tauri.conf.json): Tauri's own file drop would block HTML drag and drop on Windows
   await new Promise<void>((ok, fail) => { w.once('tauri://created', () => ok()); w.once('tauri://error', (e) => fail(new Error(String(e.payload)))); });
 }
 /** In a popped-out window: the draft the main window handed over (once). */

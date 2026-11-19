@@ -31,7 +31,7 @@ Tauri-specific code. Everything is under `/v1`; breaking changes get `/v2`.
 | `GET /v1/commands` | slash commands for the menu, with descriptions where known |
 | `GET/POST /v1/watches` · `PATCH/DELETE /v1/watches/{id}` | watches: `{name, kind: schedule|command|http|github, config, action: notify|wake, entry_id?, instructions?, mode?, enabled}`; command watches run shell commands on the daemon's machine (same trust as a paired client) |
 | `POST /v1/watches/{id}/test` | run the check now and fire even if nothing changed |
-| `GET /v1/settings` · `PUT /v1/settings` | daemon-wide settings: `{idle_close_minutes}`, one of 0 (off, the default), 10, 30, 60, 240 |
+| `GET /v1/settings` · `PUT /v1/settings` | daemon-wide settings: `idle_close_minutes` (0 = off, the default, or 10, 30, 60, 240); `project_order` (project names, top first; unlisted ones follow). A change to `project_order` broadcasts `{type: settings}` |
 | `GET /v1/inbox` · `POST /v1/inbox/read` · `POST /v1/inbox/{id}/read` · `DELETE /v1/inbox/{id}` | what watches and woken agents have to say (last 500 kept) |
 
 ## WebSocket `/v1/ws`

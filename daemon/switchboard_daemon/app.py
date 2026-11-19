@@ -305,8 +305,13 @@ async def set_network(request):
     return web.json_response(await request.app[NET].status())
 
 
+PROJECT_ORDER = "project_order"
+
+
 async def get_settings(request):
-    return web.json_response({"idle_close_minutes": int(request.app[STORE].setting(IDLE_SETTING, "0") or 0)})
+    st = request.app[STORE]
+    return web.json_response({"idle_close_minutes": int(st.setting(IDLE_SETTING, "0") or 0),
+                              "project_order": json.loads(st.setting(PROJECT_ORDER, "[]"))})
 
 
 async def set_settings(request):
@@ -315,6 +320,12 @@ async def set_settings(request):
         if body["idle_close_minutes"] not in IDLE_CHOICES:
             raise web.HTTPBadRequest(text=json.dumps({"code": "bad_idle_close"}), content_type="application/json")
         request.app[STORE].set_setting(IDLE_SETTING, str(body["idle_close_minutes"]))
+    if "project_order" in body:  # project names, top first (projects not listed follow, as before)
+        order = body["project_order"]
+        if not isinstance(order, list) or not all(isinstance(x, str) for x in order) or len(order) > 1000:
+            raise web.HTTPBadRequest(text=json.dumps({"code": "bad_project_order"}), content_type="application/json")
+        request.app[STORE].set_setting(PROJECT_ORDER, json.dumps(order))
+        await _broadcast(request.app, {"type": "settings"})  # other clients re-read the order
     return await get_settings(request)
 
 

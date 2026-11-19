@@ -81,7 +81,7 @@ export type Network = { listen_tailscale: boolean; active: string[]; error: stri
   url: string | null; tailscale: { name: string | null; dns: string | null; ips: string[] } | null };
 export const network = (m: Machine) => call<Network>(m, '/v1/network');
 export const machineInfo = (m: Machine) => call<{ name: string; daemon: string; sdk: string; os: string }>(m, '/v1/machine');
-export type DaemonSettings = { idle_close_minutes: number };
+export type DaemonSettings = { idle_close_minutes: number; project_order?: string[] };
 export const settings = (m: Machine) => call<DaemonSettings>(m, '/v1/settings');
 export const setSettings = (m: Machine, s: Partial<DaemonSettings>) => call<DaemonSettings>(m, '/v1/settings', { method: 'PUT', body: JSON.stringify(s) });
 export const setNetwork = (m: Machine, on: boolean) => call<Network>(m, '/v1/network', { method: 'PUT', body: JSON.stringify({ listen_tailscale: on }) });
@@ -201,6 +201,7 @@ export type LiveEvent =
   | { type: 'inbox'; item: InboxItem }
   | { type: 'inbox_read'; id: number | null }
   | { type: 'inbox_removed'; id: number }
+  | { type: 'settings' }
   | { type: 'terminal_output'; entry: string; data: string }
   | { type: 'error'; entry?: string; code: string; message: string };
 
