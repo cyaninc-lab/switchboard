@@ -14,7 +14,9 @@ const PORT = 7899;
 try { _x('pkill -x tauri-driver; pkill -x WebKitWebDriver'); } catch {} // stale
 const home = mkdtempSync(join(tmpdir(), 'sb-win-'));
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('CLAUDE')));
-Object.assign(env, { XDG_DATA_HOME: join(home, 'data'), XDG_CONFIG_HOME: join(home, 'config'), XDG_CACHE_HOME: join(home, 'cache') });
+Object.assign(env, { XDG_DATA_HOME: join(home, 'data'), XDG_CONFIG_HOME: join(home, 'config'), XDG_CACHE_HOME: join(home, 'cache'),
+  // if no Switchboard runs here, the test app starts its own daemon on 7878: never let that one reach real Claude
+  SWITCHBOARD_CLAUDE: '/bin/false' });
 const data = join(home, 'daemon');
 const demo = spawn(DAEMON, ['--data', data, 'serve', '--demo', '--port', String(PORT), '--name', 'demo'], { env, stdio: 'ignore' });
 await sleep(1500);
@@ -41,7 +43,8 @@ try {
   await step('a new session with a draft');
   await (await x("//button[normalize-space()='+ Add']")).click();
   await (await x("//button[@role='tab' and normalize-space()='New session']")).click();
-  const folder = await x("//label[starts-with(normalize-space(),'Folder on')]//input");
+  await (await x("//form[@aria-label='Add to Switchboard']//button[contains(@class,'pill') and normalize-space()='demo']")).click();  // the demo daemon, explicitly
+  const folder = await x("//label[starts-with(normalize-space(),'Folder on demo')]//input");
   await folder.clear(); await folder.sendKeys(mkdtempSync(join(tmpdir(), 'sb-win-s-')));
   await (await x("//label[starts-with(normalize-space(),'Name in the tree')]//input")).sendKeys('Window one');
   await (await x("//button[normalize-space()='Create session']")).click();
@@ -91,6 +94,26 @@ try {
     tab.dispatchEvent(new DragEvent('dragend', { bubbles: true, screenX: window.screenX + 200, screenY: window.screenY + 80, dataTransfer: new DataTransfer() }));`);
   await sleep(2000);
   check((await d.getAllWindowHandles()).length === 1, 'a drag ending inside the window opens nothing');
+
+  await step('right-click → Open to the side: the split pane works inside the real app');
+  await d.executeScript("const r = arguments[0].getBoundingClientRect(); arguments[0].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + 20, clientY: r.top + 5 }))",
+    await x("//nav//button[contains(@class,'entry') and contains(.,'Window one')]"));
+  await (await x("//button[@role='menuitem' and normalize-space()='Open to the side']")).click();
+  const frame = await x("//iframe[starts-with(@title,'Split: ')]");
+  await d.switchTo().frame(frame);
+  const sbox = await x("//textarea", 20000);
+  check(true, 'the pane loaded the session');
+  check((await val(sbox)) === 'coming back', 'its draft came along');
+  await d.executeScript("arguments[0].value = ''; arguments[0].dispatchEvent(new Event('input', { bubbles: true }))", sbox);
+  await sbox.sendKeys('from the split', Key.ENTER);
+  await x("//div[@role='log']//*[contains(., 'Done: from the split')]", 20000);
+  check(true, 'it answers in the pane');
+  // the pane can't reach the desktop app itself: the main window told it to ask it (links, files, notifications)
+  check(await d.executeScript("return document.documentElement.dataset.viaParent === '1'"), 'the pane opens links and files through the main window');
+  await d.switchTo().defaultContent();
+  await (await x("//button[@aria-label='Close split']")).click();
+  await x("//div[@role='tablist']//button[@role='tab' and contains(., 'Window one')]", 10000);
+  check((await d.findElements(By.xpath("//iframe[starts-with(@title,'Split: ')]"))).length === 0, 'closing it put the session back as a tab');
 
   await step('right-click in the tree → Open in new window');
   // WebKitWebDriver has no right-click action: send the contextmenu event itself

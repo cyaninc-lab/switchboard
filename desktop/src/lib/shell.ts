@@ -4,6 +4,12 @@ import * as api from './api';
 import type { Machine } from './api';
 
 export const inShell = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+// the split pane is an iframe, which the desktop app doesn't reach into: it asks the main window (its parent) to open
+// links and files and to notify (the parent says so on load; it only accepts these from its own pane)
+let viaParent = false;
+export const useParentShell = () => { viaParent = true; };
+export const canOpenLocally = () => inShell() || viaParent;
+const askParent = (msg: Record<string, unknown>) => window.parent.postMessage({ sb: true, ...msg }, location.origin);
 
 /** Pair with this machine's daemon (the app's own or a background service) without a code prompt. */
 export async function pairLocal(): Promise<Machine | null> {
@@ -26,10 +32,13 @@ export const serviceUninstall = () => call<void>('service_uninstall');
 
 /** Open a path from the chat on this machine: folders and harmless files open, anything else is shown in its folder
  *  (the rule lives in the desktop app, lib.rs open_local). Returns "opened" or "revealed". */
-export const openLocal = (path: string) => import('@tauri-apps/api/core').then(({ invoke }) => invoke<string>('open_local', { path }));
+export const openLocal = (path: string): Promise<string> =>
+  viaParent && !inShell() ? (askParent({ do: 'path', path }), Promise.resolve('asked'))
+    : import('@tauri-apps/api/core').then(({ invoke }) => invoke<string>('open_local', { path }));
 
 /** Open a URL in the user's browser (the system one in the desktop app). */
 export async function openExternal(url: string) {
+  if (viaParent && !inShell()) return askParent({ do: 'url', url });
   if (inShell()) {
     const { openUrl } = await import('@tauri-apps/plugin-opener');
     await openUrl(url);
@@ -69,6 +78,7 @@ export async function checkForUpdate(): Promise<Update | null> {
 
 /** A desktop notification (the system's own in the desktop app; the browser's if allowed; else nothing). */
 export async function notify(title: string, body: string) {
+  if (viaParent && !inShell()) return askParent({ do: 'notify', title, body });
   try {
     if (inShell()) {
       const n = await import('@tauri-apps/plugin-notification');
@@ -89,7 +99,8 @@ export const windowLabel = (entry: string) => 's-' + entry.replace(/[^a-zA-Z0-9_
 export const soloOf = () => {
   if (typeof location === 'undefined') return null;
   const p = new URLSearchParams(location.search);
-  return p.get('solo') && p.get('machine') ? { url: p.get('machine')!, entry: p.get('solo')! } : null;
+  // embed: shown inside the main window's split pane (an iframe), not a window of its own
+  return p.get('solo') && p.get('machine') ? { url: p.get('machine')!, entry: p.get('solo')!, embed: p.get('embed') === '1' } : null;
 };
 /** Open a session in its own window (or bring its window to the front), carrying its draft along. */
 export async function popOut(h: Handoff, title: string) {

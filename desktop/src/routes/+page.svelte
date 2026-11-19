@@ -1,7 +1,7 @@
 <script lang="ts">
   import * as api from '$lib/api';
   import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell, openExternal, openLocal, appVersion, checkForUpdate, notify,
-    soloOf, popOut, takeHandoff, focusWindow, onSoloClosing, onSoloEvents, soloOpened, closeThisWindow, setOnTop } from '$lib/shell';
+    soloOf, popOut, takeHandoff, focusWindow, onSoloClosing, onSoloEvents, soloOpened, closeThisWindow, setOnTop, useParentShell, canOpenLocally } from '$lib/shell';
   import { backdrop } from '$lib/backdrop';
   import { theme, THEMES, applyTheme, fonts, UI_FONTS, MONO_FONTS, CHAT_FONTS, SIZES, applyFonts } from '$lib/themes.svelte';
   applyTheme(theme.name);
@@ -47,7 +47,7 @@
     const raw = el.textContent!.trim().replace(/:\d+(:\d+)?$/, '');
     const cwd = selected.entry.session?.cwd ?? '';
     const abs = /^(~[\/]|\/|[A-Za-z]:[\\/]|\\\\)/.test(raw) ? raw : `${cwd.replace(/[\/\\]$/, '')}/${raw.replace(/^\.\//, '')}`;
-    if (inShell() && isLocal(selected.machine)) {
+    if (canOpenLocally() && isLocal(selected.machine)) {
       try { if ((await openLocal(abs)) === 'revealed') say(`Shown in its folder: ${abs}`); }
       catch (e) { say(String(e)); }
     } else {
@@ -706,6 +706,7 @@
   }
 
   async function open(machine: Machine, entry: Entry, how: How = 'preview') {
+    if (!solo && inWindow[entry.id] === 'split') return;  // it's in view already, in the split pane
     if (!solo && inWindow[entry.id]) {
       if (await focusWindow(entry.id).catch(() => false)) return;
       delete inWindow[entry.id];  // its window is gone after all
@@ -800,7 +801,7 @@
     tabs.splice(to, 0, t);
   }
   // ---- pop-out windows: a session is open in one place only, a tab here or its own window ----
-  let inWindow = $state<Record<string, boolean>>({});  // entry ids open in their own window (main window only)
+  let inWindow = $state<Record<string, 'window' | 'split'>>({});  // entry ids open in their own window or the split pane (main window only)
   let onTop = $state(false);
   async function popOutCurrent() {
     const t = tabs.find((x) => tabKey(x) === curKey);
@@ -814,7 +815,7 @@
     const h = mine ? { text: draft, images: attachments } : drafts[e.id] ?? { text: '', images: [] };
     try { await popOut({ url: t.url, entry: e.id, ...h }, e.name); }
     catch (err) { return say(`Couldn't open a window: ${(err as Error).message ?? err}`); }
-    inWindow[e.id] = true;
+    inWindow[e.id] = 'window';
     closeTab(k);
     delete drafts[e.id];  // the draft went with it
   }
@@ -826,7 +827,7 @@
       || ev.screenY < window.screenY || ev.screenY > window.screenY + window.outerHeight;
     if (out && (ev.dataTransfer?.dropEffect ?? 'none') === 'none') popOutTab(t);
   }
-  if (inShell() && !solo) onSoloEvents((id) => (inWindow[id] = true), (h) => {
+  if (inShell() && !solo) onSoloEvents((id) => (inWindow[id] = 'window'), (h) => {
     delete inWindow[h.entry];
     drafts[h.entry] = { text: h.text, images: h.images as typeof attachments };
     const m = machines.find((x) => x.url === h.url), e = tree[h.url]?.entries.find((x) => x.id === h.entry);
@@ -842,11 +843,92 @@
     const h = takeHandoff(solo.entry);
     if (h) drafts[solo.entry] = { text: h.text, images: h.images as typeof attachments };
     untrack(() => open(m, e, 'keep'));
-    if (inShell()) {
+    if (inShell() && !solo.embed) {
       soloOpened(solo.entry).catch(() => {});
       onSoloClosing(() => ({ url: solo.url, entry: solo.entry, text: draft, images: attachments }));
     }
   });
+  // in the split pane: hand the draft back to the main window when it closes the pane
+  if (solo?.embed && typeof window !== 'undefined') window.addEventListener('message', (ev) => {
+    if (ev.source !== window.parent || ev.origin !== location.origin) return;
+    if (ev.data?.type === 'give-draft')
+      window.parent.postMessage({ type: 'split-draft', entry: solo.entry, text: draft, images: $state.snapshot(attachments) }, location.origin);  // a plain copy: state proxies can't be posted
+    if (ev.data?.type === 'sb-shell') { useParentShell(); document.documentElement.dataset.viaParent = '1'; }  // the main window runs in the desktop app: ask it to open things
+  });
+  if (solo?.embed && typeof window !== 'undefined') window.parent.postMessage({ type: 'pane-ready' }, location.origin);  // the main window answers sb-shell
+  // the main window does what its split pane asks (links in the browser, files on this machine, notifications)
+  if (!solo && typeof window !== 'undefined') window.addEventListener('message', (ev) => {
+    const d = ev.data;
+    if (ev.origin !== location.origin || !splitFrame || ev.source !== splitFrame.contentWindow) return;
+    if (d?.type === 'pane-ready' && inShell()) return void splitFrame.contentWindow?.postMessage({ type: 'sb-shell' }, location.origin);
+    if (!d?.sb) return;
+    if (d.do === 'url' && typeof d.url === 'string' && /^https?:\/\//i.test(d.url)) openExternal(d.url);
+    else if (d.do === 'path' && typeof d.path === 'string') openLocal(d.path).then((r) => r === 'revealed' && say(`Shown in its folder: ${d.path}`), (e) => say(String(e)));
+    else if (d.do === 'notify' && typeof d.title === 'string') notify(d.title, String(d.body ?? ''));
+  });
+
+  // ---- split view: one more session beside or below the chat (the single-session page in a pane) ----
+  type SplitDir = 'side' | 'below';
+  const SPLIT_KEY = 'switchboard.split';
+  const splitSaved = (() => { try { return JSON.parse(localStorage.getItem(SPLIT_KEY) || '{}'); } catch { return {}; } })();
+  const splitStart = !solo && splitSaved.entry ? { url: splitSaved.url as string, entry: splitSaved.entry as string } : null;
+  let split = $state<{ url: string; entry: string } | null>(splitStart);
+  let splitDir = $state<SplitDir>(splitSaved.dir === 'below' ? 'below' : 'side');
+  let splitSize = $state<number>(typeof splitSaved.size === 'number' ? splitSaved.size : 0.5);  // the pane's share of the space
+  let splitFrame = $state<HTMLIFrameElement>();
+  let workEl = $state<HTMLDivElement>();
+  let splitDrag = $state(false);
+  if (splitStart) inWindow[splitStart.entry] = 'split';
+  $effect(() => {
+    if (solo) return;
+    const v = JSON.stringify({ ...(split ?? {}), dir: splitDir, size: splitSize });
+    try { localStorage.setItem(SPLIT_KEY, v); } catch {}
+  });
+  const splitEntry = $derived(split ? tree[split.url]?.entries.find((e) => e.id === split!.entry) : undefined);
+  async function openSplit(m: Machine, e: Entry, dir: SplitDir) {
+    if (split?.entry === e.id) { splitDir = dir; return; }
+    if (split) await closeSplit();
+    const k = tabKey({ entry: e.id });
+    const h = k === curKey ? { text: draft, images: attachments } : drafts[e.id] ?? { text: '', images: [] };
+    try { localStorage.setItem('switchboard.handoff.' + e.id, JSON.stringify({ url: m.url, entry: e.id, ...h })); } catch {}
+    if (tabs.some((t) => tabKey(t) === k)) closeTab(k);
+    delete drafts[e.id];  // the draft goes with it
+    inWindow[e.id] = 'split';
+    splitDir = dir;
+    split = { url: m.url, entry: e.id };
+  }
+  // close the pane: its draft comes back (asked for over postMessage) and the session returns as a tab
+  async function closeSplit() {
+    const s = split;
+    if (!s) return;
+    const w = splitFrame?.contentWindow;
+    const got: { text: string; images: unknown[] } | null = w ? await new Promise((ok) => {
+      const done = (v: any) => { clearTimeout(t); window.removeEventListener('message', on); ok(v); };
+      const on = (ev: MessageEvent) => { if (ev.origin === location.origin && ev.data?.type === 'split-draft' && ev.data.entry === s.entry) done(ev.data); };
+      const t = setTimeout(() => done(null), 800);
+      window.addEventListener('message', on);
+      w.postMessage({ type: 'give-draft' }, location.origin);
+    }) : null;
+    split = null;
+    delete inWindow[s.entry];
+    if (got) drafts[s.entry] = { text: got.text, images: got.images as typeof attachments };
+    const m = machines.find((x) => x.url === s.url), e = tree[s.url]?.entries.find((x) => x.id === s.entry);
+    if (m && e) open(m, e, 'new');
+  }
+  function dragSplit(ev: PointerEvent) {
+    const el = workEl;
+    if (!el) return;
+    (ev.currentTarget as HTMLElement).setPointerCapture(ev.pointerId);
+    splitDrag = true;
+    const move = (e: PointerEvent) => {
+      const r = el.getBoundingClientRect();
+      const f = splitDir === 'side' ? (r.right - e.clientX) / r.width : (r.bottom - e.clientY) / r.height;
+      splitSize = Math.min(0.8, Math.max(0.2, f));
+    };
+    const up = () => { splitDrag = false; window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
 
   // on start, reopen the tab that was active once the tree has loaded; drop tabs whose session is gone
   let tabsRestored = false;
@@ -891,6 +973,14 @@
     const r = (ev.currentTarget as HTMLElement).getBoundingClientRect();
     const at = ev.clientX || ev.clientY ? { x: ev.clientX, y: ev.clientY } : { x: r.left + 24, y: r.bottom };
     ctx = { ...at, machine, entry, group };
+    // a menu opened near the window's edge moves back inside it (a long menu at the bottom ran off-screen)
+    tick().then(() => {
+      const el = document.querySelector('.ctxmenu'), c = ctx, pad = 6;
+      if (!el || !c) return;
+      const r = el.getBoundingClientRect();
+      if (r.bottom > innerHeight - pad) c.y = Math.max(pad, innerHeight - r.height - pad);
+      if (r.right > innerWidth - pad) c.x = Math.max(pad, innerWidth - r.width - pad);
+    });
   }
 
   // ---- rename in place (sessions and projects) ----
@@ -1065,6 +1155,8 @@
       <button role="menuitem" disabled={!LIVE_STATES.includes(me.state)} title="Ends the Claude process; it stays in the tree and resumes on your next message"
         onclick={() => closeSession(mm.machine, me)}>Close session</button>
       {#if inShell() && !solo}<button role="menuitem" onclick={async () => { const m = mm.machine, en = me; ctx = null; await open(m, en, 'keep'); if (!inWindow[en.id]) popOutCurrent(); }}>Open in new window</button>{/if}
+      {#if !solo}<button role="menuitem" onclick={() => { const m = mm.machine, en = me; ctx = null; openSplit(m, en, 'side'); }}>Open to the side</button>
+        <button role="menuitem" onclick={() => { const m = mm.machine, en = me; ctx = null; openSplit(m, en, 'below'); }}>Open below</button>{/if}
       <button role="menuitem" title="Takes it off the tree; the session stays on its machine (find it under Removed to restore)"
         onclick={() => { const m = mm.machine, en = me; ctx = null; removeEntry(m, en); }}>Remove from tree</button>
       <hr />
@@ -1175,7 +1267,7 @@
                   <span class="st {icon(e)}"></span>
                   {#if e.pinned}<span class="pin" aria-label="pinned">★</span>{/if}
                   <span class="ename">{e.name}</span>
-                  {#if inWindow[e.id]}<span class="muted small" title="Open in its own window">⧉</span>{/if}
+                  {#if inWindow[e.id]}<span class="muted small" title={inWindow[e.id] === 'split' ? 'Open in the split' : 'Open in its own window'}>{inWindow[e.id] === 'split' ? '◫' : '⧉'}</span>{/if}
                   {#if bgRunning(e)}<span class="bgbadge" title="{bgRunning(e)} background task{bgRunning(e) === 1 ? '' : 's'} running">⟳ {bgRunning(e)}</span>{/if}
                   <span class="muted small">{e.session ? ago(e.session.last_modified) : ''}</span>
                 </button>
@@ -1201,6 +1293,7 @@
       </div>
     </nav>
 
+    <div class="work" class:below={splitDir === 'below'} bind:this={workEl}>
     <main class="term">
       {#if tabs.length && !solo}
         <div class="tabs" role="tablist" aria-label="Open sessions">
@@ -1238,10 +1331,10 @@
           <button class="tiny" class:on={termFor === selected.entry.id} onclick={() => { termFor = termFor === selected!.entry.id ? null : selected!.entry.id; if (!termFor) open(selected!.machine, selected!.entry); }}
             title="Switch between the chat view and the real claude terminal">{termFor === selected.entry.id ? 'Chat' : 'Terminal'}</button>
           {#if LIVE_STATES.includes(selected.entry.state)}<button class="tiny" onclick={() => act((l, id) => l.stop(id))} title="Close the live session; it resumes on your next message">Stop</button>{/if}
-          {#if solo}
+          {#if solo && !solo.embed}
             <button class="tiny" class:on={onTop} aria-pressed={onTop} onclick={() => { onTop = !onTop; setOnTop(onTop).catch(() => {}); }} title="Keep this window above other windows">Keep on top</button>
             <button class="tiny" onclick={() => closeThisWindow()} title="Close this window; the session goes back to a tab in the main window">Back to tabs</button>
-          {:else}
+          {:else if !solo}
             {#if inShell()}<button class="tiny" onclick={popOutCurrent} title="Open this session in its own window">Pop out</button>{/if}
             <button class="tiny" onclick={togglePin}>{selected.entry.pinned ? 'Unpin' : 'Pin'}</button>
             <button class="tiny" onclick={remove} title="Takes it off the tree; the session stays on its machine (find it under Removed to restore)">Remove from tree</button>
@@ -1400,12 +1493,27 @@
         <div class="placeholder">Pick a session from the tree, or <button class="link" disabled={!machines.length} onclick={openAdd}>add one</button>.</div>
       {/if}
     </main>
+    {#if split && !solo}
+      <div class="divider" role="separator" aria-label="Resize the split" aria-orientation={splitDir === 'side' ? 'vertical' : 'horizontal'} onpointerdown={dragSplit}></div>
+      <section class="splitpane" style="flex-basis: {splitSize * 100}%" aria-label="Split: {splitEntry?.name ?? 'session'}">
+        <div class="splithead">
+          <span class="st {splitEntry ? icon(splitEntry) : 'stopped'}"></span><span class="splitname">{splitEntry?.name ?? '…'}</span>
+          <span class="grow"></span>
+          <button class="tiny" onclick={() => (splitDir = splitDir === 'side' ? 'below' : 'side')} title={splitDir === 'side' ? 'Stack it below instead' : 'Put it side by side instead'}
+            aria-label={splitDir === 'side' ? 'Stack below' : 'Side by side'}>{splitDir === 'side' ? '⬓' : '◨'}</button>
+          <button class="tiny" onclick={closeSplit} title="Close the split; the session goes back to a tab" aria-label="Close split">×</button>
+        </div>
+        <iframe bind:this={splitFrame} class:dragging={splitDrag} title="Split: {splitEntry?.name ?? 'session'}"
+          src="/?machine={encodeURIComponent(split.url)}&solo={encodeURIComponent(split.entry)}&embed=1"></iframe>
+      </section>
+    {/if}
+    </div>
     {#if showInbox && machines.length && !solo}
       <InboxView items={inboxItems} onOpen={openFromInbox} onRead={readItem} onDelete={deleteItem} onReadAll={readAll} onClose={() => (showInbox = false)} />
     {/if}
   </div>
 
-  <footer class="status mono">
+  <footer class="status mono" hidden={!!solo?.embed}>
     <span>{machines.length} machine{machines.length === 1 ? '' : 's'}</span>
     {#if selected}
       <label class="modepick">account
@@ -1752,6 +1860,7 @@
      does, so 100vh overflowed on Windows (the whole window scrolled) and a calc() on it broke Linux instead */
   .app { display: flex; flex-direction: column; position: fixed; inset: 0; background: var(--base); }
   .titlebar[hidden] { display: none; }
+  .status[hidden] { display: none; }  /* in the split pane: the main window's own bar already shows these */
   .titlebar { display: flex; align-items: center; gap: 16px; padding: 10px 16px; background: var(--mantle); border-bottom: 1px solid var(--s0); flex-wrap: wrap; }
   .brand { display: flex; gap: 8px; align-items: center; font-weight: 600; font-size: 14px; }
   .chips { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
@@ -1834,6 +1943,18 @@
   :global(.btn.primary) { background: var(--mauve); color: var(--crust); border: 0; font-weight: 600; width: auto; padding: 9px 18px; }
   :global(.btn.ghost) { width: auto; padding: 9px 16px; }
 
+  /* the chat and, when split, a second session beside (side) or below it */
+  .work { flex: 1; min-width: 0; min-height: 0; display: flex; }
+  .work.below { flex-direction: column; }
+  .work > .term { flex: 1 1 0; min-height: 0; }
+  .divider { flex: none; width: 5px; cursor: col-resize; background: var(--s0); }
+  .work.below .divider { width: auto; height: 5px; cursor: row-resize; }
+  .divider:hover { background: var(--mauve); }
+  .splitpane { flex: 0 0 50%; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--base); }
+  .splithead { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--mantle); border-bottom: 1px solid var(--s0); font-size: 13px; }
+  .splitname { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .splitpane iframe { flex: 1; border: 0; width: 100%; background: var(--base); }
+  .splitpane iframe.dragging { pointer-events: none; }  /* so a resize drag isn't swallowed by the pane */
   .term { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--base); }
   /* the bottom line is drawn inside the bar (inset shadow) so the active tab can cover it without overflowing the bar,
      which made Windows show a vertical scrollbar */
