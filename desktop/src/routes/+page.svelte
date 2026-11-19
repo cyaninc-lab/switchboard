@@ -145,9 +145,49 @@
   let rBusy = $state(false);
   let rDone = $state('');
   let rReport = $state('');
+  // in the app: file the issue directly (a one-time GitHub device sign-in); or open GitHub's page as before
+  let gh = $state<api.GitHub | null>(null);
+  let ghCode = $state<{ user_code: string; verification_uri: string } | null>(null);
+  let rIssue = $state('');
+  let ghSeq = 0;
+  async function loadGh() { gh = localMachine ? await api.githubStatus(localMachine).catch(() => null) : null; }
+  async function signInGitHub(m: Machine) {
+    const d = await api.githubStart(m);
+    ghCode = d;
+    try { await navigator.clipboard.writeText(d.user_code); } catch {}
+    openExternal(d.verification_uri);
+    const mine = ++ghSeq, until = Date.now() + d.expires_in * 1000;
+    let wait = d.interval;
+    try {
+      while (mine === ghSeq && Date.now() < until) {
+        await new Promise((ok) => setTimeout(ok, wait * 1000));
+        if (mine !== ghSeq) return;
+        const r = await api.githubPoll(m, d.device_code);
+        if (r.status === 'done') { gh = { signed_in: true, login: r.login ?? null }; return; }
+        if (r.status === 'slow_down') wait += 5;
+        else if (r.status !== 'pending') throw new Error(r.status === 'denied' ? 'GitHub sign-in was cancelled' : 'The sign-in code expired: try again');
+      }
+    } finally { if (mine === ghSeq) ghCode = null; }
+  }
+  async function sendToGitHub() {
+    const m = localMachine;
+    if (!m || !rDesc.trim()) return;
+    rBusy = true; rDone = ''; rIssue = '';
+    try {
+      if (!gh?.signed_in) await signInGitHub(m);
+      if (!gh?.signed_in) return;
+      rReport = await buildReport(rDesc, machines, rLogs, await appVersion());
+      const r = await api.githubIssue(m, rDesc.trim().split('\n')[0].slice(0, 90) || 'Bug report', rReport);
+      rIssue = r.url; rDone = `Sent as issue #${r.number}. Thank you!`;
+    } catch (e) {
+      const c = (e as Error).message;
+      if (c === 'not_signed_in') { gh = { signed_in: false, login: null }; rDone = 'GitHub sign-in has expired: press Send again to sign in.'; }
+      else rDone = `Couldn't send it: ${c}. You can use "Open on GitHub instead".`;
+    } finally { rBusy = false; }
+  }
   async function sendReport(ev: Event) {
     ev.preventDefault();
-    rBusy = true; rDone = '';
+    rBusy = true; rDone = ''; rIssue = '';
     rReport = await buildReport(rDesc, machines, rLogs, await appVersion());
     let copied = true;
     try { await navigator.clipboard.writeText(rReport); } catch { copied = false; }
@@ -191,7 +231,7 @@
     try { dset[m.url] = await api.setSettings(m, { idle_close_minutes: minutes }); } catch (e) { say(`Couldn't change ${m.name}: ${(e as Error).message}`); }
   }
   async function openSettings() {
-    loadNet(); loadDaemonSettings(); code = null;
+    loadNet(); loadDaemonSettings(); loadGh(); code = null;
     dialog = 'settings'; svcError = '';
     accMachine = accMachine ?? machines[0] ?? null;
     if (accMachine) loadAccounts(accMachine);
@@ -1033,7 +1073,7 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2" /><path d="M5.5 5h13L22 12v7H2v-7z" /></svg>
         {#if unreadCount}<span class="count">{unreadCount}</span>{/if}
       </button>
-      <button class="chip icon" aria-label="Report a bug" title="Report a bug" onclick={() => { dialog = 'report'; rDone = ''; rReport = ''; }}>
+      <button class="chip icon" aria-label="Report a bug" title="Report a bug" onclick={() => { dialog = 'report'; rDone = ''; rReport = ''; rIssue = ''; loadGh(); }}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="8" y="6" width="8" height="14" rx="4" /><path d="M19 7l-3 2M5 7l3 2M19 19l-3-2M5 19l3-2M20 13h-4M4 13h4M10 4l1 2M14 4l-1 2" /></svg>
       </button>
       <button class="chip icon" aria-label="Settings" title="Settings" onclick={openSettings}>
@@ -1399,17 +1439,31 @@
 
 {#if dialog === 'report'}
   <div class="backdrop" role="presentation" {...backdrop(() => (dialog = null))}>
-    <form class="dialog" aria-label="Report a bug" onsubmit={sendReport}>
+    <form class="dialog" aria-label="Report a bug" onsubmit={(ev) => { if (localMachine) { ev.preventDefault(); sendToGitHub(); } else sendReport(ev); }}>
       <h2>Report a bug</h2>
       <label>What happened, and what did you expect?
         <textarea bind:value={rDesc} required rows="6" placeholder="First line becomes the title"></textarea>
       </label>
       <label class="inline"><input type="checkbox" bind:checked={rLogs} /> Include recent app and daemon logs (tokens are removed)</label>
-      {#if rDone}<p class="muted" role="status">{rDone}</p>{/if}
+      {#if ghCode}
+        <div class="paircode" role="status" aria-label="GitHub sign-in">
+          <div>Sign in to GitHub once to send reports from here. On the page that opened, enter:</div>
+          <div><b class="mono big">{ghCode.user_code}</b> <span class="muted small">(copied)</span></div>
+          <div class="muted small">Waiting for you to approve… <button type="button" class="link" onclick={() => openExternal(ghCode!.verification_uri)}>Open the page again</button> ·
+            <button type="button" class="link" onclick={() => { ghSeq++; ghCode = null; rBusy = false; }}>Cancel</button></div>
+        </div>
+      {/if}
+      {#if rDone}<p class="muted" role="status">{rDone}{#if rIssue} <button type="button" class="link" onclick={() => openExternal(rIssue)}>Open the issue</button>{/if}</p>{/if}
+      {#if localMachine && gh?.signed_in}<p class="muted small">Sends as <b>{gh.login}</b> on GitHub.</p>{/if}
       {#if rReport}<details><summary class="muted small">Report</summary><textarea class="mono small" readonly rows="10">{rReport}</textarea></details>{/if}
       <div class="actions">
         <button type="button" class="btn ghost" onclick={() => (dialog = null)}>Close</button>
-        <button class="btn primary" disabled={rBusy || !rDesc.trim()}>{rBusy ? 'Collecting…' : 'Copy report & open GitHub'}</button>
+        {#if localMachine}
+          <button type="button" class="btn ghost" disabled={rBusy || !rDesc.trim()} onclick={sendReport} title="Copies the report and opens a new GitHub issue in your browser: no sign-in here">Open on GitHub instead</button>
+          <button class="btn primary" disabled={rBusy || !rDesc.trim()}>{rBusy ? (ghCode ? 'Waiting for GitHub…' : 'Sending…') : 'Send to GitHub'}</button>
+        {:else}
+          <button class="btn primary" disabled={rBusy || !rDesc.trim()}>{rBusy ? 'Collecting…' : 'Copy report & open GitHub'}</button>
+        {/if}
       </div>
     </form>
   </div>
@@ -1481,6 +1535,11 @@
       {/if}
       {#if netError}<p class="error">{netError === 'only_from_this_machine' ? 'This can only be changed on that machine itself.' : netError}</p>{/if}
 
+      {#if gh?.signed_in && localMachine}
+        <h3 class="sub">Bug reports</h3>
+        <p class="muted small">Signed in to GitHub as <b>{gh.login}</b>, to send bug reports from the app (it can only open issues on Switchboard's repository).
+          <button class="link" onclick={async () => { gh = await api.githubSignOut(localMachine!).catch(() => gh); }}>Sign out</button></p>
+      {/if}
       <h3 class="sub">Updates</h3>
       <p class="muted small">Switchboard {version || '…'}. Updates come from github.com/cyaninc-lab/switchboard and are checked for a valid signature before installing.</p>
       <div class="actions" style="justify-content: flex-start"><button type="button" class="btn ghost" onclick={() => checkUpdates(true)}>Check for updates</button></div>
