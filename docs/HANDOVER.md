@@ -27,7 +27,7 @@ Done: pairing (one-time code, tokens hashed), multi-machine tree, live chat with
 2. **Background service on Windows** (and macOS later); currently Linux only.
 3. **Daemon `update` command** for machines running the daemon without the app.
 4. **Tokens in the OS keychain** instead of the SQLite file.
-5. **Phone app** (phase 5) and push.
+5. **Phone app** (phase 5) and push: planned, see "Phone app plan" below.
 6. **TLS / non-Tailscale transport.**
 7. Code-sign the Windows installer (SmartScreen warns today).
 
@@ -35,6 +35,17 @@ Done: pairing (one-time code, tokens hashed), multi-machine tree, live chat with
 Shipped in 0.1.9–0.1.14: multiline input, Ctrl+Enter send-now, queued messages at the bottom, rename from the right-click menu, project dropdown + "New project" when adding, add several at once, inbox delete, Catppuccin themes, text size and fonts, boxes for messages between sessions, a band for your own messages, clickable file links, web links in the default browser, collapsible projects. In 0.1.16–0.1.18: collapsible session tree, idle close as a per-machine setting, a tag on a machine's chip when it runs an older/newer Switchboard, tabs, pop-out windows, option previews in questions. In 0.1.19: thin scroll bars, activity order, drag projects, drag a tab out, `@` mentions, copy buttons, remove/delete, three fonts. After 0.1.19 (unreleased): /clear follows the new session, background tasks bar, Send to GitHub, watch active hours + quiet + "Ask Claude to check something" (for e.g. Zoho Desk mentions through the user's Claude Zoho integration; Zoho webhooks need a Professional plan and a public endpoint, so not used).
 
 Left, **(S)** small, **(M)** medium, **(L)** large. Separate PRs, batched into a release when the user says so:
+
+## Phone app plan (agreed with the user, 2026-11-20; not started)
+For "Claude needs me while I'm away from my desk", with a real chat from the start. Android first, Tauri 2 mobile, the same Svelte code laid out for a phone; the daemon's HTTP/WS API stays the only contract.
+- **Screens:** Sessions (every machine, same icons, the ones that need you on top with what they're asking; tabs Sessions / Inbox / Settings) · Chat · Pairing.
+- **Chat like text messages:** the user on the right (mauve bubbles), Claude on the left (grey); tool steps, to-dos and diffs as slim outlined cards on Claude's side (tap to expand). Message box with Send (queues while Claude works; hold Send = send now/interrupt), photos from camera/gallery, keyboard dictation, slash and `@` menus, Stop in the header. Permission/question/plan prompts slide up as a sheet with big buttons. Starting a new session in a recent folder is in.
+- **Notifications:** pushed by each daemon to the user's own ntfy (on the Pi), delivered to the app through UnifiedPush (no Google). Actions: Allow / Deny / Open on permission prompts, an inline reply on questions and finished turns. Notifications carry no secrets; the app fetches details over Tailscale when you act. Settings: **show details on the lock screen** (off by default: "The RIG GH needs you: permission for Bash"), **tell me when a session finishes** (on by default); watches notify as on the desktop.
+- **Reaching machines:** over Tailscale, like the desktop. Pairing by QR code: desktop Settings → "Pair a phone" shows address + one-time code. Tokens in Android's Keystore.
+- **Updates:** a signed APK on the releases page; the app checks the feed itself (Tauri's updater doesn't do mobile).
+- **Not in the first version:** the real terminal, watches setup, accounts, split view, tabs, pop-out.
+- **Build order:** (1) phone layout + the chat screen in the existing UI, usable in a phone browser over Tailscale; (2) Android shell: QR pairing, Keystore, sessions; (3) ntfy push with Allow/Deny and inline reply; (4) signed APK releases + in-app update check.
+- Mockup (screens 1–4) was shown to the user; regenerate from this description if needed.
 
 ## Traps learned the hard way
 - The split pane is the single-session page (`?solo=&embed=1`) in an iframe. Tauri doesn't give iframes `__TAURI_INTERNALS__`, so the pane asks the main window over postMessage to open links/files and to notify (it announces `pane-ready`, the main window answers `sb-shell`; the main window only accepts requests from its own pane). Svelte state proxies can't be posted: send `$state.snapshot(...)`.
