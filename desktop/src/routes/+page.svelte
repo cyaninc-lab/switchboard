@@ -676,13 +676,28 @@
   let inWindow = $state<Record<string, boolean>>({});  // entry ids open in their own window (main window only)
   let onTop = $state(false);
   async function popOutCurrent() {
-    const s = selected;
-    if (!s || s.sub || !curKey) return;
-    try { await popOut({ url: s.machine.url, entry: s.entry.id, text: draft, images: attachments }, s.entry.name); }
-    catch (e) { return say(`Couldn't open a window: ${(e as Error).message ?? e}`); }
-    inWindow[s.entry.id] = true;
-    closeTab(curKey);
-    delete drafts[s.entry.id];  // the draft went with it
+    const t = tabs.find((x) => tabKey(x) === curKey);
+    if (t) await popOutTab(t);
+  }
+  // any session tab (not only the active one) into its own window, with its draft
+  async function popOutTab(t: Tab) {
+    const e = tabEntry(t), k = tabKey(t);
+    if (!e || t.sub) return;
+    const mine = k === curKey;
+    const h = mine ? { text: draft, images: attachments } : drafts[e.id] ?? { text: '', images: [] };
+    try { await popOut({ url: t.url, entry: e.id, ...h }, e.name); }
+    catch (err) { return say(`Couldn't open a window: ${(err as Error).message ?? err}`); }
+    inWindow[e.id] = true;
+    closeTab(k);
+    delete drafts[e.id];  // the draft went with it
+  }
+  // a tab dragged out of the window and let go over nothing pops out (as in a browser)
+  function tabDragEnd(ev: DragEvent, t: Tab) {
+    dragTab = null;
+    if (!inShell() || solo || t.sub || !(ev.screenX || ev.screenY)) return;  // some engines report 0,0 for a cancelled drag
+    const out = ev.screenX < window.screenX || ev.screenX > window.screenX + window.outerWidth
+      || ev.screenY < window.screenY || ev.screenY > window.screenY + window.outerHeight;
+    if (out && (ev.dataTransfer?.dropEffect ?? 'none') === 'none') popOutTab(t);
   }
   if (inShell() && !solo) onSoloEvents((id) => (inWindow[id] = true), (h) => {
     delete inWindow[h.entry];
@@ -1034,7 +1049,8 @@
               {@const name = t.sub ? `↳ ${a?.description ?? 'subagent'}` : e.name}
               {@const k = tabKey(t)}
               <div class="tab" class:on={k === curKey} class:preview={t.preview} role="presentation" draggable="true"
-                ondragstart={() => (dragTab = k)} ondragover={(ev) => ev.preventDefault()} ondrop={(ev) => { ev.preventDefault(); dropTab(k); }}
+                ondragstart={(ev) => { dragTab = k; ev.dataTransfer?.setData('text/plain', name); if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'move'; }}
+                ondragend={(ev) => tabDragEnd(ev, t)} ondragover={(ev) => ev.preventDefault()} ondrop={(ev) => { ev.preventDefault(); dropTab(k); }}
                 onmousedown={noAutoscroll} onauxclick={(ev) => { if (ev.button === 1) { ev.preventDefault(); closeTab(k); } }}>
                 <button class="tabname" role="tab" aria-selected={k === curKey} title={t.preview ? `${name} (preview: the next session you open replaces it; double-click to keep)` : name}
                   onclick={() => k !== curKey && showTab(t)} ondblclick={() => (t.preview = false)}>

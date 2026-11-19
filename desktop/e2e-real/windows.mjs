@@ -75,6 +75,23 @@ try {
   await d.wait(async () => (await val(await x('//textarea'))) === 'coming back', 10000).catch(() => {});
   check((await val(await x('//textarea'))) === 'coming back', 'with its draft');
   check((await d.findElements(By.xpath("//nav//button[contains(.,'Window one') and contains(.,'⧉')]"))).length === 0, 'the tree no longer marks it');
+  await step('drag its tab out of the window and let go: it pops out');
+  // a real mouse drag can't be driven here; send the drag's end as the engine would: over nothing, outside the window
+  await d.executeScript(`const tab = [...document.querySelectorAll('.tabs .tab')].find((t) => t.textContent.includes('Window one'));
+    tab.dispatchEvent(new DragEvent('dragend', { bubbles: true, screenX: window.screenX + window.outerWidth + 300, screenY: window.screenY + 80, dataTransfer: new DataTransfer() }));`);
+  await d.wait(async () => (await d.getAllWindowHandles()).length === 2, 15000).catch(() => {});
+  check((await d.getAllWindowHandles()).length === 2, 'it opened in its own window');
+  check(await d.executeScript("return ![...document.querySelectorAll('.tabs .tab')].some((t) => t.textContent.includes('Window one'))"), 'its tab left');
+  await d.switchTo().window((await d.getAllWindowHandles()).find((h) => h !== main));
+  await (await x("//button[normalize-space()='Back to tabs']")).click();
+  await d.switchTo().window(main);
+  await d.wait(async () => (await d.getAllWindowHandles()).length === 1, 15000);
+  // letting go inside the window (a cancelled drag) does nothing
+  await d.executeScript(`const tab = [...document.querySelectorAll('.tabs .tab')].find((t) => t.textContent.includes('Window one'));
+    tab.dispatchEvent(new DragEvent('dragend', { bubbles: true, screenX: window.screenX + 200, screenY: window.screenY + 80, dataTransfer: new DataTransfer() }));`);
+  await sleep(2000);
+  check((await d.getAllWindowHandles()).length === 1, 'a drag ending inside the window opens nothing');
+
   await step('right-click in the tree → Open in new window');
   // WebKitWebDriver has no right-click action: send the contextmenu event itself
   await d.executeScript("const r = arguments[0].getBoundingClientRect(); arguments[0].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + 20, clientY: r.top + 5 }))",
