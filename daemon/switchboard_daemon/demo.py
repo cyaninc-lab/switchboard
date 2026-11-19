@@ -312,6 +312,8 @@ class ClaudeSDKClient:
             yield AssistantMessage([TextBlock(f"(effort: {self.options.effort})")])
         if "mention a file" in text.lower():  # a file path and a command as inline code
             yield AssistantMessage([TextBlock("The handler is in `server/app.py:212`; check it with `npm test`.")])
+        if "share a snippet" in text.lower():  # a reply with a fenced code block (it gets a Copy button)
+            yield AssistantMessage([TextBlock("Here it is:\n\n```python\ndef feed(v):\n    return v.get('dash_url')\n```\n\nThat's the fix.")])
         if "touch up the notes" in text.lower():  # file steps: a Read and an Edit (their headers carry clickable paths)
             yield AssistantMessage([ToolUseBlock("r1", "Read", {"file_path": "notes.md"})])
             yield AssistantMessage([ToolUseBlock("e1", "Edit", {"file_path": "notes.md", "old_string": "draft", "new_string": "final"})])

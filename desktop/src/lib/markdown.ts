@@ -14,5 +14,9 @@ export function looksLikePath(t: string): boolean {
   return (/[\/\\]/.test(t) && !/^[.\/]+$/.test(t)) || FILE_EXT.test(t) && !/^\d/.test(t) && !/\(|\)/.test(t);
 }
 const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-marked.use({ renderer: { codespan({ text }) { return `<code${looksLikePath(text) ? ' class="path" title="Open"' : ''}>${esc(text)}</code>`; } } });
+marked.use({ renderer: {
+  codespan({ text }) { return `<code${looksLikePath(text) ? ' class="path" title="Open"' : ''}>${esc(text)}</code>`; },
+  // code blocks carry a Copy button (the page handles the click: button.copy copies its block's code)
+  code({ text }) { return `<pre><button type="button" class="copy" title="Copy">Copy</button><code>${esc(text)}</code></pre>\n`; },
+} });
 export const md = (text: string) => DOMPurify.sanitize(marked.parse(text, { async: false }) as string);
