@@ -27,6 +27,7 @@ Tauri-specific code. Everything is under `/v1`; breaking changes get `/v2`.
 | `GET /v1/folders` | folder suggestions for a new session (where sessions have run, newest first) |
 | `PATCH /v1/entries/{id}` | rename, regroup, pin, change account or default mode |
 | `DELETE /v1/entries/{id}` | off the tree only; the session stays on disk |
+| `GET /v1/entries/{id}/files?q=` | files in the session's folder for @-mentions, best matches first (git's ignore rules honoured; node_modules and the like skipped) |
 | `GET /v1/entries/{id}/messages?offset=&limit=` | history via `get_session_messages()`, no resume needed |
 | `GET /v1/commands` | slash commands for the menu, with descriptions where known |
 | `GET/POST /v1/watches` · `PATCH/DELETE /v1/watches/{id}` | watches: `{name, kind: schedule|command|http|github, config, action: notify|wake, entry_id?, instructions?, mode?, enabled}`; command watches run shell commands on the daemon's machine (same trust as a paired client) |

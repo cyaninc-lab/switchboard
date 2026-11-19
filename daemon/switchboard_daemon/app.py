@@ -8,6 +8,7 @@ from .store import Store
 from .runner import Runner, scrub_env
 from .tty import Terminals
 from .procs import alive
+from . import files as filesmod
 from .net import Network, SETTING as NET_SETTING
 from .watches import Watches, KINDS, ACTIONS
 from .runner import MODES, IDLE_SETTING, IDLE_CHOICES
@@ -380,6 +381,18 @@ async def folders(request):
     return web.json_response({"home": home, "folders": ([home] if home not in seen else []) + out[:30]})
 
 
+async def entry_files(request):
+    """Files in the session's folder matching ?q= (for @-mentions in the message box)."""
+    e = request.app[STORE].entry(request.match_info["id"])
+    if not e:
+        raise web.HTTPNotFound()
+    info = await _off(sdk.get_session_info, e["session_id"])
+    cwd = e.get("cwd") or getattr(info, "cwd", None)
+    if not cwd or not os.path.isdir(cwd):
+        return web.json_response({"files": []})
+    return web.json_response({"files": await _off(filesmod.search, cwd, request.query.get("q", ""))})
+
+
 async def messages(request):
     e = request.app[STORE].entry(request.match_info["id"])
     if not e:
@@ -559,7 +572,7 @@ def make_app(store: Store, name=None):
         web.post("/v1/pair", pair), web.get("/v1/machine", machine), web.get("/v1/sessions", sessions),
         web.get("/v1/entries", list_entries), web.post("/v1/entries", add_entry),
         web.patch("/v1/entries/{id}", update_entry), web.delete("/v1/entries/{id}", remove_entry),
-        web.get("/v1/entries/{id}/messages", messages), web.get("/v1/entries/{id}/subagents/{agent}/messages", subagent_messages), web.get("/v1/ws", ws_handler), web.get("/v1/commands", commands), web.get("/v1/folders", folders), web.get("/v1/models", models), web.get("/v1/logs", get_logs),
+        web.get("/v1/entries/{id}/messages", messages), web.get("/v1/entries/{id}/files", entry_files), web.get("/v1/entries/{id}/subagents/{agent}/messages", subagent_messages), web.get("/v1/ws", ws_handler), web.get("/v1/commands", commands), web.get("/v1/folders", folders), web.get("/v1/models", models), web.get("/v1/logs", get_logs),
         web.get("/v1/network", get_network), web.put("/v1/network", set_network),
         web.get("/v1/settings", get_settings), web.put("/v1/settings", set_settings), web.post("/v1/pair_code", pair_code),
         web.get("/v1/watches", list_watches), web.post("/v1/watches", add_watch), web.patch("/v1/watches/{id}", update_watch),
