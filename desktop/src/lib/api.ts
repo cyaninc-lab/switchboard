@@ -21,6 +21,20 @@ export type Entry = {
 /** A subagent of a session; parent is the subagent that spawned it (null: the session itself did). */
 export type Sub = { id: string; description: string; type: string | null; parent: string | null; tool_use_id: string | null; finished: boolean; stopped: boolean; updated: number; running?: boolean };
 // patches: an edit's hunks by tool_use id (Claude Code's structuredPatch), for line numbers in its diff
+/** A unique id for a message shown before the daemon echoes it. crypto.randomUUID only exists on secure pages
+ *  (https, localhost): a phone opening http://<machine>:7878 has none, and sending then failed after the send. */
+export const uid = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+/** Copy text: the clipboard API is missing on plain-http pages (a phone on http://<machine>:7878), so fall back to
+ *  the old select-and-copy way there. */
+export async function copy(text: string) {
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+  const t = Object.assign(document.createElement('textarea'), { value: text });
+  t.style.cssText = 'position:fixed; opacity:0';
+  document.body.append(t); t.select();
+  const ok = document.execCommand('copy');
+  t.remove();
+  if (!ok) throw new Error('copy failed');
+}
 export type Hunk = { oldStart: number; oldLines: number; newStart: number; newLines: number; lines: string[] };
 export type HistoryMessage = { type: 'user' | 'assistant'; uuid: string; message: any; parent_tool_use_id?: string | null; patches?: Record<string, Hunk[]> };
 
