@@ -723,3 +723,27 @@ def test_github_device_sign_in_and_issue(tmp_path, monkeypatch):
         assert (await (await client.get("/v1/github", headers=h)).json())["signed_in"] is False
         await client.close(); await fake.close()
     asyncio.run(t())
+
+
+def test_new_session_defaults(tmp_path, monkeypatch):
+    """Defaults apply to sessions added after they're set (new or from disk), not to ones already there; a request's own choice wins."""
+    async def t():
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "cc"))
+        (tmp_path / "cc").mkdir()
+        (tmp_path / "cc" / "settings.json").write_text('{"permissions": {"defaultMode": "acceptEdits"}}')
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        st = await (await client.get("/v1/settings", headers=h)).json()
+        assert st["new_session"] == {} and st["claude_default_mode"] == "acceptEdits"
+        assert (await client.put("/v1/settings", headers=h, json={"new_session": {"mode": "yolo"}})).status == 400
+        assert (await client.put("/v1/settings", headers=h, json={"new_session": {"account": "nobody"}})).status == 400
+        r = await (await client.put("/v1/settings", headers=h, json={"new_session": {"mode": "plan", "model": "haiku", "effort": "low", "account": None}})).json()
+        assert r["new_session"] == {"mode": "plan", "model": "haiku", "effort": "low"}
+        new = await (await client.post("/v1/entries", headers=h, json={"new": {"cwd": str(tmp_path)}})).json()
+        assert (new["mode"], new["model"], new["effort"]) == ("plan", "haiku", "low")
+        mine = await (await client.post("/v1/entries", headers=h, json={"new": {"cwd": str(tmp_path)}, "mode": "auto"})).json()
+        assert mine["mode"] == "auto" and mine["model"] == "haiku"  # its own choice wins, the rest from defaults
+        added = await (await client.post("/v1/entries", headers=h, json={"session_id": "demo-2"})).json()
+        assert (added["mode"], added["model"], added["effort"]) == ("plan", "haiku", "low")
+        assert store.entry(e["id"])["mode"] is None  # the session added before keeps its own
+        await client.close()
+    asyncio.run(t())

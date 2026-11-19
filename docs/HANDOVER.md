@@ -36,7 +36,6 @@ Shipped in 0.1.9–0.1.14: multiline input, Ctrl+Enter send-now, queued messages
 
 Left, **(S)** small, **(M)** medium, **(L)** large. Separate PRs, batched into a release when the user says so:
 - **Archive**, or better: make Remove keep name/project/settings, with a "Removed" list to restore from **(M)**.
-- **Settings defaults** for new sessions (mode, model, effort, account), and sessions show real values instead of "default" **(M)**; a changed default affects new sessions only.
 - **Split view** **(M)**: two tabs side by side in one window, now that tabs exist.
 - **`/btw` side chat** **(M)**: `/btw` opens a chat panel on the right (where the inbox is) for side questions about the session: like Claude Code's `/btw`, it sees the session's context but doesn't go into its history or interrupt it. Kept per session like drafts (only the current session's shows; × clears it; not saved across restarts); an answer arriving while you're elsewhere gives the session its unread dot.
 
