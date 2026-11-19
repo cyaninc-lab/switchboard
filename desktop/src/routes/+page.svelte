@@ -1,6 +1,7 @@
 <script lang="ts">
   import * as api from '$lib/api';
-  import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell, openExternal, openLocal, appVersion, checkForUpdate, notify } from '$lib/shell';
+  import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell, openExternal, openLocal, appVersion, checkForUpdate, notify,
+    soloOf, popOut, takeHandoff, focusWindow, onSoloClosing, onSoloEvents, soloOpened, closeThisWindow, setOnTop } from '$lib/shell';
   import { backdrop } from '$lib/backdrop';
   import { theme, THEMES, applyTheme, fonts, UI_FONTS, MONO_FONTS, SIZES, applyFonts } from '$lib/themes.svelte';
   applyTheme(theme.name);
@@ -57,6 +58,8 @@
   const focusOnMount = (node: HTMLElement) => { node.focus(); };
 
   // ---- state ----
+  // a popped-out window shows one session (shell.ts popOut); the main window owns everything else
+  const solo = soloOf();
   let machines = $state<Machine[]>(api.loadMachines());
   let tree = $state<Record<string, { entries: Entry[]; error?: string }>>({});
   let selected = $state<{ machine: Machine; entry: Entry; sub?: api.Sub } | null>(null);
@@ -103,6 +106,7 @@
   }
   $effect(() => {
     appVersion().then((v) => (version = v));
+    if (solo) return;
     const first = setTimeout(() => checkUpdates(), 10_000);
     const every = setInterval(() => checkUpdates(), 6 * 3600_000);
     return () => { clearTimeout(first); clearInterval(every); };
@@ -381,7 +385,7 @@
   function onEvent(e: api.LiveEvent, m?: Machine) {
     if (e.type === 'inbox' && m) {
       inboxBy[m.url] = [e.item, ...(inboxBy[m.url] ?? [])];
-      notify(`${e.item.source}${e.item.from_agent ? ' (agent)' : ''}`, `${e.item.title}: ${e.item.body}`);
+      if (!solo) notify(`${e.item.source}${e.item.from_agent ? ' (agent)' : ''}`, `${e.item.title}: ${e.item.body}`);
       return;
     }
     if ((e.type === 'inbox_read' || e.type === 'inbox_removed') && m) { loadInbox(m); return; }
@@ -399,11 +403,12 @@
       else streaming[e.entry] = (streaming[e.entry] ?? '') + e.text;
     } else if (e.type === 'message') {
       if (selected?.entry.id === e.entry && !selected.sub) messages = [...messages, e.message];
-      if (e.message.type === 'assistant') { streaming[e.entry] = ''; thinkingLive[e.entry] = ''; if (selected?.entry.id !== e.entry || selected.sub) unread[e.entry] = true; }
+      if (e.message.type === 'assistant') { streaming[e.entry] = ''; thinkingLive[e.entry] = ''; if ((selected?.entry.id !== e.entry || selected.sub) && !inWindow[e.entry]) unread[e.entry] = true; }
     } else if (e.type === 'permission_request') {
       prompts[e.entry] = [...(prompts[e.entry] ?? []), { request_id: e.request_id, tool: e.tool, kind: e.kind ?? 'tool', input: e.input, remember: e.remember ?? [] }];
       // a session you're not looking at needs you: say so outside the app too
-      if (typeof document !== 'undefined' && (!document.hasFocus() || selected?.entry.id !== e.entry)) {
+      // the main window speaks for sessions in its tabs, a popped-out window for its own (when it isn't in front)
+      if (typeof document !== 'undefined' && (solo ? e.entry === solo.entry && !document.hasFocus() : !inWindow[e.entry] && (!document.hasFocus() || selected?.entry.id !== e.entry))) {
         const name = Object.values(tree).flatMap((t) => t.entries).find((x) => x.id === e.entry)?.name ?? 'A session';
         notify(`${name} needs you`, e.kind === 'question' ? (e.input?.questions?.[0]?.question ?? 'Claude has a question')
           : e.kind === 'plan' ? 'Claude has a plan for you to approve' : `Allow ${e.tool}: ${summary(e.input)}?`);
@@ -474,7 +479,7 @@
     if (ev.ctrlKey && !dialog && (ev.key === 'Tab' || ev.key === 'PageDown' || ev.key === 'PageUp')) {
       ev.preventDefault(); return cycleTab(ev.key === 'PageUp' || (ev.key === 'Tab' && ev.shiftKey) ? -1 : 1);
     }
-    if (ev.ctrlKey && !dialog && ev.key.toLowerCase() === 'w' && curKey) { ev.preventDefault(); return closeTab(curKey); }
+    if (ev.ctrlKey && !dialog && ev.key.toLowerCase() === 'w' && (curKey || solo)) { ev.preventDefault(); return solo ? closeThisWindow() : closeTab(curKey!); }
     if (ev.key === 'Escape' && selected?.entry.state === 'working' && !dialog) act((l, id) => l.interrupt(id));
   }
   const summary = (input: any) => input?.command ?? input?.file_path ?? input?.pattern ?? input?.url ?? JSON.stringify(input).slice(0, 200);
@@ -526,7 +531,7 @@
     } catch (e) { console.error('local daemon:', e); }
   }
   $effect(() => {
-    ensureLocal().then(refresh);
+    (solo ? Promise.resolve() : ensureLocal()).then(refresh);
     const t = setInterval(refresh, 10000);
     return () => clearInterval(t);
   });
@@ -539,6 +544,10 @@
   }
 
   async function open(machine: Machine, entry: Entry, how: How = 'preview') {
+    if (!solo && inWindow[entry.id]) {
+      if (await focusWindow(entry.id).catch(() => false)) return;
+      delete inWindow[entry.id];  // its window is gone after all
+    }
     const t = enterTab(machine, entry.id, undefined, how);
     swapDraft(entry.id);
     selected = { machine, entry };
@@ -564,9 +573,10 @@
   const TABS_KEY = 'switchboard.tabs';
   const tabKey = (t: { entry: string; sub?: string }) => t.entry + (t.sub ? '/' + t.sub : '');
   const savedTabs = (() => { try { return JSON.parse(localStorage.getItem(TABS_KEY) || '{}'); } catch { return {}; } })();
-  let tabs = $state<Tab[]>(Array.isArray(savedTabs.tabs) ? savedTabs.tabs : []);
+  let tabs = $state<Tab[]>(!solo && Array.isArray(savedTabs.tabs) ? savedTabs.tabs : []);
   let curKey = $derived(selected ? tabKey({ entry: selected.entry.id, sub: selected.sub?.id }) : null);
   $effect(() => {
+    if (solo) return;
     const v = JSON.stringify({ tabs: tabs.map(({ scroll, ...t }) => t), active: curKey });
     try { localStorage.setItem(TABS_KEY, v); } catch {}
   });
@@ -625,10 +635,44 @@
     const [t] = tabs.splice(from, 1);
     tabs.splice(to, 0, t);
   }
+  // ---- pop-out windows: a session is open in one place only, a tab here or its own window ----
+  let inWindow = $state<Record<string, boolean>>({});  // entry ids open in their own window (main window only)
+  let onTop = $state(false);
+  async function popOutCurrent() {
+    const s = selected;
+    if (!s || s.sub || !curKey) return;
+    try { await popOut({ url: s.machine.url, entry: s.entry.id, text: draft, images: attachments }, s.entry.name); }
+    catch (e) { return say(`Couldn't open a window: ${(e as Error).message ?? e}`); }
+    inWindow[s.entry.id] = true;
+    closeTab(curKey);
+    delete drafts[s.entry.id];  // the draft went with it
+  }
+  if (inShell() && !solo) onSoloEvents((id) => (inWindow[id] = true), (h) => {
+    delete inWindow[h.entry];
+    drafts[h.entry] = { text: h.text, images: h.images as typeof attachments };
+    const m = machines.find((x) => x.url === h.url), e = tree[h.url]?.entries.find((x) => x.id === h.entry);
+    if (m && e) open(m, e, 'new');  // back as a tab
+  });
+  // a popped-out window: open its session once the tree has it, with the draft the main window handed over
+  let soloReady = false;
+  $effect(() => {
+    if (!solo || soloReady) return;
+    const m = machines.find((x) => x.url === solo.url), e = tree[solo.url]?.entries.find((x) => x.id === solo.entry);
+    if (!m || !e) return;
+    soloReady = true;
+    const h = takeHandoff(solo.entry);
+    if (h) drafts[solo.entry] = { text: h.text, images: h.images as typeof attachments };
+    untrack(() => open(m, e, 'keep'));
+    if (inShell()) {
+      soloOpened(solo.entry).catch(() => {});
+      onSoloClosing(() => ({ url: solo.url, entry: solo.entry, text: draft, images: attachments }));
+    }
+  });
+
   // on start, reopen the tab that was active once the tree has loaded; drop tabs whose session is gone
   let tabsRestored = false;
   $effect(() => {
-    if (tabsRestored || !machines.length || !machines.every((m) => tree[m.url])) return;
+    if (solo || tabsRestored || !machines.length || !machines.every((m) => tree[m.url])) return;
     tabsRestored = true;
     tabs = tabs.filter((t) => tree[t.url] && (tree[t.url].error || tabEntry(t)));
     const t = untrack(() => tabs.find((x) => tabKey(x) === savedTabs.active));
@@ -816,6 +860,7 @@
       <button role="menuitem" onclick={() => startRename('e:' + me.id, me.name)}>Rename</button>
       <button role="menuitem" disabled={!LIVE_STATES.includes(me.state)} title="Ends the Claude process; it stays in the tree and resumes on your next message"
         onclick={() => closeSession(mm.machine, me)}>Close session</button>
+      {#if inShell() && !solo}<button role="menuitem" onclick={async () => { ctx = null; await open(mm.machine, me, 'keep'); if (!inWindow[me.id]) popOutCurrent(); }}>Open in new window</button>{/if}
     </div>
   {:else if mm.group !== undefined}
     {@const g = mm.group}
@@ -826,7 +871,7 @@
 {/if}
 
 <div class="app">
-  {#if update}
+  {#if update && !solo}
     <div class="updbar" role="status">
       <span><b>Switchboard {update.version}</b> is available{version ? ` (you have ${version})` : ''}.</span>
       {#if update.notes}<button class="link" onclick={() => (updNotes = !updNotes)}>What's new</button>{/if}
@@ -838,7 +883,7 @@
     </div>
     {#if updNotes}<div class="updnotes md">{@html md(update.notes)}</div>{/if}
   {/if}
-  <header class="titlebar">
+  <header class="titlebar" hidden={!!solo}>
     <button class="sidebtn" aria-label={sideOpen ? 'Hide sessions' : 'Show sessions'} title={sideOpen ? 'Hide sessions' : 'Show sessions'}
       aria-expanded={sideOpen} onclick={toggleSide}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><line x1="9" y1="4" x2="9" y2="20" /></svg>
@@ -882,7 +927,7 @@
         {@render subs(m, e, a.id, depth + 1)}
       {/each}
     {/snippet}
-    <nav class="tree" class:folded={!sideOpen} aria-label="Sessions">
+    <nav class="tree" class:folded={!sideOpen || !!solo} aria-label="Sessions">
       <label class="search"><span class="sr">Filter</span><input type="search" placeholder="Filter…" bind:value={filter} /></label>
       <div class="scroll">
         {#if machines.length === 0}
@@ -916,6 +961,7 @@
                   <span class="st {icon(e)}"></span>
                   {#if e.pinned}<span class="pin" aria-label="pinned">★</span>{/if}
                   <span class="ename">{e.name}</span>
+                  {#if inWindow[e.id]}<span class="muted small" title="Open in its own window">⧉</span>{/if}
                   <span class="muted small">{e.session ? ago(e.session.last_modified) : ''}</span>
                 </button>
                 {/if}
@@ -940,7 +986,7 @@
     </nav>
 
     <main class="term">
-      {#if tabs.length}
+      {#if tabs.length && !solo}
         <div class="tabs" role="tablist" aria-label="Open sessions">
           {#each tabs as t (tabKey(t))}
             {@const e = tabEntry(t)}
@@ -975,8 +1021,14 @@
           <button class="tiny" class:on={termFor === selected.entry.id} onclick={() => { termFor = termFor === selected!.entry.id ? null : selected!.entry.id; if (!termFor) open(selected!.machine, selected!.entry); }}
             title="Switch between the chat view and the real claude terminal">{termFor === selected.entry.id ? 'Chat' : 'Terminal'}</button>
           {#if LIVE_STATES.includes(selected.entry.state)}<button class="tiny" onclick={() => act((l, id) => l.stop(id))} title="Close the live session; it resumes on your next message">Stop</button>{/if}
-          <button class="tiny" onclick={togglePin}>{selected.entry.pinned ? 'Unpin' : 'Pin'}</button>
-          <button class="tiny" onclick={remove} title="Takes it off the tree; the session stays on its machine">Remove from tree</button>
+          {#if solo}
+            <button class="tiny" class:on={onTop} aria-pressed={onTop} onclick={() => { onTop = !onTop; setOnTop(onTop).catch(() => {}); }} title="Keep this window above other windows">Keep on top</button>
+            <button class="tiny" onclick={() => closeThisWindow()} title="Close this window; the session goes back to a tab in the main window">Back to tabs</button>
+          {:else}
+            {#if inShell()}<button class="tiny" onclick={popOutCurrent} title="Open this session in its own window">Pop out</button>{/if}
+            <button class="tiny" onclick={togglePin}>{selected.entry.pinned ? 'Unpin' : 'Pin'}</button>
+            <button class="tiny" onclick={remove} title="Takes it off the tree; the session stays on its machine">Remove from tree</button>
+          {/if}
         </div>
         {/if}
         {#if termFor === selected.entry.id}
@@ -1094,7 +1146,7 @@
         <div class="placeholder">Pick a session from the tree, or <button class="link" disabled={!machines.length} onclick={openAdd}>add one</button>.</div>
       {/if}
     </main>
-    {#if showInbox && machines.length}
+    {#if showInbox && machines.length && !solo}
       <InboxView items={inboxItems} onOpen={openFromInbox} onRead={readItem} onDelete={deleteItem} onReadAll={readAll} onClose={() => (showInbox = false)} />
     {/if}
   </div>
@@ -1359,6 +1411,7 @@
   code { background: var(--s0); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
 
   .app { display: flex; flex-direction: column; height: 100vh; background: var(--base); }
+  .titlebar[hidden] { display: none; }
   .titlebar { display: flex; align-items: center; gap: 16px; padding: 10px 16px; background: var(--mantle); border-bottom: 1px solid var(--s0); flex-wrap: wrap; }
   .brand { display: flex; gap: 8px; align-items: center; font-weight: 600; font-size: 14px; }
   .chips { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }

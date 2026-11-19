@@ -1,15 +1,24 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
+  "description": "Capability for the main window and popped-out session windows",
   "windows": [
-    "main"
+    "main",
+    "s-*"
   ],
   "permissions": [
     "core:default",
     "opener:default",
     "updater:default",
     "process:allow-restart",
-    "notification:default"
+    "notification:default",
+    "core:webview:allow-create-webview-window",
+    "core:window:allow-set-focus",
+    "core:window:allow-unminimize",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-close",
+    "core:window:allow-destroy",
+    "core:event:allow-emit-to",
+    "core:event:allow-listen"
   ]
 }
