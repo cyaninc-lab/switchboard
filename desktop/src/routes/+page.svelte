@@ -67,7 +67,7 @@
   let loadingHistory = $state(false);
   let openSeq = 0;
   let filter = $state('');
-  let dialog = $state<'connect' | 'add' | 'settings' | 'report' | 'watches' | null>(null);
+  let dialog = $state<'connect' | 'add' | 'settings' | 'report' | 'watches' | 'delete' | null>(null);
 
   // inbox: per machine, merged newest first
   let inboxBy = $state<Record<string, api.InboxItem[]>>({});
@@ -915,13 +915,24 @@
       open(m, added[0]);
     } catch (e) { aError = (e as Error).message; }
   }
-  async function remove() {
-    if (!selected) return;
-    await api.removeEntry(selected.machine, selected.entry.id);
-    const id = selected.entry.id;
-    for (const t of tabs.filter((x) => x.entry === id && tabKey(x) !== curKey)) closeTab(tabKey(t));
-    if (curKey) closeTab(curKey);
+  async function remove() { if (selected) await removeEntry(selected.machine, selected.entry); }
+  // off the tree, or (forever) deleted from its machine too; its tabs close either way
+  async function removeEntry(m: Machine, e: Entry, forever = false) {
+    await api.removeEntry(m, e.id, forever);
+    for (const t of tabs.filter((x) => x.entry === e.id && tabKey(x) !== curKey)) closeTab(tabKey(t));
+    if (selected?.entry.id === e.id && curKey) closeTab(curKey);
     refresh();
+  }
+  // delete for good: tucked at the bottom of the right-click menu, and the name has to be typed to confirm
+  let doomed = $state<{ machine: Machine; entry: Entry } | null>(null);
+  let doomTyped = $state('');
+  let doomErr = $state('');
+  async function deleteForGood(ev: Event) {
+    ev.preventDefault();
+    const d = doomed;
+    if (!d || doomTyped.trim() !== d.entry.name.trim()) return;
+    try { await removeEntry(d.machine, d.entry, true); dialog = null; doomed = null; say(`Deleted ${d.entry.name} from ${d.machine.name}`); }
+    catch (e) { const c = (e as Error).message; doomErr = c === 'open_elsewhere' ? "It's open in a terminal on that machine: close it there first." : c; }
   }
   async function togglePin() {
     if (!selected) return;
@@ -947,6 +958,10 @@
       <button role="menuitem" disabled={!LIVE_STATES.includes(me.state)} title="Ends the Claude process; it stays in the tree and resumes on your next message"
         onclick={() => closeSession(mm.machine, me)}>Close session</button>
       {#if inShell() && !solo}<button role="menuitem" onclick={async () => { const m = mm.machine, en = me; ctx = null; await open(m, en, 'keep'); if (!inWindow[en.id]) popOutCurrent(); }}>Open in new window</button>{/if}
+      <button role="menuitem" title="Takes it off the tree; the session stays on its machine (add it back with + Add)"
+        onclick={() => { const m = mm.machine, en = me; ctx = null; removeEntry(m, en); }}>Remove from tree</button>
+      <hr />
+      <button role="menuitem" class="danger" onclick={() => { doomed = { machine: mm.machine, entry: me }; ctx = null; doomTyped = ''; doomErr = ''; dialog = 'delete'; }}>Delete for good…</button>
     </div>
   {:else if mm.group !== undefined}
     {@const g = mm.group}
@@ -956,6 +971,8 @@
   {/if}
 {/if}
 
+<!-- notices float at the bottom, so they show even with no session open (e.g. after deleting one) -->
+{#if toast}<div class="toast small" role="status">{toast}</div>{/if}
 <div class="app">
   {#if update && !solo}
     <div class="updbar" role="status">
@@ -1198,7 +1215,6 @@
           <div class="subnote muted small">Goes through <button class="link" onclick={() => open(selected!.machine, selected!.entry)}>{selected.entry.name}</button>, which passes it on with SendMessage (resuming the subagent if it has finished).</div>
         {:else}
         {#if liveErr}<div class="liveerr" role="alert">{liveErr}</div>{/if}
-        {#if toast}<div class="toast muted small" role="status">{toast}</div>{/if}
         {#if pendingQ[selected.entry.id]?.length}
           <div class="pendingq mono" role="list" aria-label="Queued messages">
             {#each pendingQ[selected.entry.id] as m (m.uuid)}<div class="you" role="listitem"><span class="prompt">❯ </span>{msgText(m)}</div>{/each}
@@ -1311,6 +1327,23 @@
 
 {#if dialog === 'watches'}
   <WatchesView {machines} entries={Object.fromEntries(Object.entries(tree).map(([u, t]) => [u, t.entries]))} onClose={() => (dialog = null)} />
+{/if}
+
+{#if dialog === 'delete' && doomed}
+  <div class="backdrop" role="presentation" {...backdrop(() => (dialog = null))}>
+    <form class="dialog" aria-label="Delete for good" onsubmit={deleteForGood}>
+      <h2>Delete "{doomed.entry.name}" for good?</h2>
+      <p>This deletes the session from <b>{doomed.machine.name}</b>: its whole conversation and its subagents' transcripts. It can't be undone, and Claude Code's <code>--resume</code> won't find it either.</p>
+      <p class="muted small">To only take it off the list (and keep it on the machine), use <b>Remove from tree</b> instead.</p>
+      <label>Type the session's name to confirm
+        <input bind:value={doomTyped} placeholder={doomed.entry.name} autocomplete="off" {@attach focusOnMount} /></label>
+      {#if doomErr}<p class="error">{doomErr}</p>{/if}
+      <div class="actions">
+        <button type="button" class="btn ghost" onclick={() => (dialog = null)}>Cancel</button>
+        <button type="submit" class="btn danger" disabled={doomTyped.trim() !== doomed.entry.name.trim()}>Delete for good</button>
+      </div>
+    </form>
+  </div>
 {/if}
 
 {#if dialog === 'report'}
@@ -1570,6 +1603,10 @@
   .ctxmenu button { display: block; width: 100%; text-align: left; border: 0; border-radius: 6px; padding: 6px 10px; background: none; color: var(--text); }
   .ctxmenu button:hover:not(:disabled) { background: var(--s0); }
   .ctxmenu button:disabled { color: var(--o1); }
+  .ctxmenu hr { border: 0; border-top: 1px solid var(--s0); margin: 4px 2px; }
+  .ctxmenu button.danger { color: var(--red); }
+  :global(.btn.danger) { background: var(--red); color: var(--crust); border-color: var(--red); font-weight: 600; }
+  :global(.btn.danger:disabled) { opacity: 0.45; }
   input.rename { padding: 2px 6px; font-size: inherit; border-radius: 6px; }
   .st { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; box-sizing: border-box; border: 1.5px solid var(--o1); }
   .st.ready { border: 2px solid var(--green); } .st.unread { background: var(--green); border: 0; }
@@ -1639,7 +1676,8 @@
   .todos li.in_progress { color: var(--text); font-weight: 600; } .todos li.in_progress .box { color: var(--peach); border-color: var(--peach); }
   .inputbar { display: flex; gap: 10px; align-items: center; padding: 12px 18px; border-top: 1px solid var(--s0); }
   .inputbar { align-items: flex-end; }
-  .toast { padding: 4px 18px 0; word-break: break-all; }
+  .toast { position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%); z-index: 60; max-width: min(70vw, 720px); word-break: break-all;
+    background: var(--s0); color: var(--text); border: 1px solid var(--s1); border-radius: 8px; padding: 6px 12px; box-shadow: 0 4px 16px rgb(0 0 0 / 0.25); }
   /* paths in step headers (Read(...), Edit(...)): clickable like those in replies, without the code pill */
   .tool code.path, .diffhead code.path { background: none; padding: 0; font-size: inherit; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
   .tool code.path:hover, .diffhead code.path:hover { color: var(--sky); }
