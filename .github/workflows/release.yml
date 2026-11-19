@@ -54,16 +54,17 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: python tools/stamp-version.py && pip install ./daemon pyinstaller && PY=python daemon/build-sidecar.sh
       - uses: actions/setup-node@v5
         with:
           node-version: "24"
+      - run: python tools/stamp-version.py && pip install ./daemon pyinstaller
+      - run: npm ci && npm run build  # the web app first: the daemon bundles it
+        working-directory: desktop
+      - run: PY=python daemon/build-sidecar.sh
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri
-      - run: npm ci
-        working-directory: desktop
       - id: notes
         run: |
           { echo "body<<NOTES_EOF"; cat NOTES.md; echo "NOTES_EOF"; } >> "$GITHUB_OUTPUT"

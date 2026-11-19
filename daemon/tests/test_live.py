@@ -816,3 +816,25 @@ def test_btw_side_chat(tmp_path, monkeypatch):
         assert "nothing_to_ask_about" in str(m)
         await client.close()
     asyncio.run(t())
+
+
+def test_daemon_serves_the_web_app(tmp_path, monkeypatch):
+    """Phones and other browsers open the app from the daemon's address: its files are public, the API isn't."""
+    web_dir = tmp_path / "webui"; (web_dir / "_app" / "immutable").mkdir(parents=True)
+    (web_dir / "index.html").write_text("<title>Switchboard</title>")
+    (web_dir / "_app" / "immutable" / "a.js").write_text("console.log(1)")
+    (tmp_path / "secret.txt").write_text("nope")
+    monkeypatch.setenv("SWITCHBOARD_WEBUI", str(web_dir))
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        r = await client.get("/")
+        assert r.status == 200 and "<title>Switchboard</title>" in await r.text() and r.headers["Cache-Control"] == "no-cache"
+        r = await client.get("/_app/immutable/a.js")
+        assert await r.text() == "console.log(1)" and "immutable" in r.headers["Cache-Control"]
+        assert "<title>Switchboard</title>" in await (await client.get("/some/app/route")).text()  # single page: its routes
+        assert "nope" not in await (await client.get("/../secret.txt")).text()
+        assert "nope" not in await (await client.get("/%2e%2e/secret.txt")).text()
+        assert (await client.get("/v1/entries")).status == 401  # the API still needs a paired token
+        assert (await client.get("/v1/entries", headers=h)).status == 200
+        await client.close()
+    asyncio.run(t())
