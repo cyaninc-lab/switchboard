@@ -85,6 +85,13 @@ export type Network = { listen_tailscale: boolean; active: string[]; error: stri
   url: string | null; tailscale: { name: string | null; dns: string | null; ips: string[] } | null };
 export const network = (m: Machine) => call<Network>(m, '/v1/network');
 export const files = (m: Machine, entry: string, q: string) => call<{ files: string[] }>(m, `/v1/entries/${entry}/files?q=${encodeURIComponent(q)}`);
+// bug reports to GitHub through this machine's daemon (GitHub's sign-in can't be called from a page)
+export type GitHub = { signed_in: boolean; login: string | null };
+export const githubStatus = (m: Machine) => call<GitHub>(m, '/v1/github');
+export const githubStart = (m: Machine) => call<{ device_code: string; user_code: string; verification_uri: string; expires_in: number; interval: number }>(m, '/v1/github/device', { method: 'POST' });
+export const githubPoll = (m: Machine, device_code: string) => call<{ status: string; login?: string }>(m, '/v1/github/poll', { method: 'POST', body: JSON.stringify({ device_code }) });
+export const githubSignOut = (m: Machine) => call<GitHub>(m, '/v1/github', { method: 'DELETE' });
+export const githubIssue = (m: Machine, title: string, body: string) => call<{ url: string; number: number }>(m, '/v1/github/issue', { method: 'POST', body: JSON.stringify({ title, body }) });
 export const machineInfo = (m: Machine) => call<{ name: string; daemon: string; sdk: string; os: string }>(m, '/v1/machine');
 export type DaemonSettings = { idle_close_minutes: number; project_order?: string[] };
 export const settings = (m: Machine) => call<DaemonSettings>(m, '/v1/settings');

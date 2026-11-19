@@ -20,7 +20,7 @@ Done: pairing (one-time code, tokens hashed), multi-machine tree, live chat with
 - Transport: Tailscale/private network for now, but keep it pluggable (no TLS yet: never expose a daemon publicly).
 - Multiple clients on one session are all live; the first answer to a prompt wins.
 - Phone app (phase 5): Tauri mobile, Android first, push via UnifiedPush/ntfy. Keep the daemon HTTP/WS API (`docs/protocol.md`) as the only contract so a native app stays possible.
-- Bug reports go to GitHub issues by copy-paste + pre-filled URL; a GitHub App for one-click is a later idea.
+- Bug reports: "Send to GitHub" files the issue through the "Switchboard reports" GitHub App (client id in `daemon/switchboard_daemon/github.py`; device flow, no secret, Issues read/write on this repo only, installed on cyaninc-lab/switchboard; user tokens don't expire). The daemon does the GitHub calls (GitHub's sign-in has no CORS) and keeps the token. "Open on GitHub instead" is the old copy + pre-filled URL, no sign-in.
 
 ## Backlog, roughly in order
 1. **Claude Code gaps:** rewind / edit-and-resend; search within a session; loading older history beyond the latest page.

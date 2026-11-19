@@ -682,3 +682,44 @@ def test_clear_moves_the_entry_to_the_new_session(tmp_path, monkeypatch):
         assert client.app[appmod.RUNNER].live[eid].client.options.resume == new
         await client.close()
     asyncio.run(t())
+
+
+def test_github_device_sign_in_and_issue(tmp_path, monkeypatch):
+    """Device sign-in against a stand-in GitHub, then an issue filed as the person; signing out forgets the token."""
+    from aiohttp import web as aweb
+    from switchboard_daemon import github
+    seen = {"polls": 0, "issue": None}
+    async def device_code(r):
+        assert (await r.post())["client_id"] == github.CLIENT_ID
+        return aweb.json_response({"device_code": "dc1", "user_code": "ABCD-1234", "verification_uri": "https://github.com/login/device", "expires_in": 900, "interval": 5})
+    async def access_token(r):
+        seen["polls"] += 1
+        return aweb.json_response({"error": "authorization_pending"} if seen["polls"] == 1 else {"access_token": "gho_test", "token_type": "bearer"})
+    async def user(r):
+        assert r.headers["Authorization"] == "Bearer gho_test"
+        return aweb.json_response({"login": "someone"})
+    async def issues(r):
+        assert r.headers["Authorization"] == "Bearer gho_test"
+        seen["issue"] = await r.json()
+        return aweb.json_response({"html_url": "https://github.com/cyaninc-lab/switchboard/issues/99", "number": 99}, status=201)
+    async def t():
+        gh = aweb.Application()
+        gh.router.add_post("/login/device/code", device_code); gh.router.add_post("/login/oauth/access_token", access_token)
+        gh.router.add_get("/user", user); gh.router.add_post("/repos/cyaninc-lab/switchboard/issues", issues)
+        fake = TestServer(gh); await fake.start_server()
+        monkeypatch.setattr(github, "WEB", str(fake.make_url("")).rstrip("/")); monkeypatch.setattr(github, "API", str(fake.make_url("")).rstrip("/"))
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        assert (await (await client.get("/v1/github", headers=h)).json()) == {"signed_in": False, "login": None}
+        assert (await client.post("/v1/github/issue", headers=h, json={"title": "x", "body": "y"})).status == 401
+        d = await (await client.post("/v1/github/device", headers=h)).json()
+        assert d["user_code"] == "ABCD-1234"
+        assert (await (await client.post("/v1/github/poll", headers=h, json={"device_code": d["device_code"]})).json())["status"] == "pending"
+        assert (await (await client.post("/v1/github/poll", headers=h, json={"device_code": d["device_code"]})).json()) == {"status": "done", "login": "someone"}
+        assert (await (await client.get("/v1/github", headers=h)).json()) == {"signed_in": True, "login": "someone"}
+        r = await (await client.post("/v1/github/issue", headers=h, json={"title": "Crash on start", "body": "x" * 70000})).json()
+        assert r == {"url": "https://github.com/cyaninc-lab/switchboard/issues/99", "number": 99}
+        assert seen["issue"]["title"] == "Crash on start" and seen["issue"]["labels"] == ["bug"] and len(seen["issue"]["body"]) < 65536
+        await client.delete("/v1/github", headers=h)
+        assert (await (await client.get("/v1/github", headers=h)).json())["signed_in"] is False
+        await client.close(); await fake.close()
+    asyncio.run(t())

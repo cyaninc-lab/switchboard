@@ -1,6 +1,7 @@
 """HTTP API v1 (phase 1: pairing, machine, sessions, tree entries, history). See docs/protocol.md."""
 import asyncio, dataclasses, glob, itertools, json, os, platform, socket, uuid
 from pathlib import Path
+import aiohttp
 from aiohttp import web
 import claude_agent_sdk as sdk
 from . import __version__
@@ -9,6 +10,7 @@ from .runner import Runner, scrub_env
 from .tty import Terminals
 from .procs import alive
 from . import files as filesmod
+from . import github
 from .net import Network, SETTING as NET_SETTING
 from .watches import Watches, KINDS, ACTIONS
 from .runner import MODES, IDLE_SETTING, IDLE_CHOICES
@@ -310,6 +312,43 @@ def _local_only(request):
         raise web.HTTPForbidden(text=json.dumps({"code": "only_from_this_machine"}), content_type="application/json")
 
 
+# ---- bug reports to GitHub (this machine only: the sign-in belongs to whoever sits at it) ----
+async def github_status(request):
+    _local_only(request)
+    return web.json_response(github.status(request.app[STORE]))
+
+
+async def github_start(request):
+    _local_only(request)
+    try:
+        return web.json_response(await github.start())
+    except (RuntimeError, aiohttp.ClientError, asyncio.TimeoutError) as e:
+        raise web.HTTPBadGateway(text=json.dumps({"code": "github_unavailable", "message": str(e)}), content_type="application/json")
+
+
+async def github_poll(request):
+    _local_only(request)
+    body = await request.json()
+    return web.json_response(await github.poll(request.app[STORE], body.get("device_code", "")))
+
+
+async def github_sign_out(request):
+    _local_only(request)
+    github.sign_out(request.app[STORE])
+    return web.json_response(github.status(request.app[STORE]))
+
+
+async def github_issue(request):
+    _local_only(request)
+    body = await request.json()
+    try:
+        return web.json_response(await github.file_issue(request.app[STORE], body.get("title", ""), body.get("body", "")))
+    except PermissionError:
+        raise web.HTTPUnauthorized(text=json.dumps({"code": "not_signed_in"}), content_type="application/json")
+    except (RuntimeError, aiohttp.ClientError, asyncio.TimeoutError) as e:
+        raise web.HTTPBadGateway(text=json.dumps({"code": "github_error", "message": str(e)}), content_type="application/json")
+
+
 async def get_network(request):
     return web.json_response(await request.app[NET].status())
 
@@ -592,7 +631,9 @@ def make_app(store: Store, name=None):
         web.patch("/v1/entries/{id}", update_entry), web.delete("/v1/entries/{id}", remove_entry),
         web.get("/v1/entries/{id}/messages", messages), web.get("/v1/entries/{id}/files", entry_files), web.get("/v1/entries/{id}/subagents/{agent}/messages", subagent_messages), web.get("/v1/ws", ws_handler), web.get("/v1/commands", commands), web.get("/v1/folders", folders), web.get("/v1/models", models), web.get("/v1/logs", get_logs),
         web.get("/v1/network", get_network), web.put("/v1/network", set_network),
-        web.get("/v1/settings", get_settings), web.put("/v1/settings", set_settings), web.post("/v1/pair_code", pair_code),
+        web.get("/v1/settings", get_settings), web.put("/v1/settings", set_settings),
+        web.get("/v1/github", github_status), web.post("/v1/github/device", github_start), web.post("/v1/github/poll", github_poll),
+        web.delete("/v1/github", github_sign_out), web.post("/v1/github/issue", github_issue), web.post("/v1/pair_code", pair_code),
         web.get("/v1/watches", list_watches), web.post("/v1/watches", add_watch), web.patch("/v1/watches/{id}", update_watch),
         web.delete("/v1/watches/{id}", remove_watch), web.post("/v1/watches/{id}/test", test_watch),
         web.get("/v1/inbox", list_inbox), web.post("/v1/inbox/read", read_inbox), web.post("/v1/inbox/{id}/read", read_inbox), web.delete("/v1/inbox/{id}", delete_inbox),
