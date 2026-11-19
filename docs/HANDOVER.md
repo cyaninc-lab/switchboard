@@ -32,7 +32,7 @@ Done: pairing (one-time code, tokens hashed), multi-machine tree, live chat with
 7. Code-sign the Windows installer (SmartScreen warns today).
 
 ### From daily use (the user's list, 2026-11-18)
-Shipped in 0.1.9–0.1.14: multiline input, Ctrl+Enter send-now, queued messages at the bottom, rename from the right-click menu, project dropdown + "New project" when adding, add several at once, inbox delete, Catppuccin themes, text size and fonts, boxes for messages between sessions, a band for your own messages, clickable file links, web links in the default browser, collapsible projects. After 0.1.15 (unreleased until the user says): collapsible session tree, idle close as a per-machine setting.
+Shipped in 0.1.9–0.1.14: multiline input, Ctrl+Enter send-now, queued messages at the bottom, rename from the right-click menu, project dropdown + "New project" when adding, add several at once, inbox delete, Catppuccin themes, text size and fonts, boxes for messages between sessions, a band for your own messages, clickable file links, web links in the default browser, collapsible projects. After 0.1.15 (unreleased until the user says): collapsible session tree, idle close as a per-machine setting, a tag on a machine's chip when it runs an older/newer Switchboard.
 
 Left, **(S)** small, **(M)** medium, **(L)** large. Separate PRs, batched into a release when the user says so:
 - **Order agents within a project by last activity** **(S/M)**: pinned stay on top; hold the order still while the pointer is over the tree.
@@ -41,7 +41,7 @@ Left, **(S)** small, **(M)** medium, **(L)** large. Separate PRs, batched into a
 - **Archive**, or better: make Remove keep name/project/settings, with a "Removed" list to restore from **(M)**.
 - **Settings defaults** for new sessions (mode, model, effort, account), and sessions show real values instead of "default" **(M)**; a changed default affects new sessions only.
 - **Pop out a session or tabs** **(L)**: one or the other. Links could open in a Switchboard window then.
-- **Say when another machine runs an older Switchboard** **(S)** (e.g. inbox Delete against an old daemon fails silently today); maybe show each machine's version on its chip.
+- **`/btw` side chat** **(M)**: `/btw` opens a chat panel on the right (where the inbox is) for side questions about the session: like Claude Code's `/btw`, it sees the session's context but doesn't go into its history or interrupt it. Kept per session like drafts (only the current session's shows; × clears it; not saved across restarts); an answer arriving while you're elsewhere gives the session its unread dot.
 
 ## Traps learned the hard way
 - A new repo whose automatic Actions runs never start (push/PR do nothing, a manual `workflow_dispatch` works): GitHub's Actions setup for it got stuck at creation. Turning Actions off and on fixes it: `gh api -X PUT repos/OWNER/REPO/actions/permissions -F enabled=false`, then `-F enabled=true -f allowed_actions=all`. Seen 2026-11-18 when the repo went public.

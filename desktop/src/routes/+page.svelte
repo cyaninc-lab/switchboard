@@ -45,6 +45,7 @@
   import { captureAppLog, buildReport, issueUrl } from '$lib/report';
   import type { ServiceStatus } from '$lib/shell';
   import TerminalView from '$lib/Terminal.svelte';
+  import pkg from '../../package.json';
   import InboxView from '$lib/Inbox.svelte';
   import WatchesView from '$lib/Watches.svelte';
   import PromptCard from '$lib/Prompt.svelte';
@@ -474,10 +475,32 @@
   const summary = (input: any) => input?.command ?? input?.file_path ?? input?.pattern ?? input?.url ?? JSON.stringify(input).slice(0, 200);
 
   // ---- tree ----
+  // ---- which Switchboard each machine runs: a different one than this app gets a tag on its chip ----
+  let dver = $state<Record<string, string>>({});
+  const verAsked: Record<string, number> = {};
+  function checkVersion(m: Machine) {
+    if (Date.now() - (verAsked[m.url] ?? 0) < 60_000) return;  // a daemon can update itself: ask again now and then
+    verAsked[m.url] = Date.now();
+    api.machineInfo(m).then((i) => (dver[m.url] = i.daemon), () => delete verAsked[m.url]);
+  }
+  // -1: older than this app, 1: newer, 0: same (or unknown)
+  function verCmp(a: string, b: string) {
+    const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+    if ([...pa, ...pb].some(isNaN)) return 0;
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) < (pb[i] ?? 0) ? -1 : 1;
+    return 0;
+  }
+  const verNote = (m: Machine) => {
+    const d = dver[m.url], c = d ? verCmp(d, pkg.version) : 0;
+    return !c ? null : c < 0
+      ? { tag: `older: ${d}`, why: `${m.name} runs Switchboard ${d}; this app is ${pkg.version}. Some things may not work there until it's updated: open Switchboard on ${m.name} and restart to update.` }
+      : { tag: `newer: ${d}`, why: `${m.name} runs Switchboard ${d}, newer than this app (${pkg.version}). Update this app: Settings → Check for updates.` };
+  };
+
   async function refresh() {
     const next: typeof tree = {};
     await Promise.all(machines.map(async (m) => {
-      try { next[m.url] = { entries: await api.entries(m) }; }
+      try { next[m.url] = { entries: await api.entries(m) }; checkVersion(m); }
       catch (e) { next[m.url] = { entries: tree[m.url]?.entries ?? [], error: String((e as Error).message) }; }
     }));
     tree = next;
@@ -742,7 +765,8 @@
       {#each machines as m (m.url)}
         <!-- online only once the daemon has actually answered; until then "connecting" (it may still be starting) -->
         <span class="chip" title={m.url}><span class="dot" class:on={tree[m.url] && !tree[m.url].error} class:off={!!tree[m.url]?.error}></span>{m.name}
-          <span class="muted">{!tree[m.url] ? 'connecting…' : tree[m.url].error ? 'offline' : 'online'}</span></span>
+          <span class="muted">{!tree[m.url] ? 'connecting…' : tree[m.url].error ? 'offline' : 'online'}</span>
+          {#if verNote(m)}{@const n = verNote(m)!}<span class="vertag" title={n.why} aria-label={n.why}>{n.tag}</span>{/if}</span>
       {/each}
       <button class="chip dashed" onclick={() => (dialog = 'connect')}>+ Connect a machine</button>
       <button class="chip icon" class:hot={unreadCount > 0} aria-label="Inbox ({unreadCount} unread)" title="Inbox" onclick={() => (showInbox = !showInbox)}>
@@ -1236,6 +1260,7 @@
   .navfoot { display: flex; gap: 8px; }
   .toggle { display: flex !important; flex-direction: row !important; gap: 10px; align-items: flex-start; color: var(--text) !important; font-size: 13px !important; }
   .toggle input { width: auto; margin-top: 3px; }
+  .vertag { font-size: 11px; color: var(--peach); border: 1px solid var(--peach); border-radius: 999px; padding: 0 6px; cursor: help; }
   .chip.dashed { background: none; border-style: dashed; border-color: var(--s2); color: var(--sub0); }
   .dot { width: 8px; height: 8px; border-radius: 50%; box-sizing: border-box; }
   .dot.on { background: var(--green); } .dot.off { border: 1.5px solid var(--o1); }
