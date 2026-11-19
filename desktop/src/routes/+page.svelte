@@ -18,7 +18,7 @@
   const span = (ms: number) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)}m` : `${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m`; };
   // copy buttons: a reply (its markdown) or a code block in one (button.copy inside the block, from markdown.ts)
   async function copyText(text: string, btn?: HTMLElement | null) {
-    try { await navigator.clipboard.writeText(text); } catch { return say("Couldn't copy"); }
+    try { await api.copy(text); } catch { return say("Couldn't copy"); }
     if (!btn) return;
     btn.classList.add('copied');
     if (btn.classList.contains('copy')) btn.textContent = 'Copied';
@@ -51,7 +51,7 @@
       try { if ((await openLocal(abs)) === 'revealed') say(`Shown in its folder: ${abs}`); }
       catch (e) { say(String(e)); }
     } else {
-      try { await navigator.clipboard.writeText(abs); say(`Copied: ${abs}${inShell() ? ` (it's on ${selected.machine.name})` : ''}`); }
+      try { await api.copy(abs); say(`Copied: ${abs}${inShell() ? ` (it's on ${selected.machine.name})` : ''}`); }
       catch { say(abs); }
     }
   }
@@ -154,7 +154,7 @@
   async function signInGitHub(m: Machine) {
     const d = await api.githubStart(m);
     ghCode = d;
-    try { await navigator.clipboard.writeText(d.user_code); } catch {}
+    try { await api.copy(d.user_code); } catch {}
     openExternal(d.verification_uri);
     const mine = ++ghSeq, until = Date.now() + d.expires_in * 1000;
     let wait = d.interval;
@@ -190,7 +190,7 @@
     rBusy = true; rDone = ''; rIssue = '';
     rReport = await buildReport(rDesc, machines, rLogs, await appVersion());
     let copied = true;
-    try { await navigator.clipboard.writeText(rReport); } catch { copied = false; }
+    try { await api.copy(rReport); } catch { copied = false; }
     await openExternal(issueUrl(rDesc));
     rDone = copied ? 'Report copied. A new GitHub issue opened in your browser: paste (Ctrl+V) and submit.'
                    : "Couldn't copy automatically: select the report below, copy it, and paste it into the issue that opened.";
@@ -548,10 +548,10 @@
     } else if (e.type === 'tasks') {
       setEntry(e.entry, { tasks: e.tasks });
     } else if (e.type === 'session_reset') {  // /clear: the entry now holds a fresh conversation
-      if (selected?.entry.id === e.entry && !selected.sub) messages = [{ type: 'assistant', uuid: crypto.randomUUID(), message: { content: [{ type: 'text', text: '— Conversation cleared —' }] } }];
+      if (selected?.entry.id === e.entry && !selected.sub) messages = [{ type: 'assistant', uuid: api.uid(), message: { content: [{ type: 'text', text: '— Conversation cleared —' }] } }];
       refresh();
     } else if (e.type === 'notice') {
-      if (selected?.entry.id === e.entry && !selected.sub) messages = [...messages, { type: 'assistant', uuid: crypto.randomUUID(), message: { content: [{ type: 'text', text: `— ${e.text} —` }] } }];
+      if (selected?.entry.id === e.entry && !selected.sub) messages = [...messages, { type: 'assistant', uuid: api.uid(), message: { content: [{ type: 'text', text: `— ${e.text} —` }] } }];
     } else if (e.type === 'terminal_output') {
       if (e.entry === termFor) termSink?.(e.data);
     } else if (e.type === 'terminal_closed') {
@@ -594,7 +594,7 @@
       live()!.send(selected.entry.id, draft, images, sendNow);  // now: the daemon interrupts and sends this first
       keepTab();
       const content = [...images.map((im) => ({ type: 'image', source: { type: 'base64', ...im } })), { type: 'text', text: draft }];
-      const msg: HistoryMessage = { type: 'user', uuid: crypto.randomUUID(), message: { role: 'user', content } };
+      const msg: HistoryMessage = { type: 'user', uuid: api.uid(), message: { role: 'user', content } };
       const id = selected.entry.id;
       if (selected.entry.state === 'working' || selected.entry.state === 'waiting') pendingQ[id] = sendNow ? [msg, ...(pendingQ[id] ?? [])] : [...(pendingQ[id] ?? []), msg];
       else messages = [...messages, msg];
@@ -608,7 +608,7 @@
     if (!s?.sub || !draft.trim()) return;
     try {
       live()!.send(s.entry.id, `Use the SendMessage tool to send this message to agent ${s.sub.id} (it resumes the subagent if it has finished). Send it as written and do nothing else:\n\n${draft}`, []);
-      messages = [...messages, { type: 'user', uuid: crypto.randomUUID(), message: { role: 'user', content: draft } }];
+      messages = [...messages, { type: 'user', uuid: api.uid(), message: { role: 'user', content: draft } }];
       draft = ''; liveErr = ''; keepTab();
     } catch (e) { liveErr = (e as Error).message; }
   }
