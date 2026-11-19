@@ -4,6 +4,7 @@ Events (docs/protocol.md): state, delta, message, permission_request, permission
 """
 import asyncio, dataclasses, os, shutil, time, uuid
 from .logs import log, scrub
+from . import patches
 
 # one message from Claude Code (a Read of a big screenshot is one line of base64); the SDK's 1 MB default kills the session
 MAX_MESSAGE = 64 * 1024 * 1024
@@ -46,8 +47,13 @@ def as_history(msg):
                 blocks.append(b)
         content = blocks
     role = "assistant" if name == "AssistantMessage" else "user"
-    return {"type": role, "uuid": getattr(msg, "uuid", None) or uuid.uuid4().hex, "message": {"role": role, "content": content},
-            "parent_tool_use_id": getattr(msg, "parent_tool_use_id", None)}  # set on a subagent's messages
+    h = {"type": role, "uuid": getattr(msg, "uuid", None) or uuid.uuid4().hex, "message": {"role": role, "content": content},
+         "parent_tool_use_id": getattr(msg, "parent_tool_use_id", None)}  # set on a subagent's messages
+    if getattr(msg, "tool_use_result", None) and isinstance(content, list):  # an edit's hunks, for line numbers in its diff
+        tid = next((b.get("tool_use_id") for b in content if isinstance(b, dict) and b.get("type") == "tool_result"), None)
+        if p := patches.from_result(tid, msg.tool_use_result):
+            h["patches"] = p
+    return h
 
 
 @dataclasses.dataclass

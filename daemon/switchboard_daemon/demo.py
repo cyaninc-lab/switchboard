@@ -153,6 +153,7 @@ class AssistantMessage:
 class UserMessage:
     content: list
     parent_tool_use_id: str = None
+    tool_use_result: dict = None  # Claude Code's own result data (an Edit's structuredPatch)
 
 
 @dataclasses.dataclass
@@ -333,6 +334,8 @@ class ClaudeSDKClient:
         if "touch up the notes" in text.lower():  # file steps: a Read and an Edit (their headers carry clickable paths)
             yield AssistantMessage([ToolUseBlock("r1", "Read", {"file_path": "notes.md"})])
             yield AssistantMessage([ToolUseBlock("e1", "Edit", {"file_path": "notes.md", "old_string": "draft", "new_string": "final"})])
+            yield UserMessage([ToolResultBlock("e1", "The file notes.md has been updated successfully.", False)], tool_use_result={"structuredPatch": [
+                {"oldStart": 41, "oldLines": 3, "newStart": 41, "newLines": 3, "lines": [" ## Status", "-draft", "+final", " (see below)"]}]})
         if "show a link" in text.lower():  # a markdown link in the reply
             yield AssistantMessage([TextBlock("See [the docs](https://example.com/docs) for details.")])
         if "ask me" in text.lower():  # a clarifying question (AskUserQuestion)

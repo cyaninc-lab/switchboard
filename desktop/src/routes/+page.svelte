@@ -305,6 +305,9 @@
     return acc;
   }, {} as Record<string, HistoryMessage[]>));
   const AGENT_TOOLS = ['Agent', 'Task'];
+  // edits' hunks (line numbers) by tool_use id, from history and live tool results
+  let hunks = $derived(Object.assign({}, ...messages.map((m) => m.patches ?? {})) as Record<string, api.Hunk[]>);
+  const diffLines = (l: { lines: api.DiffLine[]; id?: string }) => (l.id && hunks[l.id] ? api.hunkLines(hunks[l.id]) : l.lines);
   const FILE_TOOLS = ['Read', 'NotebookEdit', 'NotebookRead'];  // Edit/Write are diffs, whose header carries the path too
   let queued = $state<Record<string, number>>({});
   // ponytail: per-window and in memory, a restart forgets it; move to the daemon if several clients need to agree
@@ -1266,10 +1269,11 @@
               {:else if line.kind === 'tool'}
                 <div><span class="bullet">⏺ </span><span class="tool">{line.text}</span></div>
               {:else if line.kind === 'diff'}
+                {@const dl = diffLines(line)}
                 <div class="diff" aria-label="{line.text}">
                   <div class="diffhead"><span class="bullet">⏺ </span>{line.text.slice(0, line.text.indexOf('(') + 1)}<code class="path">{line.file}</code>){#if line.note}<span class="muted small"> · {line.note}</span>{/if}</div>
-                  {#each expanded[msg.uuid + li] ? line.lines : line.lines.slice(0, 40) as d}<div class="dl {d.t === '+' ? 'add' : d.t === '-' ? 'del' : ''}"><span class="sign">{d.t}</span>{d.s}</div>{/each}
-                  {#if line.lines.length > 40}<button class="link small" onclick={() => (expanded[msg.uuid + li] = !expanded[msg.uuid + li])}>{expanded[msg.uuid + li] ? 'Show less' : `Show all ${line.lines.length} lines`}</button>{/if}
+                  {#each expanded[msg.uuid + li] ? dl : dl.slice(0, 40) as d}<div class="dl {d.t === '+' ? 'add' : d.t === '-' ? 'del' : d.t === '…' ? 'gap' : ''}">{#if dl[0]?.n !== undefined}<span class="ln">{d.n ?? ''}</span>{/if}<span class="sign">{d.t}</span>{d.s}</div>{/each}
+                  {#if dl.length > 40}<button class="link small" onclick={() => (expanded[msg.uuid + li] = !expanded[msg.uuid + li])}>{expanded[msg.uuid + li] ? 'Show less' : `Show all ${dl.length} lines`}</button>{/if}
                 </div>
               {:else if line.kind === 'todos'}
                 <ul class="todos" aria-label="To-dos">
@@ -1805,6 +1809,8 @@
   .diff { display: flex; flex-direction: column; border: 1px solid var(--s0); border-radius: 8px; overflow: hidden; }
   .diffhead { padding: 4px 10px; background: var(--mantle); color: var(--sub1); }
   .dl { padding: 0 10px; white-space: pre-wrap; font-size: 12px; } .dl .sign { display: inline-block; width: 14px; color: var(--o1); }
+  .dl .ln { display: inline-block; min-width: 3.5ch; margin-right: 8px; text-align: right; color: var(--o1); user-select: none; }
+  .dl.gap { color: var(--o1); height: 0.9em; } .dl.gap .sign { visibility: hidden; }
   .dl.add { background: color-mix(in srgb, var(--green) 12%, transparent); color: var(--green); } .dl.del { background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--red); }
   .diff .link { align-self: flex-start; margin: 4px 10px; }
   .todos { list-style: none; margin: 0; padding: 6px 10px; border: 1px solid var(--s0); border-radius: 8px; display: flex; flex-direction: column; gap: 2px; font-family: var(--ui-font, Inter, system-ui, sans-serif); white-space: normal; }
