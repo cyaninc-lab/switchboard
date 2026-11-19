@@ -1,5 +1,5 @@
-## Switchboard 0.1.17
+## Switchboard 0.1.18
 
-- **Open in new window works from the right-click menu.** It did nothing before; the Pop out button was fine.
-- **Middle-click opens and closes tabs on Windows**, instead of showing the scroll icon.
-- **No more scroll bar on the tab bar** on Windows.
+- **Questions show their previews.** When Claude's question has a preview for each choice (what gets added where, a layout sketch), it now appears in a box beside the choices, as in Claude Code. Point at a choice to see its preview.
+
+Also in this update (0.1.17): **Open in new window** works from the right-click menu, **middle-click** opens and closes tabs on Windows, and the tab bar no longer shows a scroll bar on Windows.
