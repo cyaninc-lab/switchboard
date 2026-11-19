@@ -425,7 +425,7 @@
   // multi-line box: Enter sends, Shift+Enter starts a new line, Ctrl+Enter sends now (interrupts), as in Claude Code
   let sendNow = false;
   function enterSends(ev: KeyboardEvent) {
-    if (ev.key !== 'Enter' || ev.shiftKey || ev.isComposing || ev.defaultPrevented) return;
+    if (ev.key !== 'Enter' || ev.shiftKey || ev.isComposing || ev.defaultPrevented || (phone && !ev.ctrlKey && !ev.metaKey)) return;
     ev.preventDefault();
     sendNow = ev.ctrlKey || ev.metaKey;
     (ev.currentTarget as HTMLTextAreaElement).form?.requestSubmit();
@@ -975,6 +975,12 @@
   let subOpen = $state<Record<string, boolean>>((() => { try { return JSON.parse(localStorage.getItem(FOLD_KEY) || '{}'); } catch { return {}; } })());
   $effect(() => { const v = JSON.stringify(subOpen); try { localStorage.setItem(FOLD_KEY, v); } catch {} });
 
+  // ---- phone layout (a narrow window: a phone's browser now, the Android app later): one screen at a time ----
+  // a narrow touch screen: not a desktop window (or split pane) that happens to be narrow
+  const phoneQ = matchMedia('(max-width: 640px) and (pointer: coarse)');
+  let phone = $state(phoneQ.matches);
+  phoneQ.addEventListener('change', () => (phone = phoneQ.matches));
+  let phoneTab = $state<'sessions' | 'inbox'>('sessions');
   // ---- the session tree folds away: by the button, and by itself when the window is narrow ----
   // sideWant: the user's choice for a wide window (remembered); a narrow window starts folded, the button still opens it
   const SIDE_KEY = 'switchboard.side';
@@ -1199,7 +1205,7 @@
 
 <!-- notices float at the bottom, so they show even with no session open (e.g. after deleting one) -->
 {#if toast}<div class="toast small" role="status">{toast}</div>{/if}
-<div class="app">
+<div class="app" class:phone class:inchat={phone && !!selected} class:ininbox={phone && !selected && phoneTab === 'inbox'}>
   {#if update && !solo}
     <div class="updbar" role="status">
       <span><b>Switchboard {update.version}</b> is available{version ? ` (you have ${version})` : ''}.</span>
@@ -1256,7 +1262,7 @@
         {@render subs(m, e, a.id, depth + 1)}
       {/each}
     {/snippet}
-    <nav class="tree" class:folded={!sideOpen || !!solo} aria-label="Sessions" onpointerenter={holdOrder} onpointermove={() => { if (!held) holdOrder(); }} onpointerleave={() => (held = null)}>
+    <nav class="tree" class:folded={phone ? !!solo : !sideOpen || !!solo} aria-label="Sessions" onpointerenter={holdOrder} onpointermove={() => { if (!held) holdOrder(); }} onpointerleave={() => (held = null)}>
       <label class="search"><span class="sr">Filter</span><input type="search" placeholder="Filter…" bind:value={filter} /></label>
       <div class="scroll">
         {#if machines.length === 0}
@@ -1352,12 +1358,14 @@
         </div>
         {:else}
         <div class="termhead mono">
-          <span>{selected.machine.name}:{selected.entry.session?.cwd ?? '?'}</span>
+          {#if phone}<button class="tiny back" aria-label="Back to sessions" onclick={() => { swapDraft('\u0000none'); selected = null; }}>‹</button>
+            <span class="phonename">{selected.entry.name}</span>{/if}
+          <span class="cwd">{selected.machine.name}:{selected.entry.session?.cwd ?? '?'}</span>
           {#if selected.entry.session?.git_branch}<span>⎇ {selected.entry.session.git_branch}</span>{/if}
           <span class="grow"></span>
           <button class="tiny" class:on={termFor === selected.entry.id} onclick={() => { termFor = termFor === selected!.entry.id ? null : selected!.entry.id; if (!termFor) open(selected!.machine, selected!.entry); }}
             title="Switch between the chat view and the real claude terminal">{termFor === selected.entry.id ? 'Chat' : 'Terminal'}</button>
-          {#if LIVE_STATES.includes(selected.entry.state)}<button class="tiny" onclick={() => act((l, id) => l.stop(id))} title="Close the live session; it resumes on your next message">Stop</button>{/if}
+          {#if LIVE_STATES.includes(selected.entry.state)}<button class="tiny hstop" onclick={() => act((l, id) => l.stop(id))} title="Close the live session; it resumes on your next message">Stop</button>{/if}
           {#if solo && !solo.embed}
             <button class="tiny" class:on={onTop} aria-pressed={onTop} onclick={() => { onTop = !onTop; setOnTop(onTop).catch(() => {}); }} title="Keep this window above other windows">Keep on top</button>
             <button class="tiny" onclick={() => closeThisWindow()} title="Close this window; the session goes back to a tab in the main window">Back to tabs</button>
@@ -1409,9 +1417,9 @@
                 {/if}
               {:else if line.kind === 'tool' && FILE_TOOLS.includes(line.name) && line.input?.file_path}
                 <!-- the path opens like one in a reply (onPathClick) -->
-                <div><span class="bullet">⏺ </span><span class="tool">{line.name}(<code class="path">{line.input.file_path}</code>)</span></div>
+                <div class="step"><span class="bullet">⏺ </span><span class="tool">{line.name}(<code class="path">{line.input.file_path}</code>)</span></div>
               {:else if line.kind === 'tool'}
-                <div><span class="bullet">⏺ </span><span class="tool">{line.text}</span></div>
+                <div class="step"><span class="bullet">⏺ </span><span class="tool">{line.text}</span></div>
               {:else if line.kind === 'diff'}
                 {@const dl = diffLines(line)}
                 <div class="diff" aria-label="{line.text}">
@@ -1507,12 +1515,14 @@
           <span class="prompt">❯</span>
           <label class="grow"><span class="sr">Message this session</span>
             <textarea rows="1" {@attach grow} bind:value={draft} bind:this={inputEl} oninput={onDraftInput} onblur={() => setTimeout(() => (atQ = null), 150)} onpaste={onPaste} onkeydown={onInputKey} disabled={selected.entry.state === 'terminal' || selected.entry.state === 'missing'}
-              placeholder={selected.entry.state === 'terminal' ? 'Open in a terminal elsewhere' : selected.entry.state === 'working' ? 'Working… Enter queues, Ctrl+Enter interrupts and sends (Esc to interrupt)' : 'Message this session (Shift+Enter for a new line)'}></textarea></label>
+              placeholder={selected.entry.state === 'terminal' ? 'Open in a terminal elsewhere' : selected.entry.state === 'working' ? 'Working… Enter queues, Ctrl+Enter interrupts and sends (Esc to interrupt)' : (phone ? 'Message' : 'Message this session (Shift+Enter for a new line)')}></textarea></label>
           <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden bind:this={fileInput} onchange={(e) => { addFiles((e.target as HTMLInputElement).files ?? []); (e.target as HTMLInputElement).value = ''; }} />
           <button type="button" class="tiny" aria-label="Attach images" title="Attach images (or paste / drop them)" onclick={() => fileInput?.click()}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" /></svg>
           </button>
           {#if selected.entry.state === 'working'}<button type="button" class="tiny" onclick={() => act((l, id) => l.interrupt(id))}>Esc · interrupt</button>{/if}
+          {#if phone}<button type="submit" class="sendbtn" aria-label="Send" title="Send (hold for send now)"
+            oncontextmenu={(ev) => { ev.preventDefault(); sendNow = true; (ev.currentTarget as HTMLButtonElement).form?.requestSubmit(); }}>↑</button>{/if}
         </form>
         {/if}
         {/if}
@@ -1554,12 +1564,19 @@
             <input bind:value={btwDraft} placeholder={c.items.length ? 'Ask a follow-up…' : 'Ask a side question…'} {@attach focusOnMount} /></label>
         </form>
       </aside>
-    {:else if showInbox && machines.length && !solo}
+    {:else if (phone ? phoneTab === 'inbox' && !selected : showInbox) && machines.length && !solo}
       <InboxView items={inboxItems} onOpen={openFromInbox} onRead={readItem} onDelete={deleteItem} onReadAll={readAll} onClose={() => (showInbox = false)} />
     {/if}
   </div>
 
-  <footer class="status mono" hidden={!!solo?.embed}>
+  {#if phone && !selected && !solo}
+    <nav class="phonebar" aria-label="Sections">
+      <button class:on={phoneTab === 'sessions'} aria-current={phoneTab === 'sessions'} onclick={() => (phoneTab = 'sessions')}>Sessions</button>
+      <button class:on={phoneTab === 'inbox'} aria-current={phoneTab === 'inbox'} onclick={() => (phoneTab = 'inbox')}>Inbox{#if unreadCount} <span class="count">{unreadCount}</span>{/if}</button>
+      <button onclick={openSettings}>Settings</button>
+    </nav>
+  {/if}
+  <footer class="status mono" hidden={!!solo?.embed || phone}>
     <span>{machines.length} machine{machines.length === 1 ? '' : 's'}</span>
     {#if selected}
       <label class="modepick">account
@@ -1906,7 +1923,36 @@
      does, so 100vh overflowed on Windows (the whole window scrolled) and a calc() on it broke Linux instead */
   .app { display: flex; flex-direction: column; position: fixed; inset: 0; background: var(--base); }
   .titlebar[hidden] { display: none; }
-  .status[hidden] { display: none; }  /* in the split pane: the main window's own bar already shows these */
+  .status[hidden] { display: none; }
+
+  /* ---- phone: one screen at a time (sessions | a chat | the inbox), chat as text messages ---- */
+  .app.phone .chips .chip:not(.dashed), .app.phone .sidebtn, .app.phone .tabs, .app.phone .divider, .app.phone .splitpane { display: none; }
+  .app.phone .titlebar { padding: 8px 12px; gap: 8px; }
+  .app.phone.inchat .titlebar { display: none; }
+  .app.phone .tree { width: 100%; flex: 1 1 auto; border-right: 0; }
+  .app.phone.inchat .tree, .app.phone.ininbox .tree { display: none; }
+  .app.phone:not(.inchat) .work { display: none; }
+  .app.phone .entry { padding-top: 10px; padding-bottom: 10px; }
+  .app.phone :global(aside.inbox) { width: 100%; flex: 1 1 auto; border-left: 0; }
+  .app.phone .termhead { gap: 8px; padding: 8px 10px; }
+  .app.phone .termhead .cwd, .app.phone .termhead > .tiny:not(.back):not(.hstop) { display: none; }
+  .back { font-size: 18px; line-height: 1; padding: 2px 10px; }
+  .phonename { font-family: var(--ui-font, Inter, system-ui, sans-serif); font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .app.phone .log { padding: 12px; }
+  .app.phone .logbody { gap: 10px; }
+  .app.phone .log .you { align-self: flex-end; max-width: 82%; background: var(--mauve); color: var(--crust); border: 0; border-radius: 16px 16px 5px 16px; padding: 8px 12px; margin: 0; }
+  .app.phone .log .you .prompt { display: none; }
+  .app.phone .log .reply { align-self: flex-start; max-width: 88%; background: var(--s0); border-radius: 16px 16px 16px 5px; padding: 8px 12px; }
+  .app.phone .log .reply > .bullet, .app.phone .log .step > .bullet { display: none; }
+  .app.phone .log .step, .app.phone .log .result, .app.phone .log .diff, .app.phone .log .todos, .app.phone .log details.agent {
+    align-self: flex-start; max-width: 92%; border: 1px solid var(--s0); border-radius: 10px; padding: 5px 9px; font-size: 11.5px; color: var(--sub0); overflow: hidden; }
+  .app.phone .log .result { margin-top: -6px; border-top: 0; border-radius: 0 0 10px 10px; }
+  .app.phone .inputbar { padding: 8px 10px 12px; gap: 8px; }
+  .app.phone .inputbar > .prompt { display: none; }
+  .sendbtn { flex: none; width: 36px; height: 36px; border-radius: 50%; border: 0; background: var(--mauve); color: var(--crust); font-weight: 700; font-size: 16px; cursor: pointer; }
+  .phonebar { display: flex; border-top: 1px solid var(--s0); background: var(--mantle); }
+  .phonebar button { flex: 1; background: none; border: 0; color: var(--o1); font: inherit; font-size: 13px; padding: 12px 0 16px; cursor: pointer; }
+  .phonebar button.on { color: var(--mauve); font-weight: 600; }  /* in the split pane: the main window's own bar already shows these */
   .titlebar { display: flex; align-items: center; gap: 16px; padding: 10px 16px; background: var(--mantle); border-bottom: 1px solid var(--s0); flex-wrap: wrap; }
   .brand { display: flex; gap: 8px; align-items: center; font-weight: 600; font-size: 14px; }
   .chips { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
