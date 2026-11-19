@@ -25,6 +25,9 @@ test('themes: pick a Catppuccin palette in Settings; it applies everywhere and i
   await expect(page.getByRole('log', { name: 'Session history' })).toContainText('Why did the deploy roll back?');
 
   expect(await base(page)).toBe('rgb(30, 30, 46)');  // Mocha by default
+  // thin scroll bars everywhere (WebView2 and WebKitGTK both use these rules), no track
+  expect(await page.locator('.log').evaluate((el) => getComputedStyle(el, '::-webkit-scrollbar').width)).toBe('8px');
+  expect(await page.locator('.log').evaluate((el) => getComputedStyle(el, '::-webkit-scrollbar-track').backgroundColor)).toBe('rgba(0, 0, 0, 0)');
   for (const [name, label, rgb] of [['frappe', 'Frappé', 'rgb(48, 52, 70)'], ['macchiato', 'Macchiato', 'rgb(36, 39, 58)'],
                                     ['mocha', 'Mocha', 'rgb(30, 30, 46)'], ['latte', 'Latte (light)', 'rgb(239, 241, 245)']]) {
     await page.getByRole('button', { name: 'Settings' }).click();

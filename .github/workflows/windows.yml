@@ -11,7 +11,7 @@ jobs:
     outputs:
       code: ${{ steps.c.outputs.code }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - id: c
@@ -30,8 +30,8 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - run: pip install -e "./daemon[test]" pyinstaller
@@ -39,7 +39,7 @@ jobs:
         run: python -m pytest -q daemon/tests
       - name: freeze the daemon (sidecar)
         run: PY=python daemon/build-sidecar.sh
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "24"
       - uses: Swatinem/rust-cache@v2
@@ -57,7 +57,7 @@ jobs:
           cp desktop/src-tauri/target/release/switchboard-daemon.exe out/
           cp ~/.cargo/bin/tauri-driver.exe out/
           ls -la out
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: switchboard-windows
           path: out

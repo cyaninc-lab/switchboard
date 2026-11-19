@@ -1436,6 +1436,12 @@
   .sidebtn:hover { border-color: var(--s1); color: var(--text); }
   .search { display: block; padding: 12px; }
   :global(input:focus), :global(select:focus) { outline: 1px solid var(--mauve); outline-offset: 0; }
+  /* scroll bars everywhere: thin, no track or arrows, a rounded thumb in the theme's surface colour (WebKitGTK and
+     WebView2 both honour these; setting the standard scrollbar-width/-color on an element makes WebView2 ignore them) */
+  :global(::-webkit-scrollbar) { width: 8px; height: 8px; }
+  :global(::-webkit-scrollbar-track), :global(::-webkit-scrollbar-corner) { background: transparent; }
+  :global(::-webkit-scrollbar-thumb) { background: var(--s1); border-radius: 99px; border: 2px solid transparent; background-clip: padding-box; }
+  :global(::-webkit-scrollbar-thumb:hover) { background-color: var(--s2); }
   :global(input) { width: 100%; box-sizing: border-box; background: var(--base); border: 1px solid var(--s1); border-radius: 8px; padding: 8px 10px; color: var(--text); font: inherit; }
   .scroll { flex: 1; overflow: auto; padding: 0 8px 12px; }
   .empty { color: var(--o2); padding: 8px; }
@@ -1480,7 +1486,7 @@
   .term { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--base); }
   /* the bottom line is drawn inside the bar (inset shadow) so the active tab can cover it without overflowing the bar,
      which made Windows show a vertical scrollbar */
-  .tabs { display: flex; gap: 2px; padding: 6px 8px 0; background: var(--mantle); box-shadow: inset 0 -1px 0 var(--s0); overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; flex: none; }
+  .tabs { display: flex; gap: 2px; padding: 6px 8px 0; background: var(--mantle); box-shadow: inset 0 -1px 0 var(--s0); overflow-x: auto; overflow-y: hidden; flex: none; }
   .tab { display: flex; align-items: center; max-width: 220px; min-width: 0; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; color: var(--sub0); }
   .tab:hover { background: var(--s0); }
   .tab.on { background: var(--base); border-color: var(--s0); color: var(--text); }
