@@ -236,6 +236,7 @@ export type LiveEvent =
   | { type: 'notice'; entry: string; text: string }
   | { type: 'session_reset'; entry: string; session_id: string }
   | { type: 'tasks'; entry: string; tasks: Task[] }
+  | { type: 'btw'; entry: string; kind: 'asked' | 'delta' | 'answer' | 'done' | 'closed'; text?: string; error?: boolean }
   | { type: 'queued'; entry: string; count: number; sent?: number; dropped?: boolean }
   | ({ type: 'usage'; entry: string } & Usage)
   | { type: 'inbox'; item: InboxItem }
@@ -275,6 +276,8 @@ export class Live {
   interrupt(entry: string) { this.sendJson({ type: 'interrupt', entry }); }
   stop(entry: string) { this.sendJson({ type: 'stop', entry }); }
   stopTask(entry: string, task: string) { this.sendJson({ type: 'stop_task', entry, task_id: task }); }
+  btw(entry: string, text: string) { this.sendJson({ type: 'btw', entry, text }); }
+  btwClose(entry: string) { this.sendJson({ type: 'btw_close', entry }); }
   setMode(entry: string, mode: string) { this.sendJson({ type: 'set_mode', entry, mode }); }
   setModel(entry: string, model: string | null) { this.sendJson({ type: 'set_model', entry, model }); }
   setEffort(entry: string, effort: string | null) { this.sendJson({ type: 'set_effort', entry, effort }); }

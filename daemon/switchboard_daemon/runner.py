@@ -76,6 +76,20 @@ class Live:
     tasks: dict = dataclasses.field(default_factory=dict)  # background tasks (commands, agents) by id: shown, stoppable; running ones keep it open
 
 
+@dataclasses.dataclass
+class Side:
+    """A /btw side chat: a fork of the session (Claude Code's /btw isn't available through the SDK), so it knows the
+    conversation so far while the real session's history never sees it. Deleted when the side chat closes."""
+    entry_id: str
+    fork: str
+    client: object
+    reader: asyncio.Task = None
+
+
+BTW_TITLE = "Switchboard /btw side chat"  # the fork's title: kept out of the list of sessions to add
+BTW_ASK = "(/btw: a side question about the conversation above. Answer briefly from what you already know; don't use tools or start any work.)\n\n"
+
+
 class Runner:
     def __init__(self, store, sdk, broadcast):
         self.store, self.sdk, self.broadcast = store, sdk, broadcast
@@ -85,6 +99,7 @@ class Runner:
         self._models = None
         self.on_turn_end = None  # async (entry_id, reply_text, origin) for turns a watch started
         self.usage: dict[str, dict] = {}  # entry id -> last usage event (survives the session closing)
+        self.side: dict[str, Side] = {}  # entry id -> its open /btw side chat
         self.elsewhere = lambda: set()  # {session id} a process outside this daemon holds (set by the app)
 
     # ---- state ----
@@ -489,6 +504,71 @@ class Runner:
             except Exception:
                 log.exception("idle close")
 
+    # ---- /btw side chats ----
+    async def btw(self, entry_id, text):
+        entry = self.store.entry(entry_id)
+        sd = self.side.get(entry_id)
+        if not sd:
+            info = self.sdk.get_session_info(entry["session_id"])
+            if info is None:
+                raise LookupError("nothing_to_ask_about")  # a new session with nothing said yet
+            fork = (await asyncio.to_thread(self.sdk.fork_session, entry["session_id"], None, None, BTW_TITLE)).session_id
+            acct = self.store.account_env(entry["account"]) if entry.get("account") else {}
+
+            async def no_tools(tool, inp, ctx):
+                return self.sdk.PermissionResultDeny(message="Side questions don't use tools: answer from what you know.", interrupt=False)
+
+            opts = self.sdk.ClaudeAgentOptions(
+                resume=fork, cwd=info.cwd or None, include_partial_messages=True, permission_mode="default", can_use_tool=no_tools,
+                **({"env": acct} if acct else {}),
+                **({"model": m} if (m := os.environ.get("SWITCHBOARD_MODEL") or entry.get("model")) else {}),
+                **({"cli_path": self.cli_path} if self.cli_path else {}), max_buffer_size=MAX_MESSAGE)
+            client = self.sdk.ClaudeSDKClient(options=opts)
+            await client.connect()
+            sd = self.side[entry_id] = Side(entry_id, fork, client)
+            sd.reader = asyncio.get_running_loop().create_task(self._read_side(sd))
+            log.info("side chat for entry %s (fork %s)", entry_id, fork)
+        await self.broadcast({"type": "btw", "entry": entry_id, "kind": "asked", "text": text})
+        await sd.client.query(BTW_ASK + text)
+
+    async def _read_side(self, sd):
+        try:
+            async for m in sd.client.receive_messages():
+                n = type(m).__name__
+                if n == "StreamEvent":
+                    delta = (m.event.get("delta") or {}) if m.event.get("type") == "content_block_delta" else {}
+                    if delta.get("type") == "text_delta":
+                        await self.broadcast({"type": "btw", "entry": sd.entry_id, "kind": "delta", "text": delta.get("text", "")})
+                elif n == "AssistantMessage" and not getattr(m, "parent_tool_use_id", None):
+                    text = "".join(getattr(b, "text", "") for b in m.content if type(b).__name__ == "TextBlock")
+                    if text:
+                        await self.broadcast({"type": "btw", "entry": sd.entry_id, "kind": "answer", "text": text})
+                elif n == "ResultMessage":
+                    await self.broadcast({"type": "btw", "entry": sd.entry_id, "kind": "done", "error": bool(m.is_error)})
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            log.warning("side chat for entry %s failed: %s", sd.entry_id, scrub(str(e)))
+            await self.broadcast({"type": "btw", "entry": sd.entry_id, "kind": "done", "error": True})
+
+    async def close_btw(self, entry_id):
+        sd = self.side.pop(entry_id, None)
+        if not sd:
+            return
+        if sd.reader and not sd.reader.done():
+            sd.reader.cancel()
+        try:
+            await sd.client.disconnect()
+        except Exception:
+            pass
+        try:
+            await asyncio.to_thread(self.sdk.delete_session, sd.fork)  # the side chat leaves nothing behind
+        except Exception as e:
+            log.warning("couldn't delete side chat fork %s: %s", sd.fork, e)
+        await self.broadcast({"type": "btw", "entry": entry_id, "kind": "closed"})
+
     async def close_all(self):
+        for eid in list(self.side):
+            await self.close_btw(eid)
         for eid in list(self.live):
             await self.stop(eid)

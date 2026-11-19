@@ -1,6 +1,6 @@
 """Demo mode (`serve --demo`): canned sessions and history instead of this machine's real ones.
 For UI tests (repeatable, no Claude usage, nothing real touched), screenshots and trying the app."""
-import dataclasses, os, time
+import dataclasses, os, time, types
 
 __version__ = "demo"
 
@@ -96,6 +96,16 @@ def get_subagent_messages(session_id, agent_id, limit=None, offset=0):
 
 def get_session_info(session_id):
     return next((s for s in SESSIONS if s.session_id == session_id), None)
+
+
+def fork_session(session_id, directory=None, up_to_message_id=None, title=None):
+    src = get_session_info(session_id)
+    if not src:
+        raise FileNotFoundError(session_id)
+    new = f"demo-fork-{time.time_ns()}"
+    SESSIONS.append(dataclasses.replace(src, session_id=new, custom_title=title))
+    LIVE_LOG[new] = list(LIVE_LOG.get(session_id, []))
+    return types.SimpleNamespace(session_id=new)
 
 
 def delete_session(session_id, directory=None):
@@ -289,6 +299,11 @@ class ClaudeSDKClient:
         if not self.started:
             self.started = True
             yield SystemMessage("init", {"slash_commands": ["compact", "clear", "usage", "deploy", "yt-add"]})
+        if text.startswith("(/btw:"):  # a side question: the fake agent answers from its "context"
+            q = text.split("\n\n", 1)[-1]
+            yield AssistantMessage([TextBlock(f"Side answer: {q}")])
+            yield ResultMessage()
+            return
         if text.strip() == "/clear":  # as real Claude Code: a fresh session with a new id, announced by a new init
             new = f"demo-clear-{time.time_ns()}"
             SESSIONS.append(DemoSession(new, "New session", int(time.time() * 1000), self.options.cwd))
