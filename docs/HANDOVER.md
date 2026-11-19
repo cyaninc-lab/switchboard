@@ -23,7 +23,7 @@ Done: pairing (one-time code, tokens hashed), multi-machine tree, live chat with
 - Bug reports go to GitHub issues by copy-paste + pre-filled URL; a GitHub App for one-click is a later idea.
 
 ## Backlog, roughly in order
-1. **Claude Code gaps:** rewind / edit-and-resend; copy buttons on messages and code; search within a session; loading older history beyond the latest page; background commands (Bash `run_in_background`) shown and stoppable.
+1. **Claude Code gaps:** rewind / edit-and-resend; search within a session; loading older history beyond the latest page; background commands (Bash `run_in_background`) shown and stoppable.
 2. **Background service on Windows** (and macOS later); currently Linux only.
 3. **Daemon `update` command** for machines running the daemon without the app.
 4. **Tokens in the OS keychain** instead of the SQLite file.

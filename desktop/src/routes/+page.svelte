@@ -9,6 +9,18 @@
 
   // links (in Claude's replies, the inbox, questions) never navigate this window: web and mail links open in the
   // default browser / mail app, anything else is ignored. ponytail: until sessions get windows or tabs of their own
+  // copy buttons: a reply (its markdown) or a code block in one (button.copy inside the block, from markdown.ts)
+  async function copyText(text: string, btn?: HTMLElement | null) {
+    try { await navigator.clipboard.writeText(text); } catch { return say("Couldn't copy"); }
+    if (!btn) return;
+    btn.classList.add('copied');
+    if (btn.classList.contains('copy')) btn.textContent = 'Copied';
+    setTimeout(() => { btn.classList.remove('copied'); if (btn.classList.contains('copy')) btn.textContent = 'Copy'; }, 1500);
+  }
+  function onCopyClick(ev: MouseEvent) {
+    const b = (ev.target as Element | null)?.closest?.('pre > button.copy') as HTMLElement | null;
+    if (b) copyText(b.parentElement?.querySelector('code')?.textContent ?? '', b);
+  }
   function onLinkClick(ev: MouseEvent) {
     const a = (ev.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null;
     if (!a) return;
@@ -38,9 +50,10 @@
   }
   $effect(() => {
     document.addEventListener('click', onPathClick);
+    document.addEventListener('click', onCopyClick);
     document.addEventListener('click', onLinkClick, true);
     document.addEventListener('auxclick', onLinkClick, true);  // middle-click too
-    return () => { document.removeEventListener('click', onPathClick); document.removeEventListener('click', onLinkClick, true); document.removeEventListener('auxclick', onLinkClick, true); };
+    return () => { document.removeEventListener('click', onCopyClick); document.removeEventListener('click', onPathClick); document.removeEventListener('click', onLinkClick, true); document.removeEventListener('auxclick', onLinkClick, true); };
   });
   import type { Update } from '$lib/shell';
   import { captureAppLog, buildReport, issueUrl } from '$lib/report';
@@ -1159,7 +1172,9 @@
                 {#if msg.type === 'user'}
                   <div class="you"><span class="prompt">❯ </span>{line.text}</div>
                 {:else}
-                  <div class="reply"><span class="bullet">⏺</span><div class="md">{@html md(line.text)}</div></div>
+                  <div class="reply"><span class="bullet">⏺</span><div class="md">{@html md(line.text)}</div>
+                    <button type="button" class="copymsg" aria-label="Copy this reply" title="Copy (as markdown)" onclick={(ev) => copyText(line.text, ev.currentTarget)}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg></button></div>
                 {/if}
               {:else if line.kind === 'thinking'}
                 <details class="thinking"><summary>Thinking</summary><div class="thinktext">{line.text}</div></details>
@@ -1641,7 +1656,15 @@
   .log { flex: 1; overflow: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; white-space: pre-wrap; word-break: break-word; }
   /* your messages: a soft mauve band with an edge, so they stand out when scrolling back */
   .you { color: var(--text); background: color-mix(in srgb, var(--mauve) 10%, transparent); border-left: 3px solid var(--mauve); border-radius: 6px; padding: 8px 12px; margin: 4px 0; }
-  .reply { display: flex; gap: 8px; white-space: normal; }
+  .reply { display: flex; gap: 8px; white-space: normal; position: relative; }
+  /* copy: a reply's button shows on hover (or focus); a code block's sits in its corner */
+  .copymsg { position: absolute; top: 0; right: 0; background: var(--mantle); border: 1px solid var(--s1); color: var(--sub0); border-radius: 6px; padding: 3px 5px; line-height: 0; cursor: pointer; opacity: 0; }
+  .reply:hover .copymsg, .copymsg:focus-visible { opacity: 1; }
+  .copymsg:hover { color: var(--text); } :global(.copymsg.copied) { color: var(--green); border-color: var(--green); opacity: 1; }
+  .md :global(pre) { position: relative; padding-right: 64px; }  /* room for the Copy button */
+  .md :global(pre > button.copy) { position: absolute; top: 6px; right: 6px; font: inherit; font-size: 11px; background: var(--s0); border: 1px solid var(--s1); color: var(--sub0); border-radius: 6px; padding: 2px 8px; cursor: pointer; opacity: 0.7; }
+  .md :global(pre:hover > button.copy) { opacity: 1; } .md :global(pre > button.copy:hover) { color: var(--text); }
+  .md :global(pre > button.copied) { color: var(--green); border-color: var(--green); }
   /* messages between sessions: their own box, sky for received, teal for sent */
   .mail { border: 1px solid var(--s1); border-left: 3px solid var(--sky); border-radius: 8px; background: rgba(137, 220, 235, 0.06); padding: 8px 12px; white-space: normal; }
   .mail.out { border-left-color: var(--teal); background: rgba(148, 226, 213, 0.05); }
