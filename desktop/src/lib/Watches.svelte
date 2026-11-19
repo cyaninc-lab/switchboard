@@ -30,11 +30,30 @@
   function blank(): Partial<Watch> {
     return { name: '', kind: 'schedule', config: { every_minutes: 60 }, action: 'notify', entry_id: null, instructions: '', mode: null, enabled: true };
   }
+  // a starting point for "have Claude look at something every so often" (a service only Claude can reach, like a ticket desk)
+  function askClaude(): Partial<Watch> {
+    return { name: '', kind: 'schedule', config: { every_minutes: 15, quiet: true, active: { from: '08:30', to: '17:30', days: [1, 2, 3, 4, 5] } },
+      action: 'wake', entry_id: null, mode: null, enabled: true,
+      instructions: 'Check … for anything new since your last check (for example: ticket comments that mention me).\nFor each new one: what it is, who it\'s from, what they need, and a link.' };
+  }
+  const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  function toggleHours(on: boolean) { if (editing?.config) editing.config.active = on ? { from: '08:30', to: '17:30', days: [1, 2, 3, 4, 5] } : undefined; }
+  function toggleDay(d: number) {
+    const a = editing?.config?.active;
+    if (a) a.days = a.days?.includes(d) ? a.days.filter((x: number) => x !== d) : [...(a.days ?? []), d].sort();
+  }
+  const hoursText = (a: any) => {
+    if (!a) return '';
+    const days = (a.days ?? []).length === 7 || !(a.days ?? []).length ? '' : (a.days.join() === '1,2,3,4,5' ? ' Mon–Fri' : ' ' + a.days.map((d: number) => DAYS[d - 1]).join(' '));
+    return ` · ${a.from ?? '00:00'}–${a.to ?? '24:00'}${days}`;
+  };
   function pickKind(k: WatchKind) {
     if (!editing) return;
     editing.kind = k;
-    editing.config = k === 'schedule' ? { every_minutes: 60 } : k === 'command' ? { command: '', every_minutes: 15, fire_on: 'change' }
-      : k === 'http' ? { url: 'https://', every_minutes: 5 } : { repo: '', events: ['issues', 'pulls', 'failed_runs'], every_minutes: 10 };
+    const keep = { active: editing.config?.active, quiet: editing.config?.quiet };  // hours and quiet survive a kind change
+    editing.config = keep.active || keep.quiet ? { ...keep } : {};
+    Object.assign(editing.config, k === 'schedule' ? { every_minutes: 60 } : k === 'command' ? { command: '', every_minutes: 15, fire_on: 'change' }
+      : k === 'http' ? { url: 'https://', every_minutes: 5 } : { repo: '', events: ['issues', 'pulls', 'failed_runs'], every_minutes: 10 });
   }
   async function save(ev: Event) {
     ev.preventDefault();
@@ -42,6 +61,8 @@
     try {
       const w = { ...editing, entry_id: editing.action === 'wake' ? editing.entry_id : null, mode: editing.mode || null };
       if (w.kind === 'schedule' && w.config?.daily_at) delete w.config.every_minutes;
+      if (w.config && !w.config.active) delete w.config.active;
+      if (w.config && w.action !== 'wake') delete w.config.quiet;
       await api.saveWatch(machine, w);
       editing = null; error = '';
       load();
@@ -59,7 +80,7 @@
     const c = w.config;
     const when = c.daily_at ? `daily at ${c.daily_at}` : `every ${c.every_minutes ?? 15} min`;
     const what = w.kind === 'command' ? `$ ${c.command}` : w.kind === 'http' ? c.url : w.kind === 'github' ? `${c.repo}: ${(c.events ?? []).join(', ')}` : 'scheduled';
-    return `${what} · ${when}`;
+    return `${what} · ${when}${hoursText(c.active)}${c.quiet && w.action === 'wake' ? ' · quiet' : ''}`;
   };
   const entryName = (id: string | null) => (machine && id ? entries[machine.url]?.find((e) => e.id === id)?.name : null) ?? 'a session';
   const ago = (s: number | null) => {
@@ -98,7 +119,7 @@
         {/each}
       </ul>
       {#if note}<p class="muted small" role="status">{note}</p>{/if}
-      <div class="actions"><button class="btn ghost" onclick={onClose}>Close</button><button class="btn primary" onclick={() => (editing = blank())}>New watch</button></div>
+      <div class="actions"><button class="btn ghost" onclick={onClose}>Close</button><button class="btn ghost" onclick={() => (editing = askClaude())} title="A schedule that wakes a session to check something and tells you only when there's news">Ask Claude to check something…</button><button class="btn primary" onclick={() => (editing = blank())}>New watch</button></div>
     {:else}
       <form class="wform" aria-label="Edit watch" onsubmit={save}>
         <label>Name<input bind:value={editing.name} placeholder="e.g. Deploy failures" /></label>
@@ -131,6 +152,18 @@
             <label>Every (minutes)<input type="number" min="1" bind:value={editing.config.every_minutes} /></label>
           {/if}
         {/if}
+        {#if editing.config}
+          <label class="inline"><input type="checkbox" checked={!!editing.config.active} onchange={(e) => toggleHours((e.target as HTMLInputElement).checked)} /> Only at certain times</label>
+          {#if editing.config.active}
+            <div class="hours">
+              <label>From<input type="time" bind:value={editing.config.active.from} /></label>
+              <label>to<input type="time" bind:value={editing.config.active.to} /></label>
+              <div class="days" role="group" aria-label="Days">
+                {#each DAYS as d, i}<button type="button" class="pill" class:on={editing.config.active.days?.includes(i + 1)} aria-pressed={editing.config.active.days?.includes(i + 1)} onclick={() => toggleDay(i + 1)}>{d}</button>{/each}
+              </div>
+            </div>
+          {/if}
+        {/if}
         <div class="pills" role="radiogroup" aria-label="When it fires">
           <button type="button" role="radio" aria-checked={editing.action === 'notify'} class="pill" class:on={editing.action === 'notify'} onclick={() => (editing!.action = 'notify')}>Just notify me</button>
           <button type="button" role="radio" aria-checked={editing.action === 'wake'} class="pill" class:on={editing.action === 'wake'} onclick={() => (editing!.action = 'wake')}>Wake an agent</button>
@@ -146,6 +179,8 @@
             </select></label>
           </div>
           <label>Instructions for the agent<textarea rows="3" bind:value={editing.instructions} placeholder="Look into it and tell me what matters, briefly."></textarea></label>
+          {#if editing.config}<label class="inline"><input type="checkbox" bind:checked={editing.config.quiet} /> Only tell me when there's something new
+            <span class="muted small">(a "nothing new" reply stays out of the inbox)</span></label>{/if}
         {/if}
         {#if error}<p class="error">{error}</p>{/if}
         <div class="actions"><button type="button" class="btn ghost" onclick={() => { editing = null; error = ''; }}>Cancel</button><button class="btn primary">Save watch</button></div>
@@ -155,6 +190,11 @@
 </div>
 
 <style>
+  .wform label.inline { display: flex; flex-direction: row; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .wform label.inline input { width: auto; margin: 0; }
+  .hours { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+  .hours label { width: 110px; }
+  .days { display: flex; gap: 4px; flex-wrap: wrap; }
   .wlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
   .wlist li { display: flex; gap: 10px; align-items: center; padding: 10px 12px; background: var(--mantle); border: 1px solid var(--s0); border-radius: 10px; }
   .wlist li.off { opacity: 0.6; }
