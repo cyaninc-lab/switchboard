@@ -234,6 +234,11 @@ def _check_watch(body, store, partial=False):
             hh, _, mm = str(cfg["daily_at"]).partition(":")
             if not (hh.isdigit() and mm.isdigit() and int(hh) < 24 and int(mm) < 60):
                 raise _bad("daily_at_must_be_HH:MM")
+        if cfg.get("active"):
+            a = cfg["active"]
+            ok = lambda v: v is None or (len(str(v)) == 5 and str(v)[2] == ":" and str(v)[:2].isdigit() and str(v)[3:].isdigit() and int(str(v)[:2]) < 25 and int(str(v)[3:]) < 60)
+            if not isinstance(a, dict) or not ok(a.get("from")) or not ok(a.get("to")) or not set(a.get("days") or []) <= set(range(1, 8)):
+                raise _bad("active_hours_must_be_HH:MM_and_days_1_to_7")
         if kind == "command" and not str(cfg.get("command", "")).strip():
             raise _bad("command_required")
         if kind == "http" and not str(cfg.get("url", "")).startswith(("http://", "https://")):

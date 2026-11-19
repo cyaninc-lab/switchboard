@@ -380,6 +380,8 @@ class ClaudeSDKClient:
                 await asyncio.sleep(0.1)
         acct = " (token account)" if (self.options.env or {}).get("CLAUDE_CODE_OAUTH_TOKEN") else ""
         done = f"Done: {text}" + (f" [{self.options.model}]" if self.options.model else "") + acct
+        if "quiet day" in text and "reply with exactly NOTHING_NEW" in text:  # a quiet watch with nothing to tell
+            done = "NOTHING_NEW"
         LIVE_LOG.setdefault(self.options.resume or self.options.session_id, []).append(
             {"type": "assistant", "uuid": f"live-{time.time_ns()}-a", "message": {"role": "assistant", "content": [{"type": "text", "text": done}]}})
         yield AssistantMessage([TextBlock(done)],

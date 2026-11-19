@@ -28,7 +28,7 @@ test('watches: notify and wake-an-agent both land in the inbox', async ({ page }
   await form.getByLabel('Command').fill(`python3 -c "print('disk ok')"`);
   await form.getByRole('button', { name: 'Save watch' }).click();
   await expect(dlg.getByRole('list', { name: /Watches on/ })).toContainText('Disk check');
-  await dlg.getByRole('button', { name: 'Test' }).first().click();
+  await dlg.getByRole('listitem').filter({ hasText: 'Disk check' }).getByRole('button', { name: 'Test' }).click();  // its own row: other specs share the daemon
   await expect(inbox.getByRole('article', { name: /Disk check/ })).toContainText('disk ok');
 
   // a schedule that wakes an agent: its reply comes back to the inbox

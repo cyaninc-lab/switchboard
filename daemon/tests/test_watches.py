@@ -105,3 +105,34 @@ def test_wake_agent_reply_to_inbox(tmp_path, monkeypatch):
         assert store.watch(w["id"])["last_fired"]
         await client.close()
     asyncio.run(t())
+
+
+def test_quiet_wake_watch_and_active_hours(tmp_path, monkeypatch):
+    """A quiet wake watch's "nothing new" never reaches the inbox (a real finding does); a watch outside its hours doesn't check."""
+    import datetime
+    from switchboard_daemon import watches as wmod
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        mk = lambda name, instr: client.post("/v1/watches", headers=h, json={"name": name, "kind": "schedule", "config": {"every_minutes": 10, "quiet": True},
+                                                                             "action": "wake", "entry_id": e["id"], "instructions": instr, "mode": "auto"})
+        quiet = await (await mk("zoho quiet", "Check for mentions. It's a quiet day.")).json()
+        found = await (await mk("zoho found", "Check for mentions.")).json()
+        await client.post(f"/v1/watches/{quiet['id']}/test", headers=h)
+        await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        await client.post(f"/v1/watches/{found['id']}/test", headers=h)
+        item, seen = await until(ws, lambda m: m["type"] == "inbox", timeout=10)
+        assert item["item"]["source"] == "zoho found"  # the quiet one's NOTHING_NEW never arrived
+        assert not any(m["type"] == "inbox" for m in seen[:-1])  # nothing from the quiet one before it
+        assert all(i["source"] != "zoho quiet" for i in store.inbox())
+        # active hours: validation, and the scheduler skips checks outside them
+        r = await client.post("/v1/watches", headers=h, json={"name": "x", "kind": "schedule", "config": {"every_minutes": 5, "active": {"from": "9am"}}})
+        assert r.status == 400 and "active_hours" in (await r.json())["code"]
+        cfg = {"active": {"from": "08:30", "to": "17:30", "days": [1, 2, 3, 4, 5]}}
+        at = lambda y, mo, d, hh, mm: datetime.datetime(y, mo, d, hh, mm).timestamp()
+        assert wmod.active_now(cfg, at(2026, 11, 19, 9, 0))        # a Thursday morning
+        assert not wmod.active_now(cfg, at(2026, 11, 19, 18, 0))   # Thursday evening
+        assert not wmod.active_now(cfg, at(2026, 11, 21, 10, 0))   # Saturday
+        assert wmod.active_now({"active": {"from": "22:00", "to": "06:00"}}, at(2026, 11, 19, 23, 0))  # across midnight
+        assert wmod.active_now({}, at(2026, 11, 21, 3, 0))         # no hours: always
+        await client.close()
+    asyncio.run(t())
