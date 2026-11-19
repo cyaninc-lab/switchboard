@@ -156,8 +156,17 @@
     catch (e) { netError = (e as Error).message; }
   }
   $effect(() => { if (!code) return; const t = setInterval(() => (now = Date.now()), 1000); return () => clearInterval(t); });
+  // daemon-wide settings, per machine (null: that daemon is too old to have them)
+  let dset = $state<Record<string, api.DaemonSettings | null>>({});
+  const IDLE = [[0, 'Never'], [10, 'After 10 minutes'], [30, 'After 30 minutes'], [60, 'After 1 hour'], [240, 'After 4 hours']] as const;
+  function loadDaemonSettings() {
+    for (const m of machines) api.settings(m).then((v) => (dset[m.url] = v), () => (dset[m.url] = null));
+  }
+  async function setIdle(m: Machine, minutes: number) {
+    try { dset[m.url] = await api.setSettings(m, { idle_close_minutes: minutes }); } catch (e) { say(`Couldn't change ${m.name}: ${(e as Error).message}`); }
+  }
   async function openSettings() {
-    loadNet(); code = null;
+    loadNet(); loadDaemonSettings(); code = null;
     dialog = 'settings'; svcError = '';
     accMachine = accMachine ?? machines[0] ?? null;
     if (accMachine) loadAccounts(accMachine);
@@ -1065,6 +1074,16 @@
         </p>
       {/if}
       {#if svcError}<p class="error">{svcError}</p>{/if}
+
+      <h3 class="sub">Idle sessions</h3>
+      <p class="muted small">Close a live session after it has been quiet for a while, to free memory. It resumes with its history on your next message, but forgets any "Allow for this session" answers. Sessions that are working, waiting on you or running a background command stay open.</p>
+      {#each machines as m (m.url)}
+        <label>Close idle sessions on {m.name}
+          {#if dset[m.url] === null}<span class="muted small">Needs a newer Switchboard on {m.name}.</span>
+          {:else}<select value={dset[m.url]?.idle_close_minutes ?? 0} disabled={!dset[m.url]}
+            onchange={(e) => setIdle(m, +(e.currentTarget as HTMLSelectElement).value)}>
+            {#each IDLE as [v, label]}<option value={v}>{label}</option>{/each}</select>{/if}</label>
+      {/each}
 
       <h3 class="sub">Other devices</h3>
       {#if !localMachine}

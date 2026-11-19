@@ -10,12 +10,13 @@ from .tty import Terminals
 from .procs import alive
 from .net import Network, SETTING as NET_SETTING
 from .watches import Watches, KINDS, ACTIONS
-from .runner import MODES
+from .runner import MODES, IDLE_SETTING, IDLE_CHOICES
 from . import logs
 from .logs import log
 
 STORE, NAME = web.AppKey("store", Store), web.AppKey("name", str)
 RUNNER, SOCKETS = web.AppKey("runner", Runner), web.AppKey("sockets", set)
+REAPER = web.AppKey("reaper", asyncio.Task)
 TTYS = web.AppKey("ttys", Terminals)
 NET = web.AppKey("net", Network)
 WATCHES, WATCH_TASK = web.AppKey("watches", Watches), web.AppKey("watch_task", asyncio.Task)
@@ -304,6 +305,19 @@ async def set_network(request):
     return web.json_response(await request.app[NET].status())
 
 
+async def get_settings(request):
+    return web.json_response({"idle_close_minutes": int(request.app[STORE].setting(IDLE_SETTING, "0") or 0)})
+
+
+async def set_settings(request):
+    body = await request.json()
+    if "idle_close_minutes" in body:
+        if body["idle_close_minutes"] not in IDLE_CHOICES:
+            raise web.HTTPBadRequest(text=json.dumps({"code": "bad_idle_close"}), content_type="application/json")
+        request.app[STORE].set_setting(IDLE_SETTING, str(body["idle_close_minutes"]))
+    return await get_settings(request)
+
+
 async def pair_code(request):
     """A one-time code for pairing another device, from the app instead of the command line."""
     _local_only(request)
@@ -517,9 +531,11 @@ def make_app(store: Store, name=None):
     async def start(app):
         scrub_env()
         app[WATCH_TASK] = asyncio.get_running_loop().create_task(app[WATCHES].run())
+        app[REAPER] = asyncio.get_running_loop().create_task(app[RUNNER].reap_loop())
 
     async def stop(app):
         app[WATCH_TASK].cancel()
+        app[REAPER].cancel()
         await app[TTYS].close_all()
         await app[RUNNER].close_all()
     async def close_sockets(app):  # open WebSockets would otherwise hold a graceful shutdown for its full timeout
@@ -533,7 +549,8 @@ def make_app(store: Store, name=None):
         web.get("/v1/entries", list_entries), web.post("/v1/entries", add_entry),
         web.patch("/v1/entries/{id}", update_entry), web.delete("/v1/entries/{id}", remove_entry),
         web.get("/v1/entries/{id}/messages", messages), web.get("/v1/entries/{id}/subagents/{agent}/messages", subagent_messages), web.get("/v1/ws", ws_handler), web.get("/v1/commands", commands), web.get("/v1/folders", folders), web.get("/v1/models", models), web.get("/v1/logs", get_logs),
-        web.get("/v1/network", get_network), web.put("/v1/network", set_network), web.post("/v1/pair_code", pair_code),
+        web.get("/v1/network", get_network), web.put("/v1/network", set_network),
+        web.get("/v1/settings", get_settings), web.put("/v1/settings", set_settings), web.post("/v1/pair_code", pair_code),
         web.get("/v1/watches", list_watches), web.post("/v1/watches", add_watch), web.patch("/v1/watches/{id}", update_watch),
         web.delete("/v1/watches/{id}", remove_watch), web.post("/v1/watches/{id}/test", test_watch),
         web.get("/v1/inbox", list_inbox), web.post("/v1/inbox/read", read_inbox), web.post("/v1/inbox/{id}/read", read_inbox), web.delete("/v1/inbox/{id}", delete_inbox),
