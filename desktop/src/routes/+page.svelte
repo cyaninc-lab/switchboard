@@ -50,7 +50,7 @@
   import WatchesView from '$lib/Watches.svelte';
   import PromptCard from '$lib/Prompt.svelte';
   import { md } from '$lib/markdown';
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import type { Machine, Entry, Session, HistoryMessage } from '$lib/api';
 
   // the HTML autofocus attribute only works on page load, not on elements Svelte adds later
@@ -446,6 +446,7 @@
     try {
       const images = attachments.map(({ media_type, data }) => ({ media_type, data }));
       live()!.send(selected.entry.id, draft, images, sendNow);  // now: the daemon interrupts and sends this first
+      keepTab();
       const content = [...images.map((im) => ({ type: 'image', source: { type: 'base64', ...im } })), { type: 'text', text: draft }];
       const msg: HistoryMessage = { type: 'user', uuid: crypto.randomUUID(), message: { role: 'user', content } };
       const id = selected.entry.id;
@@ -462,7 +463,7 @@
     try {
       live()!.send(s.entry.id, `Use the SendMessage tool to send this message to agent ${s.sub.id} (it resumes the subagent if it has finished). Send it as written and do nothing else:\n\n${draft}`, []);
       messages = [...messages, { type: 'user', uuid: crypto.randomUUID(), message: { role: 'user', content: draft } }];
-      draft = ''; liveErr = '';
+      draft = ''; liveErr = ''; keepTab();
     } catch (e) { liveErr = (e as Error).message; }
   }
   function act(fn: (l: api.Live, id: string) => void) {
@@ -470,6 +471,10 @@
     try { fn(live()!, selected.entry.id); liveErr = ''; } catch (e) { liveErr = (e as Error).message; }
   }
   function onKey(ev: KeyboardEvent) {
+    if (ev.ctrlKey && !dialog && (ev.key === 'Tab' || ev.key === 'PageDown' || ev.key === 'PageUp')) {
+      ev.preventDefault(); return cycleTab(ev.key === 'PageUp' || (ev.key === 'Tab' && ev.shiftKey) ? -1 : 1);
+    }
+    if (ev.ctrlKey && !dialog && ev.key.toLowerCase() === 'w' && curKey) { ev.preventDefault(); return closeTab(curKey); }
     if (ev.key === 'Escape' && selected?.entry.state === 'working' && !dialog) act((l, id) => l.interrupt(id));
   }
   const summary = (input: any) => input?.command ?? input?.file_path ?? input?.pattern ?? input?.url ?? JSON.stringify(input).slice(0, 200);
@@ -533,12 +538,11 @@
     return Object.entries(g);
   }
 
-  async function open(machine: Machine, entry: Entry) {
-    if (termFor && termFor !== entry.id) termFor = null;
+  async function open(machine: Machine, entry: Entry, how: How = 'preview') {
+    const t = enterTab(machine, entry.id, undefined, how);
     swapDraft(entry.id);
     selected = { machine, entry };
     unread[entry.id] = false;
-    stick = true;
     if (!cmdList[machine.url]) loadCommands(machine);
     loadModels(machine);
     loadAccounts(machine);
@@ -550,7 +554,86 @@
     if (mine !== openSeq) return;  // the user already opened something else
     messages = [...hist, ...messages];  // keep anything sent or streamed in while the history was loading
     loadingHistory = false;
+    restoreScroll(t);
   }
+
+  // ---- tabs: sessions (and subagent views) open side by side; clicking in the tree opens a preview tab that the next
+  // click replaces (as in VS Code); sending, double-clicking or Ctrl/middle-click keeps one. Remembered on this device.
+  type How = 'preview' | 'keep' | 'new';
+  type Tab = { url: string; entry: string; sub?: string; preview?: boolean; term?: boolean; scroll?: number | null };
+  const TABS_KEY = 'switchboard.tabs';
+  const tabKey = (t: { entry: string; sub?: string }) => t.entry + (t.sub ? '/' + t.sub : '');
+  const savedTabs = (() => { try { return JSON.parse(localStorage.getItem(TABS_KEY) || '{}'); } catch { return {}; } })();
+  let tabs = $state<Tab[]>(Array.isArray(savedTabs.tabs) ? savedTabs.tabs : []);
+  let curKey = $derived(selected ? tabKey({ entry: selected.entry.id, sub: selected.sub?.id }) : null);
+  $effect(() => {
+    const v = JSON.stringify({ tabs: tabs.map(({ scroll, ...t }) => t), active: curKey });
+    try { localStorage.setItem(TABS_KEY, v); } catch {}
+  });
+  // leave the current tab (remember its scroll and terminal), then find or make the tab for what opens next
+  function enterTab(machine: Machine, entry: string, sub: string | undefined, how: How) {
+    const key = tabKey({ entry, sub });
+    const cur = tabs.find((t) => tabKey(t) === curKey);
+    if (cur && curKey !== key) {
+      cur.term = termFor === cur.entry && !cur.sub;
+      cur.scroll = stick || !logEl ? null : logEl.scrollTop;
+    }
+    let t = tabs.find((x) => tabKey(x) === key);
+    if (t) { if (how !== 'preview') t.preview = false; }
+    else {
+      t = { url: machine.url, entry, sub, preview: how === 'preview' };
+      const pi = how === 'preview' ? tabs.findIndex((x) => x.preview) : -1;
+      if (pi >= 0) tabs[pi] = t;
+      else { const ci = tabs.findIndex((x) => tabKey(x) === curKey); tabs.splice(ci >= 0 ? ci + 1 : tabs.length, 0, t); }
+      t = tabs.find((x) => tabKey(x) === key)!;  // the reactive copy
+    }
+    if (curKey !== key) { termFor = t.term ? entry : null; stick = t.scroll == null; }
+    return t;
+  }
+  function restoreScroll(t: Tab) {
+    if (t.scroll == null) return;
+    const y = t.scroll;
+    tick().then(() => { if (logEl) logEl.scrollTop = y; });
+  }
+  const tabEntry = (t: Tab) => tree[t.url]?.entries.find((e) => e.id === t.entry);
+  const tabMachine = (t: Tab) => machines.find((m) => m.url === t.url);
+  function showTab(t: Tab) {
+    const m = tabMachine(t), e = tabEntry(t);
+    if (!m || !e) return closeTab(tabKey(t));
+    if (t.sub) { const a = e.subagents?.find((x) => x.id === t.sub); return a ? openSub(m, e, a) : closeTab(tabKey(t)); }
+    open(m, e);
+  }
+  function closeTab(key: string) {
+    const i = tabs.findIndex((t) => tabKey(t) === key);
+    if (i < 0) return;
+    tabs.splice(i, 1);
+    if (key !== curKey) return;
+    const next = tabs[i] ?? tabs[i - 1];
+    if (next) showTab(next);
+    else { swapDraft('\u0000none'); selected = null; termFor = null; }  // the closed one's draft is kept for next time
+  }
+  function keepTab() { const t = tabs.find((x) => tabKey(x) === curKey); if (t) t.preview = false; }
+  function cycleTab(step: number) {
+    if (tabs.length < 2) return;
+    const i = tabs.findIndex((t) => tabKey(t) === curKey);
+    showTab(tabs[(i + step + tabs.length) % tabs.length]);
+  }
+  let dragTab: string | null = null;
+  function dropTab(target: string) {
+    const from = tabs.findIndex((t) => tabKey(t) === dragTab), to = tabs.findIndex((t) => tabKey(t) === target);
+    if (from < 0 || to < 0 || from === to) return;
+    const [t] = tabs.splice(from, 1);
+    tabs.splice(to, 0, t);
+  }
+  // on start, reopen the tab that was active once the tree has loaded; drop tabs whose session is gone
+  let tabsRestored = false;
+  $effect(() => {
+    if (tabsRestored || !machines.length || !machines.every((m) => tree[m.url])) return;
+    tabsRestored = true;
+    tabs = tabs.filter((t) => tree[t.url] && (tree[t.url].error || tabEntry(t)));
+    const t = untrack(() => tabs.find((x) => tabKey(x) === savedTabs.active));
+    if (t && !selected) showTab(t);
+  });
 
   // ---- subagents: running ones nest under their session in the tree; finished ones open from their Agent step ----
   // the daemon decides (0.1.9+); an older daemon doesn't send `running`
@@ -617,15 +700,16 @@
     // a subagent whose parent isn't listed still shows, at the top
     return all.filter((a) => (parent === null ? !a.parent || !ids.has(a.parent) : a.parent === parent));
   }
-  async function openSub(machine: Machine, entry: Entry, sub: api.Sub) {
-    if (termFor) termFor = null;
+  async function openSub(machine: Machine, entry: Entry, sub: api.Sub, how: How = 'preview') {
+    const t = enterTab(machine, entry.id, sub.id, how);
+    termFor = null;
     swapDraft(entry.id + '/' + sub.id);
     selected = { machine, entry, sub };
-    stick = true;
     messages = [];
     loadingHistory = true;
     await loadSub();
     loadingHistory = false;
+    restoreScroll(t);
   }
   async function loadSub() {
     const s = selected;
@@ -666,7 +750,8 @@
   function disconnect(m: Machine) {
     machines = machines.filter((x) => x.url !== m.url);
     api.saveMachines(machines);
-    if (selected?.machine.url === m.url) selected = null;
+    if (selected?.machine.url === m.url) { swapDraft('\u0000none'); selected = null; }
+    tabs = tabs.filter((t) => t.url !== m.url);
     refresh();
   }
 
@@ -703,7 +788,9 @@
   async function remove() {
     if (!selected) return;
     await api.removeEntry(selected.machine, selected.entry.id);
-    selected = null;
+    const id = selected.entry.id;
+    for (const t of tabs.filter((x) => x.entry === id && tabKey(x) !== curKey)) closeTab(tabKey(t));
+    if (curKey) closeTab(curKey);
     refresh();
   }
   async function togglePin() {
@@ -786,7 +873,8 @@
     {#snippet subs(m: Machine, e: Entry, parent: string | null, depth: number)}
       {#each kids(e, parent) as a (a.id)}
         <button class="entry sub" style="padding-left: {36 + depth * 14}px" class:sel={selected?.sub?.id === a.id && selected.entry.id === e.id}
-          title="{a.type ?? 'subagent'}: {subRunning(e, a) ? 'running' : a.stopped ? 'stopped' : 'finished'}" onclick={() => openSub(m, e, a)}>
+          title="{a.type ?? 'subagent'}: {subRunning(e, a) ? 'running' : a.stopped ? 'stopped' : 'finished'}" onclick={(ev) => openSub(m, e, a, ev.ctrlKey || ev.metaKey ? 'new' : 'preview')}
+          ondblclick={() => keepTab()}>
           <span class="st {subRunning(e, a) ? 'working' : 'stopped'}"></span>
           <span class="ename">↳ {a.description}</span>
           <span class="muted small">{ago(a.updated)}</span>
@@ -823,7 +911,8 @@
                 <div class="entry"><span class="st {icon(e)}"></span><input class="rename" aria-label="Rename {e.name}" bind:value={renaming.value} {@attach focusSelect}
                   onkeydown={(ev) => renameKeys(ev, m, e)} onblur={() => commitRename(m, e)} /></div>
                 {:else}
-                <button class="entry" class:sel={selected?.entry.id === e.id && !selected.sub} class:waiting={e.state === 'waiting'} title={stateLabel[icon(e)]} onclick={() => open(m, e)} oncontextmenu={(ev) => openMenu(ev, m, e)}>
+                <button class="entry" class:sel={selected?.entry.id === e.id && !selected.sub} class:waiting={e.state === 'waiting'} title={stateLabel[icon(e)]} onclick={(ev) => open(m, e, ev.ctrlKey || ev.metaKey ? 'new' : 'preview')} ondblclick={() => keepTab()}
+                  onauxclick={(ev) => { if (ev.button === 1) { ev.preventDefault(); open(m, e, 'new'); } }} oncontextmenu={(ev) => openMenu(ev, m, e)}>
                   <span class="st {icon(e)}"></span>
                   {#if e.pinned}<span class="pin" aria-label="pinned">★</span>{/if}
                   <span class="ename">{e.name}</span>
@@ -851,6 +940,26 @@
     </nav>
 
     <main class="term">
+      {#if tabs.length}
+        <div class="tabs" role="tablist" aria-label="Open sessions">
+          {#each tabs as t (tabKey(t))}
+            {@const e = tabEntry(t)}
+            {#if e}
+              {@const a = t.sub ? e.subagents?.find((x) => x.id === t.sub) : undefined}
+              {@const name = t.sub ? `↳ ${a?.description ?? 'subagent'}` : e.name}
+              {@const k = tabKey(t)}
+              <div class="tab" class:on={k === curKey} class:preview={t.preview} role="presentation" draggable="true"
+                ondragstart={() => (dragTab = k)} ondragover={(ev) => ev.preventDefault()} ondrop={(ev) => { ev.preventDefault(); dropTab(k); }}
+                onauxclick={(ev) => { if (ev.button === 1) { ev.preventDefault(); closeTab(k); } }}>
+                <button class="tabname" role="tab" aria-selected={k === curKey} title={t.preview ? `${name} (preview: the next session you open replaces it; double-click to keep)` : name}
+                  onclick={() => k !== curKey && showTab(t)} ondblclick={() => (t.preview = false)}>
+                  <span class="st {t.sub ? (a && subRunning(e, a) ? 'working' : 'stopped') : icon(e)}"></span><span class="tlabel">{name}</span></button>
+                <button class="tabx" aria-label="Close tab {name}" title="Close (Ctrl+W)" onclick={() => closeTab(k)}>×</button>
+              </div>
+            {/if}
+          {/each}
+        </div>
+      {/if}
       {#if selected}
         {#if selected.sub}
         <div class="termhead mono">
@@ -1314,6 +1423,16 @@
   :global(.btn.ghost) { width: auto; padding: 9px 16px; }
 
   .term { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--base); }
+  .tabs { display: flex; gap: 2px; padding: 6px 8px 0; background: var(--mantle); border-bottom: 1px solid var(--s0); overflow-x: auto; scrollbar-width: thin; flex: none; }
+  .tab { display: flex; align-items: center; max-width: 220px; min-width: 0; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; color: var(--sub0); }
+  .tab:hover { background: var(--s0); }
+  .tab.on { background: var(--base); border-color: var(--s0); color: var(--text); margin-bottom: -1px; }
+  .tab.preview .tlabel { font-style: italic; }
+  .tabname { display: flex; align-items: center; gap: 8px; min-width: 0; background: none; border: 0; color: inherit; font: inherit; font-size: 13px; padding: 7px 4px 7px 10px; cursor: pointer; }
+  .tlabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tabx { background: none; border: 0; color: var(--o1); cursor: pointer; padding: 2px 8px 2px 4px; font-size: 14px; line-height: 1; border-radius: 4px; }
+  .tabx:hover { color: var(--text); }
+  .tab:not(.on):not(:hover) .tabx { visibility: hidden; }
   .termhead { display: flex; gap: 16px; align-items: center; padding: 8px 18px; font-size: 12px; color: var(--o2); border-bottom: 1px solid var(--s0); }
   .logbody { display: flex; flex-direction: column; gap: 8px; }
   .log { flex: 1; overflow: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; white-space: pre-wrap; word-break: break-word; }
