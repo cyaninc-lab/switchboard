@@ -45,16 +45,22 @@ test('themes: pick a Catppuccin palette in Settings; it applies everywhere and i
   await page.getByRole('button', { name: 'Settings' }).click();
   const settings = page.getByRole('dialog', { name: 'Settings' });
   await settings.getByLabel('Text size').selectOption('120');
-  await settings.getByLabel('Chat and code font').selectOption({ label: 'Fira Code' });
+  await settings.getByLabel('Code font').selectOption({ label: 'Fira Code' });
+  await settings.getByLabel('Chat font').selectOption({ label: 'Cascadia Code' });
   await settings.getByLabel('Interface font').selectOption({ label: 'System default' });
   await page.mouse.click(5, 5);
   const look = () => page.evaluate(() => ({ zoom: document.documentElement.style.zoom,
-    mono: getComputedStyle(document.querySelector('.log')!).fontFamily, ui: getComputedStyle(document.body).fontFamily }));
+    mono: getComputedStyle(document.querySelector('.log')!).fontFamily, ui: getComputedStyle(document.body).fontFamily,
+    reply: getComputedStyle(document.querySelector('.log .md')!).fontFamily, you: getComputedStyle(document.querySelector('.log .you')!).fontFamily,
+    box: getComputedStyle(document.querySelector('.inputbar textarea')!).fontFamily, tree: getComputedStyle(document.querySelector('nav.tree .entry')!).fontFamily }));
   for (const when of ['now', 'after a reload']) {
     const l = await look();
     expect(l.zoom, when).toBe('120%');
     expect(l.mono, when).toContain('Fira Code');
     expect(l.ui, when).toMatch(/^system-ui/);
+    // chat font: replies, your messages and the message box; the tree keeps the interface font, steps the code font
+    for (const k of ['reply', 'you', 'box'] as const) expect(l[k], `${k} ${when}`).toContain('Cascadia Code');
+    expect(l.tree, when).toMatch(/^system-ui/);
     // a bigger size still fits the window: the page itself never scrolls, the footer sits at the bottom edge
     expect(await page.evaluate(() => { scrollTo(0, 99999); const y = scrollY; scrollTo(0, 0); return y; }), when).toBe(0);
     expect(await page.evaluate(() => !!document.elementFromPoint(innerWidth / 2, innerHeight - 3)?.closest('footer')), when).toBe(true);
