@@ -14,7 +14,7 @@ from . import github
 from . import patches as patchmod
 from .net import Network, SETTING as NET_SETTING
 from .watches import Watches, KINDS, ACTIONS
-from .runner import MODES, IDLE_SETTING, IDLE_CHOICES
+from .runner import MODES, EFFORTS, IDLE_SETTING, IDLE_CHOICES
 from . import logs
 from .logs import log
 
@@ -162,14 +162,37 @@ async def list_entries(request):
     return web.json_response({"entries": out})
 
 
+NEW_SESSION = "new_session"  # defaults for sessions added from now on: {mode, model, effort, account}; None = Claude Code's own
+DEFAULT_KEYS = ("mode", "model", "effort", "account")
+
+
+def _defaults(store):
+    return json.loads(store.setting(NEW_SESSION, "{}") or "{}")
+
+
+def _claude_default_mode():
+    """The permission mode Claude Code starts in on this machine (its settings' defaultMode), for showing what "default" means."""
+    try:
+        cfg = json.loads((Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "settings.json").read_text())
+        return (cfg.get("permissions") or {}).get("defaultMode") or "default"
+    except (OSError, ValueError):
+        return "default"
+
+
 async def add_entry(request):
     body, store = await request.json(), request.app[STORE]
+    d = _defaults(store)  # what the request leaves out comes from the machine's defaults for new sessions
+    for k in DEFAULT_KEYS:
+        if not body.get(k) and d.get(k):
+            body[k] = d[k]
     if "new" in body:
         cwd = os.path.abspath(os.path.expanduser(body["new"].get("cwd") or "~"))
         if not os.path.isdir(cwd):
             raise web.HTTPBadRequest(text=json.dumps({"code": "no_such_folder"}), content_type="application/json")
         e = store.add_entry(str(uuid.uuid4()), body.get("name") or "New session", body.get("group") or _default_group(cwd),
                             body.get("account"), body.get("mode"), cwd=cwd, model=body.get("model") or None)
+        if body.get("effort"):
+            e = store.update_entry(e["id"], effort=body["effort"])
         return web.json_response(_entry_view(e, None, set(), request.app[RUNNER]), status=201)
     if "session_id" not in body:
         raise web.HTTPBadRequest(text=json.dumps({"code": "session_id_or_new"}), content_type="application/json")
@@ -181,6 +204,8 @@ async def add_entry(request):
     e = store.add_entry(info.session_id, body.get("name") or info.custom_title or info.summary or "Untitled",
                         body.get("group") or _default_group(info.cwd),
                         body.get("account") or None, body.get("mode"))
+    if body.get("model") or body.get("effort"):
+        e = store.update_entry(e["id"], model=body.get("model") or None, effort=body.get("effort") or None)
     return web.json_response(_entry_view(e, info, await _live(request), request.app[RUNNER]), status=201)
 
 
@@ -373,7 +398,8 @@ PROJECT_ORDER = "project_order"
 async def get_settings(request):
     st = request.app[STORE]
     return web.json_response({"idle_close_minutes": int(st.setting(IDLE_SETTING, "0") or 0),
-                              "project_order": json.loads(st.setting(PROJECT_ORDER, "[]"))})
+                              "project_order": json.loads(st.setting(PROJECT_ORDER, "[]")),
+                              "new_session": _defaults(st), "claude_default_mode": _claude_default_mode()})
 
 
 async def set_settings(request):
@@ -382,6 +408,12 @@ async def set_settings(request):
         if body["idle_close_minutes"] not in IDLE_CHOICES:
             raise web.HTTPBadRequest(text=json.dumps({"code": "bad_idle_close"}), content_type="application/json")
         request.app[STORE].set_setting(IDLE_SETTING, str(body["idle_close_minutes"]))
+    if "new_session" in body:  # only sessions added after this get them
+        d = body["new_session"] or {}
+        if not isinstance(d, dict) or set(d) - set(DEFAULT_KEYS) or (d.get("mode") and d["mode"] not in MODES) \
+                or (d.get("effort") and d["effort"] not in EFFORTS) or (d.get("account") and d["account"] not in {a["name"] for a in request.app[STORE].accounts()}):
+            raise web.HTTPBadRequest(text=json.dumps({"code": "bad_new_session_defaults"}), content_type="application/json")
+        request.app[STORE].set_setting(NEW_SESSION, json.dumps({k: v for k, v in d.items() if v}))
     if "project_order" in body:  # project names, top first (projects not listed follow, as before)
         order = body["project_order"]
         if not isinstance(order, list) or not all(isinstance(x, str) for x in order) or len(order) > 1000:

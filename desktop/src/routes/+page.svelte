@@ -225,7 +225,11 @@
   let dset = $state<Record<string, api.DaemonSettings | null>>({});
   const IDLE = [[0, 'Never'], [10, 'After 10 minutes'], [30, 'After 30 minutes'], [60, 'After 1 hour'], [240, 'After 4 hours']] as const;
   function loadDaemonSettings() {
-    for (const m of machines) api.settings(m).then((v) => (dset[m.url] = v), () => (dset[m.url] = null));
+    for (const m of machines) { api.settings(m).then((v) => (dset[m.url] = v), () => (dset[m.url] = null)); loadModels(m); loadAccounts(m); }
+  }
+  async function setDefault(m: Machine, key: keyof api.NewSessionDefaults, value: string) {
+    const next = { ...(dset[m.url]?.new_session ?? {}), [key]: value || undefined };
+    try { dset[m.url] = await api.setSettings(m, { new_session: next }); } catch (e) { say(`Couldn't change ${m.name}: ${(e as Error).message}`); }
   }
   async function setIdle(m: Machine, minutes: number) {
     try { dset[m.url] = await api.setSettings(m, { idle_close_minutes: minutes }); } catch (e) { say(`Couldn't change ${m.name}: ${(e as Error).message}`); }
@@ -277,6 +281,11 @@
   let nMode = $state('default');
   let nModel = $state('default');
   let nAccount = $state('');
+  // the New session form starts from the machine's defaults (Settings → New sessions), so you see what you'll get
+  $effect(() => {
+    const d = aMachine ? dset[aMachine.url]?.new_session ?? {} : {};
+    untrack(() => { nMode = d.mode ?? 'default'; nModel = d.model ?? 'default'; nAccount = d.account ?? ''; });
+  });
   async function newTab() {
     aTab = 'new'; aError = '';
     if (!aMachine) return;
@@ -1394,7 +1403,7 @@
       <label class="modepick">model
         <select aria-label="Model" value={selected.entry.model ?? 'default'} onchange={(ev) => act((l, id) => { const v = (ev.target as HTMLSelectElement).value; l.setModel(id, v === 'default' ? null : v); })}>
           {#each modelList[selected.machine.url]?.length ? modelList[selected.machine.url] : [{ value: 'default', displayName: 'Default' }] as m (m.value)}
-            <option value={m.value} title={m.description ?? ''}>{m.displayName}</option>
+            <option value={m.value} title={m.description ?? ''}>{m.value === 'default' && m.description ? `Default · ${m.description}` : m.displayName}</option>
           {/each}
         </select>
       </label>
@@ -1410,7 +1419,7 @@
       {/if}
       <label class="modepick">mode
         <select aria-label="Permission mode" value={selected.entry.mode ?? 'default'} onchange={(ev) => act((l, id) => l.setMode(id, (ev.target as HTMLSelectElement).value))}>
-          {#each api.MODES as m}<option value={m}>{m}</option>{/each}
+          {#each api.MODES as m}<option value={m}>{m === 'default' && dset[selected.machine.url]?.claude_default_mode && dset[selected.machine.url]?.claude_default_mode !== 'default' ? `default (${dset[selected.machine.url]?.claude_default_mode})` : m}</option>{/each}
         </select>
       </label>
     {/if}
@@ -1522,6 +1531,26 @@
         </p>
       {/if}
       {#if svcError}<p class="error">{svcError}</p>{/if}
+
+      <h3 class="sub">New sessions</h3>
+      <p class="muted small">What sessions start with when you add or create them from now on (sessions already in the list keep theirs).</p>
+      {#each machines as m (m.url)}
+        {@const ns = dset[m.url]?.new_session ?? {}}
+        {#if dset[m.url] === null}<p class="muted small">{m.name}: needs a newer Switchboard there.</p>
+        {:else}
+          <div class="defaults" role="group" aria-label="New sessions on {m.name}">
+            <span class="dname">{m.name}</span>
+            <label>Mode<select aria-label="Mode" value={ns.mode ?? ''} onchange={(e) => setDefault(m, 'mode', (e.currentTarget as HTMLSelectElement).value)}>
+              <option value="">Claude Code's ({dset[m.url]?.claude_default_mode ?? 'default'})</option>{#each api.MODES as md}<option value={md}>{md}</option>{/each}</select></label>
+            <label>Model<select aria-label="Model" value={ns.model ?? ''} onchange={(e) => setDefault(m, 'model', (e.currentTarget as HTMLSelectElement).value)}>
+              <option value="">Claude Code's default</option>{#each (modelList[m.url] ?? []).filter((x) => x.value !== 'default') as md (md.value)}<option value={md.value}>{md.displayName}</option>{/each}</select></label>
+            <label>Effort<select aria-label="Effort" value={ns.effort ?? ''} onchange={(e) => setDefault(m, 'effort', (e.currentTarget as HTMLSelectElement).value)}>
+              <option value="">the model's default</option>{#each api.EFFORTS as ef}<option value={ef}>{ef}</option>{/each}</select></label>
+            <label>Account<select aria-label="Account" value={ns.account ?? ''} onchange={(e) => setDefault(m, 'account', (e.currentTarget as HTMLSelectElement).value)}>
+              <option value="">machine login</option>{#each acctList[m.url] ?? [] as a (a.name)}<option value={a.name}>{a.name}</option>{/each}</select></label>
+          </div>
+        {/if}
+      {/each}
 
       <h3 class="sub">Idle sessions</h3>
       <p class="muted small">Close a live session after it has been quiet for a while, to free memory. It resumes with its history on your next message, but forgets any "Allow for this session" answers. Sessions that are working, waiting on you or running a background command stay open.</p>
@@ -1736,6 +1765,9 @@
   .ctxmenu button { display: block; width: 100%; text-align: left; border: 0; border-radius: 6px; padding: 6px 10px; background: none; color: var(--text); }
   .ctxmenu button:hover:not(:disabled) { background: var(--s0); }
   .ctxmenu button:disabled { color: var(--o1); }
+  .defaults { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin-bottom: 12px; }
+  .defaults .dname { grid-column: 1 / -1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+  .defaults label { font-size: 12px; }
   .ctxmenu hr { border: 0; border-top: 1px solid var(--s0); margin: 4px 2px; }
   .ctxmenu button.danger { color: var(--red); }
   :global(.btn.danger) { background: var(--red); color: var(--crust); border-color: var(--red); font-weight: 600; }

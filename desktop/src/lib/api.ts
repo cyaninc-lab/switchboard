@@ -95,7 +95,9 @@ export const githubPoll = (m: Machine, device_code: string) => call<{ status: st
 export const githubSignOut = (m: Machine) => call<GitHub>(m, '/v1/github', { method: 'DELETE' });
 export const githubIssue = (m: Machine, title: string, body: string) => call<{ url: string; number: number }>(m, '/v1/github/issue', { method: 'POST', body: JSON.stringify({ title, body }) });
 export const machineInfo = (m: Machine) => call<{ name: string; daemon: string; sdk: string; os: string }>(m, '/v1/machine');
-export type DaemonSettings = { idle_close_minutes: number; project_order?: string[] };
+export type NewSessionDefaults = { mode?: string; model?: string; effort?: string; account?: string };
+export type DaemonSettings = { idle_close_minutes: number; project_order?: string[]; new_session?: NewSessionDefaults; claude_default_mode?: string };
+export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export const settings = (m: Machine) => call<DaemonSettings>(m, '/v1/settings');
 export const setSettings = (m: Machine, s: Partial<DaemonSettings>) => call<DaemonSettings>(m, '/v1/settings', { method: 'PUT', body: JSON.stringify(s) });
 export const setNetwork = (m: Machine, on: boolean) => call<Network>(m, '/v1/network', { method: 'PUT', body: JSON.stringify({ listen_tailscale: on }) });
