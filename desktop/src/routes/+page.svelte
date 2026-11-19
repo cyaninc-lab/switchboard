@@ -391,6 +391,7 @@
       return;
     }
     if ((e.type === 'inbox_read' || e.type === 'inbox_removed') && m) { loadInbox(m); return; }
+    if (e.type === 'settings' && m) { api.settings(m).then((v) => (dset[m.url] = v), () => {}); return; }
     if (e.type === 'subagents') { refresh(); if (selected?.sub && selected.entry.id === e.entry) loadSub(); return; }
     if (e.type === 'state') {
       const was = Object.values(tree).flatMap((t) => t.entries).find((x) => x.id === e.entry)?.state;
@@ -512,7 +513,7 @@
   async function refresh() {
     const next: typeof tree = {};
     await Promise.all(machines.map(async (m) => {
-      try { next[m.url] = { entries: await api.entries(m) }; checkVersion(m); }
+      try { next[m.url] = { entries: await api.entries(m) }; checkVersion(m); if (!(m.url in dset)) api.settings(m).then((v) => (dset[m.url] = v), () => (dset[m.url] = null)); }
       catch (e) { next[m.url] = { entries: tree[m.url]?.entries ?? [], error: String((e as Error).message) }; }
     }));
     tree = next;
@@ -555,7 +556,26 @@
     const h = held;
     for (const list of Object.values(g))
       list.sort(h ? (a, b) => (h[a.id] ?? 1e9) - (h[b.id] ?? 1e9) : (a, b) => Number(b.pinned) - Number(a.pinned) || activity(b) - activity(a));
-    return Object.entries(g);
+    // projects: in the order dragged into (kept by that machine's daemon); ones not placed yet follow, as before
+    const order = dset[m.url]?.project_order ?? [];
+    const at = (name: string, i: number) => { const k = order.indexOf(name); return k < 0 ? 1e6 + i : k; };
+    return Object.entries(g).map((x, i) => [x, at(x[0], i)] as const).sort((a, b) => a[1] - b[1]).map(([x]) => x);
+  }
+  let dragGroup: { url: string; g: string } | null = null;
+  async function dropGroup(m: Machine, target: string) {
+    const d = dragGroup;
+    dragGroup = null;
+    if (!d || d.url !== m.url || d.g === target) return;
+    // every project on that machine, even ones the filter hides, so dragging with a filter on loses no places
+    const order = dset[m.url]?.project_order ?? [];
+    const all = [...new Set((tree[m.url]?.entries ?? []).map((e) => e.group))];
+    const rank = (g: string) => { const k = order.indexOf(g); return k < 0 ? 1e6 + all.indexOf(g) : k; };
+    const names = all.sort((a, b) => rank(a) - rank(b)).filter((g) => g !== d.g);
+    names.splice(names.indexOf(target), 0, d.g);
+    const before = dset[m.url];
+    dset[m.url] = { ...(before ?? { idle_close_minutes: 0 }), project_order: names };  // move it now; the daemon keeps it
+    try { dset[m.url] = await api.setSettings(m, { project_order: names }); }
+    catch (e) { dset[m.url] = before; say(`Couldn't save the project order on ${m.name}: ${(e as Error).message}`); }
   }
 
   async function open(machine: Machine, entry: Entry, how: How = 'preview') {
@@ -964,7 +984,9 @@
                 <div class="group"><input class="rename" aria-label="Rename project {g}" bind:value={renaming.value} {@attach focusSelect}
                   onkeydown={(ev) => renameKeys(ev, m, undefined, g)} onblur={() => commitRename(m, undefined, g)} /></div>
               {:else}
-              <button class="group" aria-expanded={gOpen} onclick={() => (subOpen[gk] = !gOpen)} oncontextmenu={(ev) => openMenu(ev, m, undefined, g)}>{gOpen ? '▾' : '▸'} {g}{#if !gOpen}<span class="muted small"> · {es.length}</span>
+              <button class="group" aria-expanded={gOpen} onclick={() => (subOpen[gk] = !gOpen)} oncontextmenu={(ev) => openMenu(ev, m, undefined, g)}
+                draggable="true" title="Drag to reorder projects" ondragstart={() => (dragGroup = { url: m.url, g })} ondragend={() => (dragGroup = null)}
+                ondragover={(ev) => { if (dragGroup?.url === m.url) ev.preventDefault(); }} ondrop={(ev) => { ev.preventDefault(); dropGroup(m, g); }}>{gOpen ? '▾' : '▸'} {g}{#if !gOpen}<span class="muted small"> · {es.length}</span>
                 {@const hint = es.some((e) => icon(e) === 'waiting') ? 'waiting' : es.some((e) => icon(e) === 'unread') ? 'unread' : null}
                 {#if hint}<span class="st {hint} inline" title={stateLabel[hint]}></span>{/if}{/if}</button>
               {/if}
