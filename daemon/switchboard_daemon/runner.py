@@ -67,7 +67,7 @@ class Live:
     restart: bool = False  # close after this turn (a setting that only applies at start changed)
     interrupted: bool = False  # this turn was interrupted on purpose: Claude Code then ends it as an error with no message
     last_active: float = dataclasses.field(default_factory=time.time)
-    tasks: set = dataclasses.field(default_factory=set)  # background subagents/commands still running: never idle-close then
+    tasks: dict = dataclasses.field(default_factory=dict)  # background tasks (commands, agents) by id: shown, stoppable; running ones keep it open
 
 
 class Runner:
@@ -218,12 +218,9 @@ class Runner:
             async for m in lv.client.receive_messages():
                 lv.last_active = time.time()
                 sub, data = getattr(m, "subtype", None), getattr(m, "data", None) or {}
-                if sub in ("task_started", "task_notification", "task_updated") and data.get("task_id"):
-                    status = (data.get("patch") or {}).get("status") if sub == "task_updated" else None
-                    if sub == "task_started":
-                        lv.tasks.add(data["task_id"])
-                    elif sub == "task_notification" or status in ("completed", "failed", "stopped", "killed"):
-                        lv.tasks.discard(data["task_id"])
+                if sub in ("task_started", "task_progress", "task_notification", "task_updated") and data.get("task_id"):
+                    self._task_event(lv, sub, data)
+                    await self.broadcast({"type": "tasks", "entry": lv.entry_id, "tasks": self.tasks(lv.entry_id)})
                     await self.broadcast({"type": "subagents", "entry": lv.entry_id})  # the tree re-reads its subagents
                     continue
                 if not lv.working and type(m).__name__ in ("AssistantMessage", "UserMessage", "StreamEvent"):  # a turn Claude started on its own
@@ -418,10 +415,41 @@ class Runner:
         if lv:
             await lv.client.set_permission_mode(mode)
 
+    # ---- background tasks (Bash run_in_background, background agents): what Claude Code reports about them ----
+    KEEP_FINISHED = 5
+
+    def _task_event(self, lv, sub, data):
+        tid = data["task_id"]
+        t = lv.tasks.setdefault(tid, {"id": tid, "status": "running", "started": int(time.time() * 1000)})
+        for k in ("description", "task_type", "tool_use_id", "last_tool_name", "summary", "output_file"):
+            if data.get(k):
+                t["type" if k == "task_type" else k] = data[k]
+        status = data.get("status") if sub == "task_notification" else (data.get("patch") or {}).get("status") if sub == "task_updated" else None
+        if status in ("completed", "failed", "stopped", "killed"):  # Claude Code says "killed" in task_updated, "stopped" elsewhere
+            t["status"], t["ended"] = "stopped" if status == "killed" else status, int(time.time() * 1000)
+        done = [x for x in lv.tasks.values() if x["status"] != "running"]
+        for old in sorted(done, key=lambda x: x.get("ended", 0))[:-self.KEEP_FINISHED]:
+            lv.tasks.pop(old["id"], None)
+
+    def tasks(self, entry_id):
+        lv = self.live.get(entry_id)
+        return sorted(lv.tasks.values(), key=lambda t: t["started"]) if lv else []
+
+    def running_tasks(self, lv):
+        return [t for t in lv.tasks.values() if t["status"] == "running"]
+
+    async def stop_task(self, entry_id, task_id):
+        lv = self.live.get(entry_id)
+        if not lv or task_id not in lv.tasks:
+            raise LookupError("no_such_task")
+        await lv.client.stop_task(task_id)  # Claude Code reports it ended with a task_updated
+
     async def stop(self, entry_id):
         lv = self.live.pop(entry_id, None)
         if not lv:
             return
+        if lv.tasks:  # its tasks ended with the process
+            await self.broadcast({"type": "tasks", "entry": entry_id, "tasks": []})
         log.info("session for entry %s closed", entry_id)
         for fut in lv.pending.values():
             if not fut.done():
@@ -442,7 +470,7 @@ class Runner:
             return
         now = now or time.time()
         for eid, lv in list(self.live.items()):
-            if not lv.working and not lv.pending and not lv.tasks and not lv.queue and now - lv.last_active > minutes * 60:
+            if not lv.working and not lv.pending and not self.running_tasks(lv) and not lv.queue and now - lv.last_active > minutes * 60:
                 # ponytail: a background shell that never ends (a dev server) keeps its session open until closed by hand
                 log.info("closing idle session for entry %s", eid)
                 await self.stop(eid)

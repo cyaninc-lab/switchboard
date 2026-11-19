@@ -9,6 +9,13 @@
 
   // links (in Claude's replies, the inbox, questions) never navigate this window: web and mail links open in the
   // default browser / mail app, anything else is ignored. ponytail: until sessions get windows or tabs of their own
+  // ---- background tasks: shells and other non-agent tasks (background agents already show in the tree) ----
+  const bgTasks = (e: Entry) => (e.tasks ?? []).filter((t) => !/agent/i.test(t.type ?? ''));
+  const bgRunning = (e: Entry) => bgTasks(e).filter((t) => t.status === 'running').length;
+  let bgOpen = $state(false);
+  let clock = $state(Date.now());
+  $effect(() => { const t = setInterval(() => (clock = Date.now()), 15_000); return () => clearInterval(t); });
+  const span = (ms: number) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)}m` : `${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m`; };
   // copy buttons: a reply (its markdown) or a code block in one (button.copy inside the block, from markdown.ts)
   async function copyText(text: string, btn?: HTMLElement | null) {
     try { await navigator.clipboard.writeText(text); } catch { return say("Couldn't copy"); }
@@ -484,6 +491,8 @@
       } else if (e.dropped) { giveBack(e.entry, q.map(msgText)); pendingQ[e.entry] = []; }
     } else if (e.type === 'commands') {
       if (selected) loadCommands(selected.machine);
+    } else if (e.type === 'tasks') {
+      setEntry(e.entry, { tasks: e.tasks });
     } else if (e.type === 'session_reset') {  // /clear: the entry now holds a fresh conversation
       if (selected?.entry.id === e.entry && !selected.sub) messages = [{ type: 'assistant', uuid: crypto.randomUUID(), message: { content: [{ type: 'text', text: '— Conversation cleared —' }] } }];
       refresh();
@@ -1083,6 +1092,7 @@
                   {#if e.pinned}<span class="pin" aria-label="pinned">★</span>{/if}
                   <span class="ename">{e.name}</span>
                   {#if inWindow[e.id]}<span class="muted small" title="Open in its own window">⧉</span>{/if}
+                  {#if bgRunning(e)}<span class="bgbadge" title="{bgRunning(e)} background task{bgRunning(e) === 1 ? '' : 's'} running">⟳ {bgRunning(e)}</span>{/if}
                   <span class="muted small">{e.session ? ago(e.session.last_modified) : ''}</span>
                 </button>
                 {/if}
@@ -1239,6 +1249,29 @@
           </div>
         {/if}
         {#if queued[selected.entry.id]}<div class="queued muted small" aria-live="polite">{queued[selected.entry.id]} queued: sends when Claude finishes (Esc puts {queued[selected.entry.id] === 1 ? 'it' : 'them'} back here)</div>{/if}
+        {#if !selected.sub && bgTasks(selected.entry).length}
+          {@const ts = bgTasks(selected.entry)}
+          {@const run = ts.filter((t) => t.status === 'running').length}
+          <div class="bgbar" role="region" aria-label="Background tasks">
+            <button type="button" class="bgtop" aria-expanded={bgOpen} onclick={() => (bgOpen = !bgOpen)}>
+              {#if run}<span class="bgspin" aria-hidden="true"></span><b>{run} running</b>{:else}<b class="muted">Background</b>{/if}
+              {#if ts.length - run}<span class="muted"> · {ts.length - run} finished</span>{/if}
+              <span class="grow"></span><span class="muted">{bgOpen ? '▾' : '▸'}</span>
+            </button>
+            {#if bgOpen}
+              {#each ts as t (t.id)}
+                <div class="bgrow">
+                  {#if t.status === 'running'}<span class="bgspin" aria-label="running"></span>
+                  {:else}<span class={t.status === 'completed' ? 'ok' : 'bad'} aria-label={t.status}>{t.status === 'completed' ? '✓' : t.status === 'stopped' ? '■' : '✗'}</span>{/if}
+                  <span class="bgdesc"><span class="mono">{t.description ?? t.id}</span>
+                    <span class="muted"> · {t.status === 'running' ? span(clock - t.started) : `${t.status} after ${span((t.ended ?? clock) - t.started)}`}{t.summary ? ` · ${t.summary}` : ''}</span></span>
+                  {#if t.output_file}<code class="path" title="Open its output">{t.output_file}</code>{/if}
+                  {#if t.status === 'running'}<button type="button" class="tiny stop" onclick={() => { try { live()!.stopTask(selected!.entry.id, t.id); } catch (err) { liveErr = (err as Error).message; } }}>Stop</button>{/if}
+                </div>
+              {/each}
+            {/if}
+          </div>
+        {/if}
         {#if atQ !== null && atList.length}
           <div class="cmdmenu" role="listbox" aria-label="Files">
             {#each atList as f, i (f)}
@@ -1702,6 +1735,17 @@
   .todos li.in_progress { color: var(--text); font-weight: 600; } .todos li.in_progress .box { color: var(--peach); border-color: var(--peach); }
   .inputbar { display: flex; gap: 10px; align-items: center; padding: 12px 18px; border-top: 1px solid var(--s0); }
   .inputbar { align-items: flex-end; }
+  /* background tasks: a slim bar on top of the message box */
+  .bgbar { margin: 0 18px; border: 1px solid var(--s1); border-bottom: 0; border-radius: 8px 8px 0 0; background: var(--mantle); font-size: 12px; }
+  .bgtop { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: 0; color: var(--sky); font: inherit; padding: 6px 10px; cursor: pointer; text-align: left; }
+  .bgrow { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 6px 10px; border-top: 1px solid var(--s0); }
+  .bgdesc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bgrow code.path { font-size: 11px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; text-decoration: underline dotted; background: none; }
+  .bgrow .ok { color: var(--green); } .bgrow .bad { color: var(--red); }
+  .tiny.stop { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
+  .bgspin { display: inline-block; width: 9px; height: 9px; border: 2px solid var(--sky); border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+  .bgbadge { font-size: 10px; font-weight: 600; color: var(--crust); background: var(--sky); border-radius: 99px; padding: 0 6px; }
+  @media (prefers-reduced-motion: reduce) { .bgspin { animation: none; } }
   .toast { position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%); z-index: 60; max-width: min(70vw, 720px); word-break: break-all;
     background: var(--s0); color: var(--text); border: 1px solid var(--s1); border-radius: 8px; padding: 6px 12px; box-shadow: 0 4px 16px rgb(0 0 0 / 0.25); }
   /* paths in step headers (Read(...), Edit(...)): clickable like those in replies, without the code pill */

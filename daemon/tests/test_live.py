@@ -547,7 +547,7 @@ def test_idle_close_is_opt_in(tmp_path, monkeypatch):
         assert (await r.json())["idle_close_minutes"] == 10
         await runner.reap_idle(time.time() + 5 * 60)
         assert eid in runner.live  # not quiet for long enough
-        runner.live[eid].tasks.add("bg")
+        runner.live[eid].tasks["bg"] = {"id": "bg", "status": "running", "started": 0}
         await runner.reap_idle(later)
         assert eid in runner.live  # a background task keeps it open
         runner.live[eid].tasks.clear()
@@ -561,15 +561,32 @@ def test_idle_close_is_opt_in(tmp_path, monkeypatch):
     asyncio.run(t())
 
 
-def test_background_task_is_tracked(tmp_path, monkeypatch):
+def test_background_tasks_shown_and_stoppable(tmp_path, monkeypatch):
+    """Background tasks reach the apps with what they are and how they ended; one can be stopped."""
     async def t():
         client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
         eid, runner = e["id"], client.app[appmod.RUNNER]
-        await ws.send_json({"type": "send", "entry": eid, "text": "start the background build"})
-        await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
-        assert runner.live[eid].tasks == {"bg1"}
-        await until(ws, lambda m: m["type"] == "message" and "Done: background task finished" in str(m))
-        assert runner.live[eid].tasks == set()
+        monkeypatch.setenv("SB_DEMO_BG_SECONDS", "1")
+        await ws.send_json({"type": "send", "entry": eid, "text": "start the long background build"})
+        m, _ = await until(ws, lambda m: m["type"] == "tasks" and len(m["tasks"]) == 2)
+        assert [(x["id"], x["description"], x["status"]) for x in m["tasks"]] == [("bg1", "npm run build", "running"), ("bg2", "npm run dev", "running")]
+        # the entry carries them too (an app opening later)
+        es = (await (await client.get("/v1/entries", headers=h)).json())["entries"]
+        assert len(next(x for x in es if x["id"] == eid)["tasks"]) == 2
+        # bg1 finishes by itself, with Claude Code's summary and output file
+        m, _ = await until(ws, lambda m: m["type"] == "tasks" and any(x["id"] == "bg1" and x["status"] == "completed" for x in m["tasks"]))
+        bg1 = next(x for x in m["tasks"] if x["id"] == "bg1")
+        assert bg1["summary"] == "Build finished, 0 warnings" and bg1["output_file"] == "/tmp/demo-bg1.output" and bg1["ended"]
+        assert len(runner.running_tasks(runner.live[eid])) == 1  # bg2 still keeps it from idle-closing
+        # stop bg2 from the app
+        await ws.send_json({"type": "stop_task", "entry": eid, "task_id": "bg2"})
+        m, _ = await until(ws, lambda m: m["type"] == "tasks" and any(x["id"] == "bg2" and x["status"] == "stopped" for x in m["tasks"]))
+        assert runner.running_tasks(runner.live[eid]) == []
+        await ws.send_json({"type": "stop_task", "entry": eid, "task_id": "nope"})
+        await until(ws, lambda m: m["type"] == "error")
+        # closing the session clears them
+        await ws.send_json({"type": "stop", "entry": eid})
+        await until(ws, lambda m: m["type"] == "tasks" and m["tasks"] == [])
         await client.close()
     asyncio.run(t())
 
