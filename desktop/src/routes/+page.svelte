@@ -3,7 +3,7 @@
   import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell, openExternal, openLocal, appVersion, checkForUpdate, notify,
     soloOf, popOut, takeHandoff, focusWindow, onSoloClosing, onSoloEvents, soloOpened, closeThisWindow, setOnTop } from '$lib/shell';
   import { backdrop } from '$lib/backdrop';
-  import { theme, THEMES, applyTheme, fonts, UI_FONTS, MONO_FONTS, SIZES, applyFonts } from '$lib/themes.svelte';
+  import { theme, THEMES, applyTheme, fonts, UI_FONTS, MONO_FONTS, CHAT_FONTS, SIZES, applyFonts } from '$lib/themes.svelte';
   applyTheme(theme.name);
   applyFonts();
 
@@ -1337,12 +1337,14 @@
       <h2>Settings</h2>
       <label>Theme<select value={theme.name} onchange={(e) => applyTheme((e.currentTarget as HTMLSelectElement).value)}>
         {#each Object.entries(THEMES) as [k, t]}<option value={k}>{t.label}</option>{/each}</select></label>
-      <div class="grid3">
+      <div class="grid2">
         <label>Text size<select value={fonts.size} onchange={(e) => applyFonts({ size: +(e.currentTarget as HTMLSelectElement).value })}>
           {#each SIZES as z}<option value={z}>{z}%</option>{/each}</select></label>
         <label>Interface font<select value={fonts.ui} onchange={(e) => applyFonts({ ui: (e.currentTarget as HTMLSelectElement).value })}>
           {#each Object.entries(UI_FONTS) as [k, f]}<option value={k}>{f.label}</option>{/each}</select></label>
-        <label>Chat and code font<select value={fonts.mono} onchange={(e) => applyFonts({ mono: (e.currentTarget as HTMLSelectElement).value })}>
+        <label>Chat font<select value={fonts.chat} onchange={(e) => applyFonts({ chat: (e.currentTarget as HTMLSelectElement).value })}>
+          {#each Object.entries(CHAT_FONTS) as [k, f]}<option value={k}>{f.label}</option>{/each}</select></label>
+        <label>Code font<select value={fonts.mono} onchange={(e) => applyFonts({ mono: (e.currentTarget as HTMLSelectElement).value })}>
           {#each Object.entries(MONO_FONTS) as [k, f]}<option value={k}>{f.label}</option>{/each}</select></label>
       </div>
       {#if !inShell()}
@@ -1648,6 +1650,9 @@
   .inputbar textarea:focus { outline: 1px solid var(--mauve); border-radius: 8px; }
   .inputbar .prompt { padding-bottom: 8px; }
   .placeholder { margin: auto; color: var(--o2); }
+  /* the chat font: Claude's replies (streaming and finished), thinking, your messages, messages between sessions and
+     the message box; code inside them keeps the code font (.md code) */
+  .log .md, .streaming, .thinking, .you, .mail, .inputbar textarea { font-family: var(--chat-font, Inter, system-ui, sans-serif); }
   .streaming { color: var(--text); } .cursor { color: var(--mauve); animation: blink 1s steps(2) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
   .perm { border: 1px solid color-mix(in srgb, var(--peach) 45%, transparent); background: color-mix(in srgb, var(--peach) 8%, transparent); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; white-space: normal; }

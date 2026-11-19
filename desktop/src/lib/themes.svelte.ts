@@ -1,5 +1,5 @@
 // Appearance, remembered on this device: Catppuccin themes (https://catppuccin.com/palette) set the app's colour
-// variables; fonts and text size set --ui-font, --mono-font and the page zoom.
+// variables; fonts and text size set --ui-font (interface), --chat-font (the chat), --mono-font (code) and the page zoom.
 
 type Palette = Record<'rosewater' | 'pink' | 'mauve' | 'red' | 'peach' | 'yellow' | 'green' | 'teal' | 'sky' | 'blue' | 'text' | 'subtext1'
   | 'subtext0' | 'overlay2' | 'overlay1' | 'overlay0' | 'surface2' | 'surface1' | 'surface0' | 'base' | 'mantle' | 'crust', string>;
@@ -67,6 +67,10 @@ export const MONO_FONTS: Record<string, { label: string; css: string }> = {
   fira: { label: 'Fira Code', css: "'Fira Code', ui-monospace, monospace" },
   system: { label: 'System monospace', css: 'ui-monospace, Menlo, Consolas, monospace' },
 };
+// the chat (replies, your messages, the message box) can use any of them
+export const CHAT_FONTS: Record<string, { label: string; css: string }> = {
+  ...UI_FONTS, jetbrains: MONO_FONTS.jetbrains, cascadia: MONO_FONTS.cascadia, fira: MONO_FONTS.fira, 'system-mono': MONO_FONTS.system,
+};
 export const SIZES = [90, 100, 110, 120, 130];  // % of the normal size: the whole app scales, like zooming
 
 const FKEY = 'switchboard.fonts';
@@ -74,6 +78,7 @@ const fsaved = (() => { try { return JSON.parse(localStorage.getItem(FKEY) || '{
 export const fonts = $state({
   ui: fsaved.ui in UI_FONTS ? fsaved.ui : 'inter',
   mono: fsaved.mono in MONO_FONTS ? fsaved.mono : 'jetbrains',
+  chat: fsaved.chat in CHAT_FONTS ? fsaved.chat : 'inter',  // what finished replies always used
   size: SIZES.includes(fsaved.size) ? fsaved.size : 100,
 });
 
@@ -84,5 +89,6 @@ export function applyFonts(change: Partial<typeof fonts> = {}) {
   const root = document.documentElement;
   root.style.setProperty('--ui-font', UI_FONTS[fonts.ui].css);
   root.style.setProperty('--mono-font', MONO_FONTS[fonts.mono].css);
+  root.style.setProperty('--chat-font', CHAT_FONTS[fonts.chat].css);
   root.style.zoom = fonts.size === 100 ? '' : `${fonts.size}%`;
 }
