@@ -98,6 +98,14 @@ def get_session_info(session_id):
     return next((s for s in SESSIONS if s.session_id == session_id), None)
 
 
+def delete_session(session_id, directory=None):
+    s = get_session_info(session_id)
+    if not s:
+        raise FileNotFoundError(session_id)
+    SESSIONS.remove(s)
+    LIVE_LOG.pop(session_id, None)
+
+
 LIVE_LOG = {}  # session id -> turns taken live: like a real transcript, history read later includes them
 
 

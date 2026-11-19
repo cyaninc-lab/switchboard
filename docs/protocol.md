@@ -26,7 +26,7 @@ Tauri-specific code. Everything is under `/v1`; breaking changes get `/v2`.
 | `GET /v1/models` | the models this machine's Claude Code offers (value, displayName, description, effort levels) |
 | `GET /v1/folders` | folder suggestions for a new session (where sessions have run, newest first) |
 | `PATCH /v1/entries/{id}` | rename, regroup, pin, change account or default mode |
-| `DELETE /v1/entries/{id}` | off the tree only; the session stays on disk |
+| `DELETE /v1/entries/{id}` | off the tree only; the session stays on disk. `?forever=1` also deletes the session from the machine (`delete_session`: transcript + subagent transcripts); 409 `open_elsewhere` while a terminal elsewhere holds it |
 | `GET /v1/entries/{id}/files?q=` | files in the session's folder for @-mentions, best matches first (git's ignore rules honoured; node_modules and the like skipped) |
 | `GET /v1/entries/{id}/messages?offset=&limit=` | history via `get_session_messages()`, no resume needed |
 | `GET /v1/commands` | slash commands for the menu, with descriptions where known |

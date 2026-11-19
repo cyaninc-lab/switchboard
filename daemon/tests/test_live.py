@@ -610,3 +610,30 @@ def test_files_for_at_mentions(tmp_path, monkeypatch):
         assert got == ["README.md", "src/readme_helper.py"]
         await client.close()
     asyncio.run(t())
+
+
+def test_remove_from_tree_or_delete_for_good(tmp_path, monkeypatch):
+    async def t():
+        monkeypatch.setattr(demo, "SESSIONS", list(demo.SESSIONS))  # this test deletes one; others need them all
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        listed = lambda: client.get("/v1/sessions", headers=h)
+        sid = e["session_id"]
+        # off the tree only: the session stays on the machine, and can be added again
+        assert (await client.delete(f"/v1/entries/{e['id']}", headers=h)).status == 204
+        assert any(s["session_id"] == sid for s in (await (await listed()).json())["sessions"])
+        e2 = await (await client.post("/v1/entries", headers=h, json={"session_id": sid})).json()
+        # for good, but it's open in a terminal elsewhere: refused, nothing changes
+        monkeypatch.setattr(appmod, "open_in_terminal", lambda: {sid})
+        r = await client.delete(f"/v1/entries/{e2['id']}?forever=1", headers=h)
+        assert r.status == 409 and (await r.json())["code"] == "open_elsewhere"
+        assert store.entry(e2["id"])
+        # for good: gone from the tree and from the machine
+        monkeypatch.setattr(appmod, "open_in_terminal", lambda: set())
+        assert (await client.delete(f"/v1/entries/{e2['id']}?forever=1", headers=h)).status == 204
+        assert not store.entry(e2["id"])
+        assert not any(s["session_id"] == sid for s in (await (await listed()).json())["sessions"])
+        # a new session that never ran has nothing on disk: deleting it just takes it off
+        new = await (await client.post("/v1/entries", headers=h, json={"new": {"cwd": str(tmp_path)}})).json()
+        assert (await client.delete(f"/v1/entries/{new['id']}?forever=1", headers=h)).status == 204
+        await client.close()
+    asyncio.run(t())

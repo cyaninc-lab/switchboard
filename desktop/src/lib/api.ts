@@ -95,7 +95,8 @@ export const addEntry = (m: Machine, body: { session_id?: string; new?: { cwd: s
   call<Entry>(m, '/v1/entries', { method: 'POST', body: JSON.stringify(body) });
 export const updateEntry = (m: Machine, id: string, body: Partial<{ name: string; group: string; pinned: boolean }>) =>
   call<Entry>(m, `/v1/entries/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
-export const removeEntry = (m: Machine, id: string) => call<void>(m, `/v1/entries/${id}`, { method: 'DELETE' });
+// off the tree (the session stays on its machine), or forever: the session itself is deleted from its machine
+export const removeEntry = (m: Machine, id: string, forever = false) => call<void>(m, `/v1/entries/${id}${forever ? '?forever=1' : ''}`, { method: 'DELETE' });
 export const folders = (m: Machine) => call<{ home: string; folders: string[] }>(m, '/v1/folders');
 export const commands = (m: Machine) => call<{ commands: Command[] }>(m, '/v1/commands').then((d) => d.commands);
 export const subagentHistory = (m: Machine, id: string, agent: string, limit = 400) =>

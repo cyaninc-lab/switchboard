@@ -191,9 +191,24 @@ async def update_entry(request):
 
 
 async def remove_entry(request):
-    await request.app[RUNNER].stop(request.match_info["id"])
-    if not request.app[STORE].remove_entry(request.match_info["id"]):
+    """Off the tree (the session stays on disk), or with ?forever=1 the session itself is deleted from this machine
+    (its transcript and subagent transcripts; can't be undone). Refused while it's open in a terminal elsewhere."""
+    eid = request.match_info["id"]
+    e = request.app[STORE].entry(eid)
+    if not e:
         raise web.HTTPNotFound()
+    forever = request.query.get("forever") == "1"
+    if forever and e["session_id"] in await _live(request):
+        raise web.HTTPConflict(text=json.dumps({"code": "open_elsewhere"}), content_type="application/json")
+    await request.app[RUNNER].stop(eid)
+    await request.app[TTYS].close(eid)  # its real terminal here, if open
+    if forever:
+        try:
+            await _off(sdk.delete_session, e["session_id"])
+        except FileNotFoundError:
+            pass  # a new session that never ran has no transcript yet
+        log.info("deleted session %s for good (entry %s)", e["session_id"], eid)
+    request.app[STORE].remove_entry(eid)
     return web.Response(status=204)
 
 
