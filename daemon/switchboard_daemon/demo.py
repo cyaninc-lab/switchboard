@@ -228,6 +228,7 @@ class ClaudeSDKClient:
     def __init__(self, options):
         self.options, self.prompt, self.interrupted, self.images, self.started = options, "", False, 0, False
         self.go = asyncio.Event()
+        self.side = []
 
     async def connect(self):
         pass
@@ -252,8 +253,16 @@ class ClaudeSDKClient:
         while True:
             await self.go.wait()
             self.go.clear()
+            if self.side:  # task events between turns (a stopped task)
+                while self.side:
+                    yield self.side.pop(0)
+                continue
             async for m in self.receive_response():
                 yield m
+
+    async def stop_task(self, task_id):  # as Claude Code reports a killed task: a task_updated with status killed
+        self.side.append(SystemMessage("task_updated", {"task_id": task_id, "patch": {"status": "killed"}}))
+        self.go.set()
 
     async def interrupt(self):
         self.interrupted = True
@@ -350,7 +359,9 @@ class ClaudeSDKClient:
             yield AssistantMessage([ToolUseBlock("t1", "Bash", {"command": "git status"})])
             yield UserMessage([ToolResultBlock("t1", "On branch main, nothing to commit" if ok else "Permission denied", not ok)])
         if "background" in text.lower():  # a background command: Claude reports back later, unprompted
-            yield SystemMessage("task_started", {"task_id": "bg1", "task_type": "local_bash"})
+            yield SystemMessage("task_started", {"task_id": "bg1", "task_type": "local_bash", "description": "npm run build", "tool_use_id": "tb1"})
+            if "long" in text.lower():  # one that keeps running until stopped (a dev server)
+                yield SystemMessage("task_started", {"task_id": "bg2", "task_type": "local_bash", "description": "npm run dev", "tool_use_id": "tb2"})
 
             async def later():
                 await asyncio.sleep(float(os.environ.get("SB_DEMO_BG_SECONDS", 1)))
@@ -358,7 +369,8 @@ class ClaudeSDKClient:
                 self.go.set()
             asyncio.get_running_loop().create_task(later())
         if text == "background task finished":
-            yield SystemMessage("task_notification", {"task_id": "bg1", "status": "completed"})
+            yield SystemMessage("task_notification", {"task_id": "bg1", "status": "completed", "summary": "Build finished, 0 warnings",
+                                                      "output_file": "/tmp/demo-bg1.output"})
         if "slow" in text.lower():
             for _ in range(300):
                 if self.interrupted:

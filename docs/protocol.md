@@ -88,5 +88,6 @@ Every subscribed client receives every event, so several clients stay live on on
   account token (`CLAUDE_CODE_OAUTH_TOKEN`) when it isn't the machine default.
 - Sessions load the user's own settings (`setting_sources` default), so their permission rules apply.
 - A session open in a terminal elsewhere shows as `terminal` and refuses `send`.
+- Background tasks (Claude Code's `task_*` system messages: Bash `run_in_background`, background agents): kept per live session (running ones plus the last 5 finished) and sent as `{type: tasks, entry, tasks: [{id, status: running|completed|failed|stopped, started, ended?, description, type, summary?, output_file?}]}`; also in each entry's `tasks`. A client stops one with `{type: stop_task, entry, task_id}` (the SDK's `stop_task`). Running ones keep idle close away; closing the session sends `tasks: []`.
 - `/clear` (or any reset) makes Claude Code start a new session id: the daemon moves the entry to it and broadcasts `{type: session_reset, entry, session_id}` (clients empty the chat). History and resumes then use the new session; the old transcript stays on disk.
 - Storage: one SQLite file in the daemon's data dir (entries, watches, inbox, client tokens).

@@ -78,6 +78,7 @@ def _entry_view(entry, info, live, runner=None):
     d["group"], d["pinned"] = entry["grp"], bool(entry["pinned"])
     held = runner.state(entry["id"]) if runner else None
     d["usage"] = runner.usage.get(entry["id"]) if runner else None
+    d["tasks"] = runner.tasks(entry["id"]) if runner else []
     if info is None and entry.get("cwd"):  # created here, no message yet
         d["state"] = held or "new"
         d["session"] = {"session_id": entry["session_id"], "summary": entry["name"], "cwd": entry["cwd"], "git_branch": None,
@@ -459,7 +460,7 @@ async def ws_handler(request):
                 m = json.loads(msg.data)
                 t, eid = m.get("type"), m.get("entry")
                 entry = store.entry(eid) if eid else None
-                if t in ("send", "interrupt", "stop", "set_mode", "set_model", "set_account", "set_effort") or t.startswith("terminal_"):
+                if t in ("send", "interrupt", "stop", "stop_task", "set_mode", "set_model", "set_account", "set_effort") or t.startswith("terminal_"):
                     if not entry:
                         raise LookupError("no_such_entry")
                 if t == "terminal_open":
@@ -485,6 +486,8 @@ async def ws_handler(request):
                     await runner.interrupt(eid)
                 elif t == "stop":
                     await runner.stop(eid)
+                elif t == "stop_task":
+                    await runner.stop_task(eid, m.get("task_id"))
                 elif t == "set_mode":
                     await runner.set_mode(eid, m["mode"])
                     await _broadcast(request.app, {"type": "mode", "entry": eid, "mode": m["mode"]})

@@ -6,6 +6,9 @@ export type Session = {
   session_id: string; summary: string; cwd: string | null; git_branch: string | null;
   last_modified: number; custom_title: string | null; entry_id: string | null;
 };
+// a background task Claude Code reports (Bash run_in_background, a background agent)
+export type Task = { id: string; status: 'running' | 'completed' | 'failed' | 'stopped'; started: number; ended?: number; description?: string;
+  type?: string; tool_use_id?: string; summary?: string; output_file?: string; last_tool_name?: string };
 export type Entry = {
   id: string; session_id: string; name: string; group: string; pinned: boolean;
   account: string | null; mode: string | null; model: string | null; effort?: string | null;
@@ -13,6 +16,7 @@ export type Entry = {
   state: 'new' | 'working' | 'waiting' | 'ready' | 'stopped' | 'terminal' | 'missing' | 'error';
   session: Session | null;
   subagents?: Sub[];
+  tasks?: Task[];
 };
 /** A subagent of a session; parent is the subagent that spawned it (null: the session itself did). */
 export type Sub = { id: string; description: string; type: string | null; parent: string | null; tool_use_id: string | null; finished: boolean; stopped: boolean; updated: number; running?: boolean };
@@ -199,6 +203,7 @@ export type LiveEvent =
   | { type: 'commands'; entry: string; commands: string[] }
   | { type: 'notice'; entry: string; text: string }
   | { type: 'session_reset'; entry: string; session_id: string }
+  | { type: 'tasks'; entry: string; tasks: Task[] }
   | { type: 'queued'; entry: string; count: number; sent?: number; dropped?: boolean }
   | ({ type: 'usage'; entry: string } & Usage)
   | { type: 'inbox'; item: InboxItem }
@@ -237,6 +242,7 @@ export class Live {
   send(entry: string, text: string, images: Image[] = [], now = false) { this.sendJson({ type: 'send', entry, text, images, ...(now ? { now } : {}) }); }
   interrupt(entry: string) { this.sendJson({ type: 'interrupt', entry }); }
   stop(entry: string) { this.sendJson({ type: 'stop', entry }); }
+  stopTask(entry: string, task: string) { this.sendJson({ type: 'stop_task', entry, task_id: task }); }
   setMode(entry: string, mode: string) { this.sendJson({ type: 'set_mode', entry, mode }); }
   setModel(entry: string, model: string | null) { this.sendJson({ type: 'set_model', entry, model }); }
   setEffort(entry: string, effort: string | null) { this.sendJson({ type: 'set_effort', entry, effort }); }
