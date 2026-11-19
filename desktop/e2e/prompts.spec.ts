@@ -29,6 +29,13 @@ test('questions, plan approval, and allow for this session', async ({ page }) =>
   const chip = q.locator('.chip');
   expect((await chip.boundingBox())!.height).toBeLessThan(24);
   await page.setViewportSize({ width: 1280, height: 820 });
+  // options' previews (Claude Code's side box): the first one's at first, the one pointed at on hover
+  const preview = q.getByRole('region', { name: 'Preview for: Which database should I use?' });
+  await expect(preview).toHaveText('+ data/app.db\n  tables: users, posts');  // as written: lines and spacing kept
+  await q.getByRole('radio', { name: /Postgres/ }).hover();
+  await expect(preview).toContainText('compose.yml: db service');
+  const [o, pv] = [await q.getByRole('radio', { name: /SQLite/ }).boundingBox(), await preview.boundingBox()];
+  expect(pv!.x).toBeGreaterThan(o!.x + o!.width - 1);  // beside the options, not under them
   await page.screenshot({ path: 'e2e/.results/question.png' });
   await q.getByRole('radio', { name: /Postgres/ }).click();
   await expect(log).toContainText("You picked: {'Which database should I use?': 'Postgres'}");

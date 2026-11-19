@@ -308,7 +308,8 @@ class ClaudeSDKClient:
             yield AssistantMessage([TextBlock("See [the docs](https://example.com/docs) for details.")])
         if "ask me" in text.lower():  # a clarifying question (AskUserQuestion)
             q = {"question": "Which database should I use?", "header": "DB choice", "multiSelect": False,
-                 "options": [{"label": "SQLite", "description": "One file, no server"}, {"label": "Postgres", "description": "A real server"}]}
+                 "options": [{"label": "SQLite", "description": "One file, no server", "preview": "+ data/app.db\n  tables: users, posts"},
+                             {"label": "Postgres", "description": "A real server", "preview": "+ compose.yml: db service\n  port 5432"}]}
             yield AssistantMessage([ToolUseBlock("q1", "AskUserQuestion", {"questions": [q]})])  # shown in the chat, as real Claude Code does
             r = await self.options.can_use_tool("AskUserQuestion", {"questions": [q]}, _Ctx())
             got = (r.updated_input or {}) if isinstance(r, PermissionResultAllow) else {}
