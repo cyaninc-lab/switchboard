@@ -36,7 +36,6 @@ Shipped in 0.1.9–0.1.14: multiline input, Ctrl+Enter send-now, queued messages
 
 Left, **(S)** small, **(M)** medium, **(L)** large. Separate PRs, batched into a release when the user says so:
 - **Line numbers on diffs** **(M)**: probably from Claude Code's structured patch in the tool result; not checked.
-- **Drag an agent to another project** **(M)**.
 - **Archive**, or better: make Remove keep name/project/settings, with a "Removed" list to restore from **(M)**.
 - **Settings defaults** for new sessions (mode, model, effort, account), and sessions show real values instead of "default" **(M)**; a changed default affects new sessions only.
 - **Split view** **(M)**: two tabs side by side in one window, now that tabs exist.

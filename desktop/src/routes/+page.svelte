@@ -661,6 +661,22 @@
     return Object.entries(g).map((x, i) => [x, at(x[0], i)] as const).sort((a, b) => a[1] - b[1]).map(([x]) => x);
   }
   let dragGroup: { url: string; g: string } | null = null;
+  // a session dragged onto another project (its header, or any session in it) moves there
+  let dragEntry = $state<{ url: string; id: string } | null>(null);
+  let dropOn = $state<string | null>(null);  // the project highlighted while a session is dragged over it
+  async function moveToGroup(m: Machine, g: string) {
+    const d = dragEntry;
+    dragEntry = null; dropOn = null;
+    const e = d && d.url === m.url ? tree[m.url]?.entries.find((x) => x.id === d.id) : null;
+    if (!e || e.group === g) return;
+    try { await api.updateEntry(m, e.id, { group: g }); await refresh(); say(`Moved ${e.name} to ${g}`); }
+    catch (err) { say(`Couldn't move it: ${(err as Error).message}`); }
+  }
+  const overGroup = (ev: DragEvent, m: Machine, g: string) => {
+    if (dragGroup?.url === m.url || dragEntry?.url === m.url) ev.preventDefault();
+    if (dragEntry?.url === m.url) dropOn = `${m.url}|${g}`;
+  };
+  const dropGroupOrEntry = (ev: DragEvent, m: Machine, g: string) => { ev.preventDefault(); if (dragEntry) moveToGroup(m, g); else dropGroup(m, g); };
   async function dropGroup(m: Machine, target: string) {
     const d = dragGroup;
     dragGroup = null;
@@ -1115,9 +1131,9 @@
                 <div class="group"><input class="rename" aria-label="Rename project {g}" bind:value={renaming.value} {@attach focusSelect}
                   onkeydown={(ev) => renameKeys(ev, m, undefined, g)} onblur={() => commitRename(m, undefined, g)} /></div>
               {:else}
-              <button class="group" aria-expanded={gOpen} onclick={() => (subOpen[gk] = !gOpen)} oncontextmenu={(ev) => openMenu(ev, m, undefined, g)}
+              <button class="group" class:dropon={dropOn === `${m.url}|${g}`} aria-expanded={gOpen} onclick={() => (subOpen[gk] = !gOpen)} oncontextmenu={(ev) => openMenu(ev, m, undefined, g)}
                 draggable="true" title="Drag to reorder projects" ondragstart={() => (dragGroup = { url: m.url, g })} ondragend={() => (dragGroup = null)}
-                ondragover={(ev) => { if (dragGroup?.url === m.url) ev.preventDefault(); }} ondrop={(ev) => { ev.preventDefault(); dropGroup(m, g); }}>{gOpen ? '▾' : '▸'} {g}{#if !gOpen}<span class="muted small"> · {es.length}</span>
+                ondragover={(ev) => overGroup(ev, m, g)} ondragleave={() => (dropOn = null)} ondrop={(ev) => dropGroupOrEntry(ev, m, g)}>{gOpen ? '▾' : '▸'} {g}{#if !gOpen}<span class="muted small"> · {es.length}</span>
                 {@const hint = es.some((e) => icon(e) === 'waiting') ? 'waiting' : es.some((e) => icon(e) === 'unread') ? 'unread' : null}
                 {#if hint}<span class="st {hint} inline" title={stateLabel[hint]}></span>{/if}{/if}</button>
               {/if}
@@ -1127,7 +1143,9 @@
                   onkeydown={(ev) => renameKeys(ev, m, e)} onblur={() => commitRename(m, e)} /></div>
                 {:else}
                 <button class="entry" class:sel={selected?.entry.id === e.id && !selected.sub} class:waiting={e.state === 'waiting'} title={stateLabel[icon(e)]} onclick={(ev) => open(m, e, ev.ctrlKey || ev.metaKey ? 'new' : 'preview')} ondblclick={() => keepTab()}
-                  onmousedown={noAutoscroll} onauxclick={(ev) => { if (ev.button === 1) { ev.preventDefault(); open(m, e, 'new'); } }} oncontextmenu={(ev) => openMenu(ev, m, e)}>
+                  onmousedown={noAutoscroll} onauxclick={(ev) => { if (ev.button === 1) { ev.preventDefault(); open(m, e, 'new'); } }} oncontextmenu={(ev) => openMenu(ev, m, e)}
+                  draggable="true" ondragstart={(ev) => { dragEntry = { url: m.url, id: e.id }; ev.dataTransfer?.setData('text/plain', e.name); }} ondragend={() => { dragEntry = null; dropOn = null; }}
+                  ondragover={(ev) => overGroup(ev, m, g)} ondrop={(ev) => { if (dragEntry) { ev.preventDefault(); moveToGroup(m, g); } }}>
                   <span class="st {icon(e)}"></span>
                   {#if e.pinned}<span class="pin" aria-label="pinned">★</span>{/if}
                   <span class="ename">{e.name}</span>
@@ -1696,6 +1714,7 @@
   .mname { font-weight: 600; flex: 1; }
   :global(.tiny.on) { border-color: var(--mauve); color: var(--text); }
   :global(.tiny) { background: none; border: 1px solid var(--s1); color: var(--sub0); border-radius: 6px; padding: 2px 8px; font-size: 12px; }
+  .group.dropon { background: var(--s0); outline: 1px dashed var(--mauve); border-radius: 6px; }
   .group { display: block; width: 100%; text-align: left; border: 0; background: none; cursor: pointer; padding: 6px 8px 2px 12px; color: var(--sub0); font: inherit; }
   .group:hover { color: var(--text); }
   .st.inline { display: inline-grid; vertical-align: middle; margin-left: 6px; }
