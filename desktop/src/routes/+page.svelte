@@ -528,6 +528,22 @@
   let subOpen = $state<Record<string, boolean>>((() => { try { return JSON.parse(localStorage.getItem(FOLD_KEY) || '{}'); } catch { return {}; } })());
   $effect(() => { const v = JSON.stringify(subOpen); try { localStorage.setItem(FOLD_KEY, v); } catch {} });
 
+  // ---- the session tree folds away: by the button, and by itself when the window is narrow ----
+  // sideWant: the user's choice for a wide window (remembered); a narrow window starts folded, the button still opens it
+  const SIDE_KEY = 'switchboard.side';
+  const narrowQ = matchMedia('(max-width: 900px)');
+  const sideSaved = (() => { try { return localStorage.getItem(SIDE_KEY) !== 'closed'; } catch { return true; } })();
+  let sideWant = sideSaved;  // only read in handlers: no need for state
+  let sideOpen = $state(sideSaved && !narrowQ.matches);
+  narrowQ.addEventListener('change', () => (sideOpen = sideWant && !narrowQ.matches));
+  function toggleSide() {
+    sideOpen = !sideOpen;
+    if (!narrowQ.matches) { sideWant = sideOpen; try { localStorage.setItem(SIDE_KEY, sideOpen ? 'open' : 'closed'); } catch {} }
+  }
+  // while folded, the button carries the tree's most urgent signal
+  let sideHint = $derived(Object.values(tree).flatMap((t) => t.entries ?? []).reduce<string | null>(
+    (h, e) => (h === 'waiting' || icon(e) === 'waiting' ? 'waiting' : icon(e) === 'unread' ? 'unread' : h), null));
+
   // ---- right-click menu on a tree entry ----
   // the menu is for a session (entry) or a project (group)
   let ctx = $state<{ x: number; y: number; machine: Machine; entry?: Entry; group?: string } | null>(null);
@@ -704,6 +720,11 @@
     {#if updNotes}<div class="updnotes md">{@html md(update.notes)}</div>{/if}
   {/if}
   <header class="titlebar">
+    <button class="sidebtn" aria-label={sideOpen ? 'Hide sessions' : 'Show sessions'} title={sideOpen ? 'Hide sessions' : 'Show sessions'}
+      aria-expanded={sideOpen} onclick={toggleSide}>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><line x1="9" y1="4" x2="9" y2="20" /></svg>
+      {#if !sideOpen && sideHint}<span class="st {sideHint}" title={stateLabel[sideHint]}></span>{/if}
+    </button>
     <div class="brand">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--mauve)" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" /></svg>
       Switchboard
@@ -740,7 +761,7 @@
         {@render subs(m, e, a.id, depth + 1)}
       {/each}
     {/snippet}
-    <nav class="tree" aria-label="Sessions">
+    <nav class="tree" class:folded={!sideOpen} aria-label="Sessions">
       <label class="search"><span class="sr">Filter</span><input type="search" placeholder="Filter…" bind:value={filter} /></label>
       <div class="scroll">
         {#if machines.length === 0}
@@ -1202,6 +1223,9 @@
 
   .body { flex: 1; display: flex; min-height: 0; }
   .tree { width: 290px; flex: 0 0 290px; display: flex; flex-direction: column; background: var(--mantle); border-right: 1px solid var(--s0); }
+  .tree.folded { display: none; }
+  .sidebtn { display: inline-flex; align-items: center; gap: 6px; background: none; border: 1px solid transparent; border-radius: 6px; padding: 3px 5px; color: var(--sub0); cursor: pointer; margin-right: -8px; }
+  .sidebtn:hover { border-color: var(--s1); color: var(--text); }
   .search { display: block; padding: 12px; }
   :global(input:focus), :global(select:focus) { outline: 1px solid var(--mauve); outline-offset: 0; }
   :global(input) { width: 100%; box-sizing: border-box; background: var(--base); border: 1px solid var(--s1); border-radius: 8px; padding: 8px 10px; color: var(--text); font: inherit; }
