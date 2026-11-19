@@ -31,8 +31,10 @@ test('defaults for new sessions in Settings; the footer says what "default" is',
 
   await page.getByRole('button', { name: 'Settings' }).click();
   const row = page.getByRole('dialog', { name: 'Settings' }).getByRole('group', { name: 'New sessions on demo' });
-  await row.getByRole('combobox', { name: 'Mode', exact: true }).selectOption('plan');
-  await row.getByRole('combobox', { name: 'Model', exact: true }).selectOption({ label: 'Haiku 5.5' });
+  // each change is saved by the daemon: wait for that, or the next session can start before it lands
+  const saved = () => page.waitForResponse((r) => r.url().endsWith('/v1/settings') && r.request().method() === 'PUT');
+  await Promise.all([saved(), row.getByRole('combobox', { name: 'Mode', exact: true }).selectOption('plan')]);
+  await Promise.all([saved(), row.getByRole('combobox', { name: 'Model', exact: true }).selectOption({ label: 'Haiku 5.5' })]);
   await expect(row.getByRole('combobox', { name: 'Model', exact: true })).toHaveValue('haiku');
   await page.screenshot({ path: 'e2e/.results/defaults.png' });
   await page.mouse.click(5, 5);
