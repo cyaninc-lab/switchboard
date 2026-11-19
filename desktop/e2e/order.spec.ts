@@ -35,7 +35,8 @@ test('within a project, the most recently active session is on top; the order ho
   await expect.poll(order).toEqual(['Order Y', 'Order X']);
 
   // pointer over the tree: X gets busy (sent from elsewhere), but nothing moves until the pointer leaves
-  await tree.hover();
+  await tree.getByRole('button', { name: /Order Y/ }).hover();
+  await expect.poll(() => page.evaluate(() => document.querySelector('nav.tree')?.matches(':hover'))).toBe(true);
   await page.evaluate(async ({ url }) => {
     const m = JSON.parse(localStorage.getItem('switchboard.machines')!).find((x: any) => x.url === url);
     const r = await (await fetch(`${url}/v1/entries`, { headers: { Authorization: `Bearer ${m.token}` } })).json();

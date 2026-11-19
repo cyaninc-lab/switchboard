@@ -1229,7 +1229,7 @@
         {@render subs(m, e, a.id, depth + 1)}
       {/each}
     {/snippet}
-    <nav class="tree" class:folded={!sideOpen || !!solo} aria-label="Sessions" onpointerenter={holdOrder} onpointerleave={() => (held = null)}>
+    <nav class="tree" class:folded={!sideOpen || !!solo} aria-label="Sessions" onpointerenter={holdOrder} onpointermove={() => { if (!held) holdOrder(); }} onpointerleave={() => (held = null)}>
       <label class="search"><span class="sr">Filter</span><input type="search" placeholder="Filter…" bind:value={filter} /></label>
       <div class="scroll">
         {#if machines.length === 0}
