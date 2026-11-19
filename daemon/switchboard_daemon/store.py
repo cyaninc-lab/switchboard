@@ -187,5 +187,9 @@ class Store:
             self.db.execute(f"UPDATE entries SET {sets} WHERE id = ?", (*changes.values(), entry_id))
         return self.entry(entry_id)
 
+    def set_session(self, entry_id, session_id):
+        """The entry follows its conversation to a new session (Claude Code's /clear starts one)."""
+        self.db.execute("UPDATE entries SET session_id = ? WHERE id = ?", (session_id, entry_id))
+
     def remove_entry(self, entry_id):
         return self.db.execute("DELETE FROM entries WHERE id = ?", (entry_id,)).rowcount > 0

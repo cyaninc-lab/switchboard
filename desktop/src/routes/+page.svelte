@@ -484,6 +484,9 @@
       } else if (e.dropped) { giveBack(e.entry, q.map(msgText)); pendingQ[e.entry] = []; }
     } else if (e.type === 'commands') {
       if (selected) loadCommands(selected.machine);
+    } else if (e.type === 'session_reset') {  // /clear: the entry now holds a fresh conversation
+      if (selected?.entry.id === e.entry && !selected.sub) messages = [{ type: 'assistant', uuid: crypto.randomUUID(), message: { content: [{ type: 'text', text: '— Conversation cleared —' }] } }];
+      refresh();
     } else if (e.type === 'notice') {
       if (selected?.entry.id === e.entry && !selected.sub) messages = [...messages, { type: 'assistant', uuid: crypto.randomUUID(), message: { content: [{ type: 'text', text: `— ${e.text} —` }] } }];
     } else if (e.type === 'terminal_output') {

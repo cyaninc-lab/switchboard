@@ -245,6 +245,14 @@ class Runner:
                     await self.broadcast({"type": "message", "entry": lv.entry_id, "message": h})
                 elif type(m).__name__ == "SystemMessage":
                     sub, data = getattr(m, "subtype", ""), getattr(m, "data", {}) or {}
+                    e = self.store.entry(lv.entry_id)
+                    if sub == "init" and e and data.get("session_id") and data["session_id"] != e["session_id"]:
+                        # /clear (or another reset) started a new session: the entry follows it, or a later resume
+                        # would bring the cleared conversation back and strand what came after
+                        log.info("entry %s moved to session %s (conversation reset)", lv.entry_id, data["session_id"])
+                        self.store.set_session(lv.entry_id, data["session_id"])
+                        lv.cost, lv.last_usage = 0.0, None
+                        await self.broadcast({"type": "session_reset", "entry": lv.entry_id, "session_id": data["session_id"]})
                     if sub == "init" and data.get("slash_commands"):
                         self.commands = list(data["slash_commands"])
                         await self.broadcast({"type": "commands", "entry": lv.entry_id, "commands": self.commands})
