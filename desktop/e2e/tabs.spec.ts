@@ -63,6 +63,12 @@ test('tabs: preview tab replaced by the next click, kept by sending or Ctrl+clic
   await page.locator('body').press('Control+Shift+Tab');
   await expect(bar.getByRole('tab', { selected: true })).toHaveText('Tab C');
 
+  // middle button going down is taken (Windows would start autoscroll); the bar never scrolls vertically
+  const prevented = (sel: string) => page.locator(sel).first().evaluate((el) => !el.dispatchEvent(new MouseEvent('mousedown', { button: 1, bubbles: true, cancelable: true })));
+  expect(await prevented('.tabs .tab')).toBe(true);
+  expect(await prevented('nav.tree button.entry')).toBe(true);
+  expect(await bar.evaluate((el) => el.scrollHeight <= el.clientHeight)).toBe(true);
+
   // drag to reorder
   await bar.locator('.tab', { hasText: 'Tab C' }).dragTo(bar.locator('.tab', { hasText: 'Tab B' }));
   expect(await names()).toEqual(['Tab C', 'Tab B', 'Tab A']);

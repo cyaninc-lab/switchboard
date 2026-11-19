@@ -75,9 +75,14 @@ try {
   await d.wait(async () => (await val(await x('//textarea'))) === 'coming back', 10000).catch(() => {});
   check((await val(await x('//textarea'))) === 'coming back', 'with its draft');
   check((await d.findElements(By.xpath("//nav//button[contains(.,'Window one') and contains(.,'⧉')]"))).length === 0, 'the tree no longer marks it');
-  await step('pop out again, then close the main window: the whole app closes');
-  await (await x("//button[normalize-space()='Pop out']")).click();
-  await d.wait(async () => (await d.getAllWindowHandles()).length === 2, 15000);
+  await step('right-click in the tree → Open in new window');
+  // WebKitWebDriver has no right-click action: send the contextmenu event itself
+  await d.executeScript("const r = arguments[0].getBoundingClientRect(); arguments[0].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + 20, clientY: r.top + 5 }))",
+    await x("//nav//button[contains(@class,'entry') and contains(.,'Window one')]"));
+  await (await x("//button[@role='menuitem' and normalize-space()='Open in new window']")).click();
+  await d.wait(async () => (await d.getAllWindowHandles()).length === 2, 15000).catch(() => {});
+  check((await d.getAllWindowHandles()).length === 2, 'it opened in its own window');
+  await step('then close the main window: the whole app closes');
   // close it as a person would (the window manager's close request, like its × button); only this test app's window
   const pid = _x(`pgrep -f '^${APP}'`).toString().trim().split('\n')[0];
   const wid = _x('wmctrl -lp').toString().split('\n').map((l) => l.split(/\s+/)).find((c) => c[2] === pid && c.slice(4).join(' ') === 'Switchboard')?.[0];
