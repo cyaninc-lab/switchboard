@@ -81,7 +81,9 @@ export async function checkForUpdate(): Promise<Update | null> {
 }
 
 /** A desktop notification (the system's own in the desktop app; the browser's if allowed; else nothing). */
+let phonePushOn = false;  // the phone app with notifications set up: PushService.kt shows them, not the web UI (no doubles)
 export async function notify(title: string, body: string) {
+  if (phonePushOn) return;
   if (viaParent && !inShell()) return askParent({ do: 'notify', title, body });
   try {
     if (inShell()) {
@@ -152,6 +154,22 @@ export async function closeThisWindow() {
 export async function setOnTop(on: boolean) {
   const { getCurrentWindow } = await import('@tauri-apps/api/window');
   await getCurrentWindow().setAlwaysOnTop(on);
+}
+
+// ---- phone notifications (the phone app): PushService.kt listens on ntfy with what push_config hands it ----
+export type PhonePush = { server: string; topic: string; machines: Machine[]; details: boolean; finished: boolean };
+export async function setPhonePush(cfg: PhonePush) {
+  const { invoke } = await import('@tauri-apps/api/core');
+  const n = await import('@tauri-apps/plugin-notification');
+  if (!(await n.isPermissionGranted())) await n.requestPermission();  // Android 13+: notifications need a yes
+  await invoke('push_config', { config: JSON.stringify(cfg) });
+  phonePushOn = cfg.machines.length > 0;
+}
+/** The session a tapped notification named (once), or null. */
+export async function takeNotificationOpen(): Promise<{ machine: string; entry: string } | null> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  const s = await invoke<string | null>('push_take_open');
+  return s ? JSON.parse(s) : null;
 }
 
 // ---- pairing by QR code: the machine's own address with the code, http://<machine>:7878/?pair=<code>. Any camera

@@ -17,6 +17,7 @@ from .net import Network, SETTING as NET_SETTING
 from .watches import Watches, KINDS, ACTIONS
 from .runner import MODES, EFFORTS, IDLE_SETTING, IDLE_CHOICES
 from . import logs
+from . import push
 from .logs import log
 
 STORE, NAME = web.AppKey("store", Store), web.AppKey("name", str)
@@ -25,6 +26,7 @@ REAPER = web.AppKey("reaper", asyncio.Task)
 TTYS = web.AppKey("ttys", Terminals)
 NET = web.AppKey("net", Network)
 WATCHES, WATCH_TASK = web.AppKey("watches", Watches), web.AppKey("watch_task", asyncio.Task)
+PUSH_STATE = web.AppKey("push_state", dict)  # entry id -> last state, to notice a turn finishing
 CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
 
 
@@ -452,6 +454,55 @@ async def set_settings(request):
     return await get_settings(request)
 
 
+async def get_push(request):
+    st = request.app[STORE]
+    return web.json_response({"server": st.setting(push.SERVER, ""), "subscribers": len(push.subscribers(st))})
+
+
+async def set_push(request):
+    """{server}: where phones listen (needed on one machine only); {subscribe: topic url, machine_url: the address
+    that phone reaches this daemon at} / {unsubscribe: topic url}."""
+    body, st = await request.json(), request.app[STORE]
+    def ok_url(u):
+        return isinstance(u, str) and u.startswith(("http://", "https://")) and len(u) < 500
+    if "server" in body:
+        if body["server"] and not ok_url(body["server"]):
+            raise web.HTTPBadRequest(text=json.dumps({"code": "bad_push_server"}), content_type="application/json")
+        st.set_setting(push.SERVER, (body["server"] or "").rstrip("/"))
+    if "subscribe" in body or "unsubscribe" in body:
+        u = body.get("subscribe") or body.get("unsubscribe")
+        if not ok_url(u):
+            raise web.HTTPBadRequest(text=json.dumps({"code": "bad_push_topic"}), content_type="application/json")
+        subs = push.subscribers(st)
+        if "subscribe" in body:
+            if not ok_url(body.get("machine_url")):
+                raise web.HTTPBadRequest(text=json.dumps({"code": "bad_machine_url"}), content_type="application/json")
+            subs[u] = body["machine_url"].rstrip("/")
+        else:
+            subs.pop(u, None)
+        push.set_subscribers(st, subs)
+    return await get_push(request)
+
+
+async def answer_request(request):
+    """Allow/Deny or answer a question from a phone notification (the WebSocket's permission_reply, over plain HTTP)."""
+    b = await request.json()
+    ok = await request.app[RUNNER].answer(b.get("request_id"), b.get("allow"), b.get("message"), by="phone", answers=b.get("answers"))
+    return web.json_response({"answered": ok}, status=200 if ok else 409)
+
+
+async def send_message(request):
+    """A reply from a phone notification: send it to the session (the WebSocket's send, over plain HTTP)."""
+    st, b = request.app[STORE], await request.json()
+    entry = st.entry(request.match_info["id"])
+    if not entry or not isinstance(b.get("text"), str) or not b["text"].strip():
+        raise web.HTTPBadRequest(text=json.dumps({"code": "bad_send"}), content_type="application/json")
+    if entry["session_id"] in await _off(open_in_terminal) - request.app[RUNNER].held_sessions():
+        raise web.HTTPConflict(text=json.dumps({"code": "open_in_terminal"}), content_type="application/json")
+    await request.app[RUNNER].send(entry, b["text"])
+    return web.json_response({"sent": True})
+
+
 async def pair_code(request):
     """A one-time code for pairing another device, from the app instead of the command line."""
     _local_only(request)
@@ -626,6 +677,9 @@ async def ws_handler(request):
 
 
 async def _broadcast(app, event):
+    note = push.notice(app[STORE], event, app[PUSH_STATE])
+    if note:  # phones hear about it through ntfy, in the background (a slow push server mustn't hold the daemon)
+        asyncio.get_running_loop().create_task(push.send(app[STORE], note))
     for ws in list(app[SOCKETS]):
         try:
             await ws.send_json(event)
@@ -677,6 +731,7 @@ def make_app(store: Store, name=None):
     app = web.Application(middlewares=[cors, auth])
     app[STORE], app[NAME] = store, name or socket.gethostname()
     app[SOCKETS] = set()
+    app[PUSH_STATE] = {}
     app[RUNNER] = Runner(store, sdk, lambda ev: _broadcast(app, ev))
     app[TTYS] = Terminals(lambda ev: _broadcast(app, ev))
     app[RUNNER].elsewhere = lambda: open_in_terminal() - app[RUNNER].held_sessions() - app[TTYS].held_sessions()
@@ -707,6 +762,8 @@ def make_app(store: Store, name=None):
         web.get("/v1/entries/{id}/messages", messages), web.get("/v1/entries/{id}/files", entry_files), web.get("/v1/entries/{id}/subagents/{agent}/messages", subagent_messages), web.get("/v1/ws", ws_handler), web.get("/v1/commands", commands), web.get("/v1/folders", folders), web.get("/v1/models", models), web.get("/v1/logs", get_logs),
         web.get("/v1/network", get_network), web.put("/v1/network", set_network),
         web.get("/v1/settings", get_settings), web.put("/v1/settings", set_settings),
+        web.get("/v1/push", get_push), web.put("/v1/push", set_push),
+        web.post("/v1/entries/{id}/answer", answer_request), web.post("/v1/entries/{id}/send", send_message),
         web.get("/v1/github", github_status), web.post("/v1/github/device", github_start), web.post("/v1/github/poll", github_poll),
         web.delete("/v1/github", github_sign_out), web.post("/v1/github/issue", github_issue), web.post("/v1/pair_code", pair_code),
         web.get("/v1/watches", list_watches), web.post("/v1/watches", add_watch), web.patch("/v1/watches/{id}", update_watch),

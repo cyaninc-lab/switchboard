@@ -1,0 +1,4 @@
+<!-- notification icon: the ">_" prompt, white on transparent as Android requires -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+  <path android:fillColor="#FFFFFFFF" android:pathData="M4.3,5.3L10,11l-5.7,5.7 -1.4,-1.4L7.2,11 2.9,6.7z M11,16h9v2h-9z"/>
+</vector>

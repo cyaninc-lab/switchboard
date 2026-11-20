@@ -12,6 +12,34 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_barcode_scanner::init())  // scanning a machine's pairing QR code
+        .invoke_handler(tauri::generate_handler![phone::push_config, phone::push_take_open])
         .run(tauri::generate_context!())
         .expect("error while running the phone app");
+}
+
+// The phone app's notifications are shown by PushService.kt, which runs without the web UI: the UI hands it the push
+// server, its topic and the paired machines (with their tokens, in the app's private folder) through push.json.
+#[cfg(mobile)]
+mod phone {
+    use tauri::Manager;
+
+    fn file(app: &tauri::AppHandle, name: &str) -> Result<std::path::PathBuf, String> {
+        Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join(name))  // = Android's dataDir, as the Kotlin side reads
+    }
+
+    #[tauri::command]
+    pub fn push_config(app: tauri::AppHandle, config: String) -> Result<(), String> {
+        let p = file(&app, "push.json")?;
+        std::fs::create_dir_all(p.parent().unwrap()).map_err(|e| e.to_string())?;
+        std::fs::write(p, config).map_err(|e| e.to_string())
+    }
+
+    /// The session a tapped notification named, once (MainActivity.kt leaves it in open.json).
+    #[tauri::command]
+    pub fn push_take_open(app: tauri::AppHandle) -> Option<String> {
+        let p = file(&app, "open.json").ok()?;
+        let s = std::fs::read_to_string(&p).ok()?;
+        let _ = std::fs::remove_file(p);
+        Some(s)
+    }
 }
