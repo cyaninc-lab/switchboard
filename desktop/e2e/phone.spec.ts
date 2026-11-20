@@ -101,6 +101,30 @@ test('phone layout: sessions → chat (as text messages) → back; inbox from th
   await expect(side).toContainText('Side answer: what changed?');
   await side.getByRole('button', { name: 'Back to the chat' }).click();
 
+  // a tall phone screenshot keeps its shape (it was squashed wide); it sits on your side
+  const { deflateSync } = await import('node:zlib');
+  const png = (w: number, h: number) => {  // a plain w×h PNG, no image library needed
+    const crcT = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+    const crc = (b: Buffer) => { let c = 0xffffffff; for (const x of b) c = crcT[(c ^ x) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+    const chunk = (t: string, d: Buffer) => { const l = Buffer.alloc(4); l.writeUInt32BE(d.length); const td = Buffer.concat([Buffer.from(t), d]); const c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([l, td, c]); };
+    const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+    const raw = Buffer.alloc((w * 3 + 1) * h, 0x80); for (let y = 0; y < h; y++) raw[y * (w * 3 + 1)] = 0;
+    return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+  };
+  await page.locator('input[type=file]').setInputFiles({ name: 'screenshot.png', mimeType: 'image/png', buffer: png(90, 200) });
+  await input.fill('look at this');
+  await page.getByRole('button', { name: 'Send' }).click();
+  const shot = log.locator('img.shot').last();
+  await expect(shot).toBeVisible();
+  const ib = (await shot.boundingBox())!;
+  expect(ib.height / ib.width).toBeGreaterThan(2.1);  // 200/90: still tall
+  expect(ib.height / ib.width).toBeLessThan(2.35);
+  expect(ib.x + ib.width).toBeGreaterThan(lb.x + lb.width - 40);  // on the right
+  // attach and Send are the same size of square
+  const clip = (await page.getByRole('button', { name: 'Attach images' }).boundingBox())!, send = (await page.getByRole('button', { name: 'Send' }).boundingBox())!;
+  expect(Math.abs(clip.width - clip.height)).toBeLessThan(2);
+  expect(Math.abs(clip.width - send.width)).toBeLessThan(2);
+
   // back to the list; the bottom bar switches to the inbox
   await back.click();
   await expect(tree).toBeVisible();
