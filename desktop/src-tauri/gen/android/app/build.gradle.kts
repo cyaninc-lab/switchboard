@@ -53,8 +53,10 @@ android {
         }
         getByName("release") {
             signingConfigs.findByName("release")?.let { signingConfig = it }
+            // no R8: it stripped what ML Kit (the QR scanner) reaches by reflection, and the camera crashed the release
+            // build (debug builds aren't shrunk, so it worked there). A few MB bigger, and no plugin breaks this way again.
             optimization {
-               enable = true
+               enable = false
             }
             proguardFiles(
                 *fileTree(".") {
