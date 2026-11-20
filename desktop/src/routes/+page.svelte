@@ -236,13 +236,15 @@
   };
   // the server from whichever machine has one; in the phone app, subscribe this phone on every machine and hand the
   // listener its config. Runs at start, after pairing, and when a setting changes.
+  let pushCfg: { server: string; topic: string; machines: Machine[] } | null = null;  // what the listener has, bar the switches
   async function syncPush() {
     const infos = await Promise.all(machines.map((m) => api.push(m).catch(() => null)));
     pushServer = infos.find((i) => i?.server)?.server ?? pushServer;
     if (!isPhoneApp() || !pushServer) return;
     const topic = pushTopic(), url = `${pushServer.replace(/\/$/, '')}/${topic}`;
     const ok = await Promise.all(machines.map((m, i) => infos[i] ? api.setPush(m, { subscribe: url, machine_url: m.url }).then(() => m, () => null) : null));
-    await setPhonePush({ server: pushServer, topic, machines: ok.filter((m): m is Machine => !!m).map((m) => $state.snapshot(m)), ...pushPrefs })
+    pushCfg = { server: pushServer, topic, machines: ok.filter((m): m is Machine => !!m).map((m) => $state.snapshot(m)) };
+    await setPhonePush({ ...pushCfg, ...pushPrefs })
       .then(() => (pushOn = true), (e) => say(`Notifications: ${(e as Error).message ?? e}`));
   }
   async function savePushServer() {
@@ -253,7 +255,9 @@
   }
   function savePushPrefs() {
     try { localStorage.setItem(PUSH_PREFS, JSON.stringify(pushPrefs)); } catch {}
-    syncPush();
+    // straight to the listener: a full sync first asks every machine, and a phone locked meanwhile pauses the app before it saves
+    if (pushCfg) setPhonePush({ ...pushCfg, ...pushPrefs }).catch(() => {});
+    else syncPush();
   }
   // a tapped notification: open its session (once the tree has it: right after start it may still be loading)
   let fromNotification = $state<{ machine: string; entry: string } | null>(null);
