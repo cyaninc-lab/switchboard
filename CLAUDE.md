@@ -11,7 +11,7 @@ Start with `docs/HANDOVER.md` (state, decisions, backlog, traps). API contract: 
 ## Run
 - Dev venv: `~/Projects/switchboard/.venv` (`pip install -e "./daemon[test]"`).
 - Daemon: `.venv/bin/switchboard-daemon serve` (127.0.0.1:7878). `--demo` serves scripted fake sessions (no Claude), see `daemon/switchboard_daemon/demo.py` for its trigger words.
-- Phone app (Android): `cd desktop && npx tauri android build --debug --apk --target aarch64` (needs `ANDROID_HOME=~/android-sdk`, `NDK_HOME=$ANDROID_HOME/ndk/<ver>`, `JAVA_HOME`); install with `adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`. The user's phone is reachable with `adb connect 100.108.176.78:5555` (Tailscale). `src-tauri/src/desktop.rs` is desktop-only; the phone app connects to daemons, it runs none.
+- Phone app (Android): `cd desktop && npx tauri android build --debug --apk --target aarch64` (needs `ANDROID_HOME=~/android-sdk`, `NDK_HOME=$ANDROID_HOME/ndk/<ver>`, `JAVA_HOME`); install with `adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`. Release builds (`--apk` without `--debug`) are signed with `~/.config/switchboard-android/release.jks`; the phone runs those, so a debug build won't install over it without uninstalling. The user's phone is reachable with `adb connect 100.108.176.78:5555` (Tailscale). `src-tauri/src/desktop.rs` is desktop-only; the phone app connects to daemons, it runs none.
 - Desktop dev: `cd desktop && npm run tauri dev`. Release build: `npm run tauri build` (needs the sidecar: `daemon/build-sidecar.sh` first).
 - Strip `CLAUDE*` env vars when launching anything that runs Claude from inside a Claude session (`env -u CLAUDECODE ...`); the daemon scrubs them itself.
 
