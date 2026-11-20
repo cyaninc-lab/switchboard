@@ -322,6 +322,9 @@
   const AGENT_TOOLS = ['Agent', 'Task'];
   // edits' hunks (line numbers) by tool_use id, from history and live tool results
   let hunks = $derived(Object.assign({}, ...messages.map((m) => m.patches ?? {})) as Record<string, api.Hunk[]>);
+  // Bash commands by tool_use id: a terminal window's title says "Bash" and its body starts with "$ <command>"
+  let bashCmd = $derived(Object.fromEntries(messages.flatMap((m) => Array.isArray(m.message?.content) ? m.message.content : [])
+    .filter((b: any) => b?.type === 'tool_use' && b.name === 'Bash' && b.input?.command).map((b: any) => [b.id, String(b.input.command)])) as Record<string, string>);
   const diffLines = (l: { lines: api.DiffLine[]; id?: string }) => (l.id && hunks[l.id] ? api.hunkLines(hunks[l.id]) : l.lines);
   const FILE_TOOLS = ['Read', 'NotebookEdit', 'NotebookRead'];  // Edit/Write are diffs, whose header carries the path too
   let queued = $state<Record<string, number>>({});
@@ -1376,7 +1379,7 @@
             <span class="phonename">{selected.entry.name}</span>
             {#if btwChats[selected.entry.id]}<button class="tiny hstop" onclick={() => (btwAside[selected!.entry.id] = false)} title="Back to the side chat">/btw</button>{/if}{/if}
           <span class="cwd">{selected.machine.name}:{selected.entry.session?.cwd ?? '?'}</span>
-          {#if selected.entry.session?.git_branch}<span>⎇ {selected.entry.session.git_branch}</span>{/if}
+          {#if selected.entry.session?.git_branch}<span class="branch">⎇ {selected.entry.session.git_branch}</span>{/if}
           <span class="grow"></span>
           <button class="tiny" class:on={termFor === selected.entry.id} onclick={() => { termFor = termFor === selected!.entry.id ? null : selected!.entry.id; if (!termFor) open(selected!.machine, selected!.entry); }}
             title="Switch between the chat view and the real claude terminal">{termFor === selected.entry.id ? 'Chat' : 'Terminal'}</button>
@@ -1435,7 +1438,7 @@
                 <!-- the path opens like one in a reply (onPathClick) -->
                 <div class="step"><span class="bullet">⏺ </span><span class="tool">{line.name}(<code class="path">{line.input.file_path}</code>)</span></div>
               {:else if line.kind === 'tool'}
-                <div class="step"><span class="bullet">⏺ </span><span class="tool">{line.text}</span></div>
+                <div class="step"><span class="bullet">⏺ </span><span class="tool">{bashCmd[line.id] ? line.name : line.text}</span></div>
               {:else if line.kind === 'diff'}
                 {@const dl = diffLines(line)}
                 <div class="diff" aria-label="{line.text}">
@@ -1449,7 +1452,8 @@
                 </ul>
               {:else}
                 {@const rows = line.text.split('\n')}
-                <div class="result">⎿ {expanded[msg.uuid + li] ? line.text : rows.slice(0, RESULT_LINES).join('\n')}</div>
+                {@const cmd = 'id' in line && line.id ? bashCmd[line.id] : undefined}
+                <div class="result">{#if cmd}<span class="cmdline"><span class="dollar">$</span>{cmd}</span>{'\n'}{/if}{expanded[msg.uuid + li] ? line.text : rows.slice(0, RESULT_LINES).join('\n')}</div>
                 {#if rows.length > RESULT_LINES}<button class="link small more" onclick={() => (expanded[msg.uuid + li] = !expanded[msg.uuid + li])}>{expanded[msg.uuid + li] ? 'Show less' : `Show all ${rows.length} lines`}</button>{/if}
               {/if}
             {/each}
@@ -1974,9 +1978,8 @@
   .app.phone .log .you .prompt { display: none; }
   .app.phone .log .reply { align-self: flex-start; max-width: 88%; background: var(--s0); border-radius: 16px 16px 16px 5px; padding: 8px 12px; }
   .app.phone .log .reply > .bullet, .app.phone .log .step > .bullet { display: none; }
-  .app.phone .log .step, .app.phone .log .result, .app.phone .log .diff, .app.phone .log .todos, .app.phone .log details.agent {
+  .app.phone .log .diff, .app.phone .log .todos, .app.phone .log details.agent {
     align-self: flex-start; max-width: 92%; border: 1px solid var(--s0); border-radius: 10px; padding: 5px 9px; font-size: 11.5px; color: var(--sub0); overflow: hidden; }
-  .app.phone .log .result { margin-top: -6px; border-top: 0; border-radius: 0 0 10px 10px; }
   .app.phone .inputbar { padding: 8px 10px 12px; gap: 8px; }
   .app.phone .inputbar > .prompt { display: none; }
   .app.phone .inputbar { align-items: center; }
@@ -2187,6 +2190,22 @@
   /* the chat font: Claude's replies (streaming and finished), thinking, your messages, messages between sessions and
      the message box; code inside them keeps the code font (.md code) */
   .log .md, .streaming, .thinking, .you, .mail, .inputbar textarea { font-family: var(--chat-font, Inter, system-ui, sans-serif); }
+  /* steps as little terminal windows (desktop and phone): a title bar with coloured dots and the tool, the output
+     below; a Bash window starts with "$ <command>" */
+  .log .step { align-self: flex-start; box-sizing: border-box; max-width: 100%; width: min(100%, 760px); background: var(--s0); border: 1px solid var(--s1);
+    border-radius: 10px; padding: 6px 10px; font-size: 11.5px; color: var(--sub1); overflow: hidden; text-overflow: ellipsis; }
+  .log .step > .bullet { display: none; }
+  .log .step::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: 1px;
+    background: var(--red); box-shadow: 13px 0 0 var(--peach), 26px 0 0 var(--green); margin-right: 36px; }
+  .log .step .tool { color: var(--text); }
+  .log .step:has(+ .result) { border-radius: 10px 10px 0 0; border-bottom: 0; }
+  .log .result { align-self: flex-start; box-sizing: border-box; max-width: 100%; width: min(100%, 760px); background: var(--crust); border: 1px solid var(--s1); color: var(--sub0);
+    border-radius: 10px; padding: 7px 10px 9px; font-size: 12px; overflow-x: auto; }
+  .log .step + .result { margin-top: -8px; border-top: 0; border-radius: 0 0 10px 10px; }  /* the gap between lines is 8px */
+  .log .result .cmdline { color: var(--text); } .log .result .dollar { color: var(--o1); margin-right: 1ch; }
+  .app.phone .log .step, .app.phone .log .result { width: 92%; }
+  .app.phone .log .step + .result { margin-top: -10px; }
+  .app.phone .termhead .branch { display: none; }  /* a long name and the branch wrapped onto two lines */
   .streaming .md > :global(p:nth-last-child(2)) { display: inline; }  /* the cursor stays at the end of the last line */
   .streaming { color: var(--text); } .cursor { color: var(--mauve); animation: blink 1s steps(2) infinite; }
   @keyframes blink { 50% { opacity: 0; } }

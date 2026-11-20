@@ -45,7 +45,8 @@ test('connect, add from a machine, read history, pin, remove', async ({ page }) 
   await expect(tree.getByRole('button', { name: /Shorts deploy/ })).toBeVisible();
   const log = page.getByRole('log', { name: 'Session history' });
   await expect(log).toContainText('Why did the deploy roll back?');
-  await expect(log).toContainText('Bash(gh run view 4410');
+  await expect(log.locator('.step', { hasText: 'Bash' }).first()).toBeVisible();  // a little terminal window: Bash in the title bar
+  await expect(log.locator('.result .cmdline').first()).toHaveText('$gh run view 4410 --log-failed | tail -20');  // $ <command> in its body
   await expect(log).toContainText("KeyError: 'dash_url'");
   await expect(page.getByText('fix/feed-dash-url')).toBeVisible();
   await page.screenshot({ path: 'e2e/.results/history.png' });
