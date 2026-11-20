@@ -79,6 +79,22 @@ test('phone layout: sessions → chat (as text messages) → back; inbox from th
   expect(mine.x).toBeGreaterThan(lb.x + 40);
   await page.screenshot({ path: 'e2e/.results/phone-chat.png' });
 
+  // a side chat takes the whole screen; ‹ goes back to the chat (it stays open), /btw in the header returns to it
+  await input.fill('/btw what changed?');
+  await page.getByRole('button', { name: 'Send' }).click();
+  const side = page.getByRole('complementary', { name: 'Side chat' });
+  await expect(side).toContainText('Side answer: what changed?');
+  expect((await side.boundingBox())!.width).toBeGreaterThan(380);
+  await expect(log).toBeHidden();
+  await side.getByRole('button', { name: 'Back to the chat' }).click();
+  await expect(log).toBeVisible();
+  await expect(side).toHaveCount(0);
+  // the message box is its normal height again (squeezed narrow, it used to stay tall)
+  expect((await input.boundingBox())!.height).toBeLessThan(80);
+  await page.getByRole('button', { name: '/btw' }).click();
+  await expect(side).toContainText('Side answer: what changed?');
+  await side.getByRole('button', { name: 'Back to the chat' }).click();
+
   // back to the list; the bottom bar switches to the inbox
   await back.click();
   await expect(tree).toBeVisible();
