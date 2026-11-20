@@ -43,4 +43,7 @@ test('background tasks: a bar above the message box lists them, with Stop; a cou
   await expect(rows.filter({ hasText: 'npm run dev' })).toContainText('stopped after');
   await expect(bar).not.toContainText('running');
   await expect(entry.locator('.bgbadge')).toHaveCount(0);
+  // finished ones can be cleared (they also drop off by themselves after 10 minutes); then the bar goes
+  await bar.getByRole('button', { name: 'Clear' }).click();
+  await expect(bar).toHaveCount(0);
 });
