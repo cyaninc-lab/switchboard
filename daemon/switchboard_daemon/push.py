@@ -11,6 +11,7 @@ import logging
 import aiohttp
 
 SERVER, SUBSCRIBERS = "push_server", "push_subscribers"
+VOICE, LISTEN = "voice_server", "listen_server"  # calls: a /say?text= → audio service, an OpenAI-style transcription service
 log = logging.getLogger(__name__)
 
 
@@ -35,6 +36,10 @@ def notice(store, ev, last_state):
         return {"kind": kind, "entry": ev["entry"], "request_id": ev["request_id"], "name": e.get("name") or "A session",
                 "title": f"{e.get('name') or 'A session'} needs you", "body": body,
                 "question": (inp.get("questions") or [{}])[0].get("question", "") if kind == "question" else ""}
+    if t == "call":  # the phone rings; answering reads `body` aloud
+        e = store.entry(ev["entry"]) or {}
+        return {"kind": "call", "entry": ev["entry"], "name": e.get("name") or "A session",
+                "title": f"{e.get('name') or 'A session'} is calling", "body": ev["message"]}
     if t == "permission_resolved":  # answered somewhere else: the phone takes its notification away
         return {"kind": "resolved", "entry": ev["entry"], "request_id": ev["request_id"]}
     if t == "message" and (ev.get("message") or {}).get("type") == "assistant":  # the last thing Claude said, for "finished"

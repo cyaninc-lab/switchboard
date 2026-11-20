@@ -13,7 +13,8 @@ IDLE_CHOICES = (0, 10, 30, 60, 240)
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 MAX_IMAGE_B64 = 7_000_000  # ~5 MB of image per attachment
 MAX_IMAGES = 10
-TOOLS = ("mcp__switchboard__sessions", "mcp__switchboard__message_session")  # allowed without asking, like SendMessage
+TOOLS = ("mcp__switchboard__sessions", "mcp__switchboard__message_session", "mcp__switchboard__call_user")  # allowed without asking
+CALL_GAP = 180  # seconds between calls from one session: a guardrail against a session ringing over and over
 MODES = {"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}
 EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 
@@ -101,6 +102,7 @@ class Runner:
         self.usage: dict[str, dict] = {}  # entry id -> last usage event (survives the session closing)
         self.side: dict[str, Side] = {}  # entry id -> its open /btw side chat
         self.elsewhere = lambda: set()  # {session id} a process outside this daemon holds (set by the app)
+        self.last_call: dict[str, float] = {}  # entry id -> when it last rang the user
 
     # ---- state ----
     def state(self, entry_id):
@@ -195,12 +197,31 @@ class Runner:
                 return say(f'Couldn\'t deliver to "{to["name"]}": {e}', True)
             return say(f'Delivered to "{to["name"]}"' + {None: " (it was stopped and is resuming now).", "working": " (it's busy; it gets the message when its turn ends)."}.get(was, "."))
 
+        async def call(args):
+            text = str(args.get("message", "")).strip()
+            if not text:
+                return say("Say what you're calling about.", True)
+            from . import push
+            if not push.subscribers(self.store):
+                return say("The user has no phone set up for calls (Switchboard's phone app with notifications). Tell them in the chat instead.", True)
+            wait = CALL_GAP - (time.time() - self.last_call.get(entry_id, 0))
+            if wait > 0:
+                return say(f"You called less than {CALL_GAP // 60} minutes ago; try again in {int(wait)} seconds, or write in the chat.", True)
+            self.last_call[entry_id] = time.time()
+            await self.broadcast({"type": "call", "entry": entry_id, "message": text})
+            return say("Their phone is ringing. If they answer, what they say arrives as your next message, spoken: answer briefly, warmly and "
+                       "conversationally (upbeat, exclamation marks where they fit), no markdown or lists, as it is read aloud. End your turn now. If they decline, carry on in the chat.")
+
         return sdk.create_sdk_mcp_server("switchboard", tools=[
             sdk.tool("sessions", "List the other Claude sessions in Switchboard on this machine, by name, with their state. "
                      "Stopped ones are included: unlike SendMessage, message_session can reach them.", {})(sessions),
             sdk.tool("message_session", "Send a message to another Switchboard session on this machine, by its name from the sessions tool. "
                      "A stopped session is resumed to receive it. It arrives as a new prompt; the reply comes back the same way only "
                      "if that session chooses to answer.", {"session": str, "text": str})(message),
+            sdk.tool("call_user", "Phone the user: their phone rings, and if they answer it reads your message aloud and you talk, turn by turn. "
+                     "Only for something that really needs them now (blocked, a decision only they can make, something urgent); a normal "
+                     "question can wait in the chat. Keep the message short and spoken, without markdown, and warm and upbeat: say hi, "
+                     "lead with good news, use exclamation marks where they fit (they lift the voice).", {"message": str})(call),
         ])
 
     async def send(self, entry, text, images=None, origin=None):
@@ -303,6 +324,8 @@ class Runner:
 
     async def _turn_end(self, lv):
         lv.working = False
+        if (fut := (lv.origin or {}).get("reply")) and not fut.done():  # a call waits for what Claude says back
+            fut.set_result("\n\n".join(lv.turn_text).strip())
         if lv.origin and self.on_turn_end:
             origin, lv.origin = lv.origin, None
             try:
