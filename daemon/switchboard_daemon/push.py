@@ -37,13 +37,19 @@ def notice(store, ev, last_state):
                 "question": (inp.get("questions") or [{}])[0].get("question", "") if kind == "question" else ""}
     if t == "permission_resolved":  # answered somewhere else: the phone takes its notification away
         return {"kind": "resolved", "entry": ev["entry"], "request_id": ev["request_id"]}
+    if t == "message" and (ev.get("message") or {}).get("type") == "assistant":  # the last thing Claude said, for "finished"
+        content = ((ev["message"].get("message") or {}).get("content")) or []
+        text = " ".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text").strip()
+        if text:
+            last_state[("said", ev["entry"])] = text
+        return None
     if t == "state":
         was, now = last_state.get(ev["entry"]), ev.get("state")
         last_state[ev["entry"]] = now
         if was == "working" and now == "ready":
             e = store.entry(ev["entry"]) or {}
             return {"kind": "finished", "entry": ev["entry"], "name": e.get("name") or "A session",
-                    "title": f"{e.get('name') or 'A session'} finished", "body": "Claude is done and waiting for you"}
+                    "title": f"{e.get('name') or 'A session'} finished", "body": last_state.pop(("said", ev["entry"]), "")[:300] or "Claude is done and waiting for you"}
     if t == "inbox":
         it = ev.get("item") or {}
         return {"kind": "inbox", "entry": it.get("entry_id"), "name": it.get("source") or "Watch",
