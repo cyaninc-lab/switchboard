@@ -1965,9 +1965,12 @@
   .app.phone .log .result { margin-top: -6px; border-top: 0; border-radius: 0 0 10px 10px; }
   .app.phone .inputbar { padding: 8px 10px 12px; gap: 8px; }
   .app.phone .inputbar > .prompt { display: none; }
+  .app.phone .inputbar { align-items: center; }
+  .app.phone .inputbar > .tiny { flex: none; width: 38px; height: 38px; border-radius: 10px; padding: 0; display: grid; place-items: center; }  /* square, like Send */
+  .app.phone .log .shot { align-self: flex-end; margin: 0; max-width: 72%; max-height: 360px; border-radius: 14px; }  /* your picture, on your side */
   .app.phone .btw { width: 100%; flex: 1 1 auto; border-left: 0; }
   .app.phone.inbtw .work { display: none; }
-  .sendbtn { flex: none; width: 36px; height: 36px; border-radius: 50%; border: 0; background: var(--mauve); color: var(--crust); font-weight: 700; font-size: 16px; cursor: pointer; }
+  .sendbtn { flex: none; width: 38px; height: 38px; border-radius: 10px; border: 0; background: var(--mauve); color: var(--crust); font-weight: 700; font-size: 16px; cursor: pointer; }
   .phonebar { display: flex; border-top: 1px solid var(--s0); background: var(--mantle); }
   .phonebar button { flex: 1; background: none; border: 0; color: var(--o1); font: inherit; font-size: 13px; padding: 12px 0 16px; cursor: pointer; }
   .phonebar button.on { color: var(--mauve); font-weight: 600; }  /* in the split pane: the main window's own bar already shows these */
@@ -2171,7 +2174,8 @@
   .permactions { display: flex; gap: 8px; font-family: var(--ui-font, Inter, system-ui, sans-serif); }
   .allow { background: var(--green); color: var(--crust); border: 0; border-radius: 8px; padding: 8px 16px; font-weight: 600; }
   .deny { background: none; color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 45%, transparent); border-radius: 8px; padding: 8px 16px; }
-  .shot { max-width: 320px; max-height: 200px; border-radius: 8px; border: 1px solid var(--s1); display: block; margin: 4px 0 4px 18px; }
+  /* its own shape: in the chat's column it was stretched to the full width while its height was capped (squashed) */
+  .shot { align-self: flex-start; width: auto; height: auto; max-width: min(320px, 100%); max-height: 200px; object-fit: contain; border-radius: 8px; border: 1px solid var(--s1); display: block; margin: 4px 0 4px 18px; }
   .cmdmenu { margin: 0 18px; background: var(--mantle); border: 1px solid var(--s1); border-radius: 10px; padding: 4px; display: flex; flex-direction: column; }
   .cmdmenu button { display: grid; grid-template-columns: minmax(140px, auto) 1fr; gap: 12px; text-align: left; background: none; border: 0; color: var(--text); padding: 6px 10px; border-radius: 6px; }
   .cmdmenu button.on { background: var(--s0); }
