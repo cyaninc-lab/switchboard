@@ -17,6 +17,8 @@ def find():
 
 def handler(root):
     async def serve(request):
+        nonlocal root
+        root = root or find()  # built after the daemon started (a checkout): look again
         if root is None:
             return web.Response(status=404, text="Switchboard daemon: the web app isn't bundled with this one.")
         rel = request.match_info.get("tail", "")
