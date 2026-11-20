@@ -433,6 +433,11 @@
   function grow(el: HTMLTextAreaElement) {  // fit the text, up to the CSS max-height
     const fit = () => { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; };
     $effect(() => { void draft; fit(); });  // also shrinks back after sending
+    // and when its width changes: squeezed narrow it grew tall, and stayed tall once it had room again
+    let w = 0;
+    const ro = new ResizeObserver(() => { if (el.clientWidth !== w) { w = el.clientWidth; fit(); } });
+    ro.observe(el);
+    $effect(() => () => ro.disconnect());
   }
   // @-mentions: "@" then letters lists files in the session's folder; picking one inserts @path (Claude Code reads it)
   let atQ = $state<string | null>(null);
@@ -574,10 +579,12 @@
   // ---- /btw: a side question in a panel on the right; the session's history never sees it (daemon: a fork) ----
   let btwChats = $state<Record<string, { items: { who: 'you' | 'claude'; text: string }[]; streaming: string; busy: boolean }>>({});
   let btwDraft = $state('');
+  let btwAside = $state<Record<string, boolean>>({});  // phone: the side chat stepped aside (‹), back via the header
   function askBtw(text: string) {
     const s = selected;
     if (!s) return;
     btwChats[s.entry.id] ??= { items: [], streaming: '', busy: false };
+    btwAside[s.entry.id] = false;  // a new side question brings it to the front (on a phone)
     if (!text.trim()) return;  // "/btw" alone just opens the panel
     try { live()!.btw(s.entry.id, text.trim()); } catch (e) { liveErr = (e as Error).message; }
   }
@@ -1205,7 +1212,8 @@
 
 <!-- notices float at the bottom, so they show even with no session open (e.g. after deleting one) -->
 {#if toast}<div class="toast small" role="status">{toast}</div>{/if}
-<div class="app" class:phone class:inchat={phone && !!selected} class:ininbox={phone && !selected && phoneTab === 'inbox'}>
+<div class="app" class:phone class:inchat={phone && !!selected}
+  class:inbtw={phone && !!selected && !selected.sub && !!btwChats[selected.entry.id] && !btwAside[selected.entry.id]} class:ininbox={phone && !selected && phoneTab === 'inbox'}>
   {#if update && !solo}
     <div class="updbar" role="status">
       <span><b>Switchboard {update.version}</b> is available{version ? ` (you have ${version})` : ''}.</span>
@@ -1359,7 +1367,8 @@
         {:else}
         <div class="termhead mono">
           {#if phone}<button class="tiny back" aria-label="Back to sessions" onclick={() => { swapDraft('\u0000none'); selected = null; }}>‹</button>
-            <span class="phonename">{selected.entry.name}</span>{/if}
+            <span class="phonename">{selected.entry.name}</span>
+            {#if btwChats[selected.entry.id]}<button class="tiny hstop" onclick={() => (btwAside[selected!.entry.id] = false)} title="Back to the side chat">/btw</button>{/if}{/if}
           <span class="cwd">{selected.machine.name}:{selected.entry.session?.cwd ?? '?'}</span>
           {#if selected.entry.session?.git_branch}<span>⎇ {selected.entry.session.git_branch}</span>{/if}
           <span class="grow"></span>
@@ -1545,11 +1554,12 @@
       </section>
     {/if}
     </div>
-    {#if selected && !selected.sub && btwChats[selected.entry.id]}
+    {#if selected && !selected.sub && btwChats[selected.entry.id] && !(phone && btwAside[selected.entry.id])}
       {@const c = btwChats[selected.entry.id]}
       {@const eid = selected.entry.id}
       <aside class="btw" aria-label="Side chat">
-        <div class="btwhead"><b>Side chat</b><span class="muted small">/btw</span><span class="grow"></span>
+        <div class="btwhead">{#if phone}<button class="tiny back" aria-label="Back to the chat" title="Back to the chat (the side chat stays open)" onclick={() => (btwAside[eid] = true)}>‹</button>{/if}
+          <b>Side chat</b><span class="muted small">/btw</span><span class="grow"></span>
           <button class="tiny" aria-label="Close side chat" title="Close it (nothing from it stays)" onclick={() => closeBtw(eid)}>×</button></div>
         <p class="muted small btwnote">Answers from what's been said so far. Nothing here goes into the session.</p>
         <div class="btwlog" role="log" aria-label="Side chat answers">
@@ -1949,6 +1959,8 @@
   .app.phone .log .result { margin-top: -6px; border-top: 0; border-radius: 0 0 10px 10px; }
   .app.phone .inputbar { padding: 8px 10px 12px; gap: 8px; }
   .app.phone .inputbar > .prompt { display: none; }
+  .app.phone .btw { width: 100%; flex: 1 1 auto; border-left: 0; }
+  .app.phone.inbtw .work { display: none; }
   .sendbtn { flex: none; width: 36px; height: 36px; border-radius: 50%; border: 0; background: var(--mauve); color: var(--crust); font-weight: 700; font-size: 16px; cursor: pointer; }
   .phonebar { display: flex; border-top: 1px solid var(--s0); background: var(--mantle); }
   .phonebar button { flex: 1; background: none; border: 0; color: var(--o1); font: inherit; font-size: 13px; padding: 12px 0 16px; cursor: pointer; }
