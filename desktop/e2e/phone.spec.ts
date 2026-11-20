@@ -64,6 +64,12 @@ test('phone layout: sessions → chat (as text messages) → back; inbox from th
   // while Claude works the box's hint and the interrupt button stay small enough for a phone
   await input.fill('slow one please');
   await page.getByRole('button', { name: 'Send' }).click();
+  // what streams in is already the left bubble Claude's reply will be (no jump when it finishes)
+  const live = log.locator('.reply.streaming');
+  await expect(live).toBeVisible();
+  const lb2 = (await log.boundingBox())!, sb = (await live.boundingBox())!;
+  expect(sb.x).toBeLessThan(lb2.x + 30);
+  expect(await live.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
   await expect(input).toHaveAttribute('placeholder', 'Working… sends after');
   const stop = page.getByRole('button', { name: 'Interrupt' });
   await expect(stop).toHaveText('■');

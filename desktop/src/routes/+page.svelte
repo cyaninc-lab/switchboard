@@ -10,7 +10,11 @@
   // links (in Claude's replies, the inbox, questions) never navigate this window: web and mail links open in the
   // default browser / mail app, anything else is ignored. ponytail: until sessions get windows or tabs of their own
   // ---- background tasks: shells and other non-agent tasks (background agents already show in the tree) ----
-  const bgTasks = (e: Entry) => (e.tasks ?? []).filter((t) => !/agent/i.test(t.type ?? ''));
+  // finished ones drop off after a while (or with Clear); running ones always show
+  const BG_KEEP = 10 * 60_000;
+  let bgCleared = $state<Record<string, boolean>>({});
+  const bgTasks = (e: Entry) => (e.tasks ?? []).filter((t) => !/agent/i.test(t.type ?? '')
+    && (t.status === 'running' || (!bgCleared[t.id] && clock - (t.ended ?? clock) < BG_KEEP)));
   const bgRunning = (e: Entry) => bgTasks(e).filter((t) => t.status === 'running').length;
   let bgOpen = $state(false);
   let clock = $state(Date.now());
@@ -1450,7 +1454,8 @@
           {#each mainMsgs as msg (msg.uuid)}{@render lines(msg)}{/each}
           {#if !selected.sub}
           {#if thinkingLive[selected.entry.id] && !streaming[selected.entry.id]}<div class="thinking live"><span class="muted">Thinking… </span><span class="thinktext">{thinkingLive[selected.entry.id].slice(-240)}</span></div>{/if}
-          {#if streaming[selected.entry.id]}<div class="streaming"><span class="bullet">⏺ </span>{streaming[selected.entry.id]}<span class="cursor">▌</span></div>{/if}
+          <!-- drawn like the finished reply (formatted, same bubble on a phone), so it grows in place instead of jumping -->
+          {#if streaming[selected.entry.id]}<div class="reply streaming"><span class="bullet">⏺</span><div class="md">{@html md(streaming[selected.entry.id])}<span class="cursor">▌</span></div></div>{/if}
           {#each prompts[selected.entry.id] ?? [] as p (p.request_id)}
             <PromptCard {p} live={live()!} />
           {/each}
@@ -1481,6 +1486,7 @@
               {#if ts.length - run}<span class="muted"> · {ts.length - run} finished</span>{/if}
               <span class="grow"></span><span class="muted">{bgOpen ? '▾' : '▸'}</span>
             </button>
+            {#if ts.length - run}<button type="button" class="tiny bgclear" title="Hide the finished ones" onclick={() => { for (const t of ts) if (t.status !== 'running') bgCleared[t.id] = true; }}>Clear</button>{/if}
             {#if bgOpen}
               {#each ts as t (t.id)}
                 <div class="bgrow">
@@ -2131,6 +2137,8 @@
   .inputbar { align-items: flex-end; }
   /* background tasks: a slim bar on top of the message box */
   .bgbar { margin: 0 18px; border: 1px solid var(--s1); border-bottom: 0; border-radius: 8px 8px 0 0; background: var(--mantle); font-size: 12px; }
+  .bgbar { position: relative; }
+  .bgclear { position: absolute; top: 4px; right: 34px; }
   .bgtop { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: 0; color: var(--sky); font: inherit; padding: 6px 10px; cursor: pointer; text-align: left; }
   .bgrow { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 6px 10px; border-top: 1px solid var(--s0); }
   .bgdesc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2155,6 +2163,7 @@
   /* the chat font: Claude's replies (streaming and finished), thinking, your messages, messages between sessions and
      the message box; code inside them keeps the code font (.md code) */
   .log .md, .streaming, .thinking, .you, .mail, .inputbar textarea { font-family: var(--chat-font, Inter, system-ui, sans-serif); }
+  .streaming .md > :global(p:nth-last-child(2)) { display: inline; }  /* the cursor stays at the end of the last line */
   .streaming { color: var(--text); } .cursor { color: var(--mauve); animation: blink 1s steps(2) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
   .perm { border: 1px solid color-mix(in srgb, var(--peach) 45%, transparent); background: color-mix(in srgb, var(--peach) 8%, transparent); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; white-space: normal; }
