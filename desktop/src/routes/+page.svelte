@@ -226,8 +226,8 @@
   let pushServer = $state('');
   let pushOn = $state(false);
   const PUSH_PREFS = 'switchboard.push.prefs', PUSH_TOPIC = 'switchboard.push.topic';
-  let pushPrefs = $state<{ details: boolean; finished: boolean }>((() => {
-    try { return { details: false, finished: true, ...JSON.parse(localStorage.getItem(PUSH_PREFS) ?? '{}') }; } catch { return { details: false, finished: true }; }
+  let pushPrefs = $state<{ finished: boolean }>((() => {
+    try { return { finished: JSON.parse(localStorage.getItem(PUSH_PREFS) ?? '{}').finished ?? true }; } catch { return { finished: true }; }
   })());
   const pushTopic = () => {
     let t = ''; try { t = localStorage.getItem(PUSH_TOPIC) ?? ''; } catch {}
@@ -1858,11 +1858,10 @@
       <p class="muted small">The Switchboard phone app gets notifications through an <a href="https://ntfy.sh" target="_blank" rel="noreferrer">ntfy</a> server you run (on one machine is enough).</p>
       <label>Notification server<input placeholder="http://my-server:2586" bind:value={pushServer} onchange={savePushServer} inputmode="url" autocapitalize="off" /></label>
       {#if isPhoneApp()}
-        <label class="toggle"><input type="checkbox" bind:checked={pushPrefs.details} onchange={savePushPrefs} />
-          <span><b>Show details on the lock screen</b><br /><span class="muted small">Off: just which session needs you.</span></span></label>
         <label class="toggle"><input type="checkbox" bind:checked={pushPrefs.finished} onchange={savePushPrefs} />
           <span><b>Tell me when a session finishes</b></span></label>
         <p class="muted small" aria-live="polite">{pushServer ? (pushOn ? 'This phone gets notifications.' : 'Setting up…') : 'Add a server above to get notifications.'}</p>
+        <p class="muted small">What the lock screen shows follows your phone's setting (Notifications → hide sensitive content): hidden, it says only which session needs you.</p>
       {/if}
 
       <h3 class="sub">New sessions</h3>

@@ -129,13 +129,11 @@ class PushService : Service() {
             .setStyle(NotificationCompat.BigTextStyle().bigText(note.optString("body")))
             .setContentIntent(open).setAutoCancel(true)
             .setCategory(if (kind == "finished" || kind == "inbox") NotificationCompat.CATEGORY_MESSAGE else NotificationCompat.CATEGORY_REMINDER)
-        if (cfg.optBoolean("details", false)) b.setVisibility(NotificationCompat.VISIBILITY_PUBLIC)  // even if the phone hides sensitive content
-        else {  // lock screen: who, not what
-            b.setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setPublicVersion(
+        // the lock screen version, used when the phone hides sensitive content (Android's setting, not ours): who, not what
+        b.setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setPublicVersion(
                 NotificationCompat.Builder(this, Push.CH_SESSIONS).setSmallIcon(R.drawable.ic_notify)
                     .setContentTitle(note.optString("title")).setContentText(
                         when (kind) { "tool" -> "Permission needed"; "question" -> "Claude has a question"; "plan" -> "A plan to approve"; else -> "Open Switchboard" }).build())
-        }
         val reply = RemoteInput.Builder("text").setLabel("Reply").build()
         when (kind) {
             "tool" -> { b.addAction(0, "Allow", act("allow")); b.addAction(0, "Deny", act("deny")) }
