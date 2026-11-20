@@ -146,3 +146,27 @@ test.describe('a narrow desktop window', () => {
     await expect(page.getByRole('navigation', { name: 'Sections' })).toHaveCount(0);
   });
 });
+
+test('on a phone, ⋯ → Session settings changes the mode (the desktop keeps these in its status bar, hidden on a phone)', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '+ Connect a machine' }).click();
+  await page.getByLabel('Daemon address').fill(`http://127.0.0.1:${DAEMON_PORT}`);
+  await page.getByLabel('One-time code').fill(execFileSync(daemon, ['--data', DATA, 'pair']).toString().trim());
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await page.getByRole('button', { name: '+ Add' }).click();
+  const dialog = page.getByRole('form', { name: 'Add to Switchboard' });
+  await dialog.getByRole('tab', { name: 'New session' }).click();
+  await dialog.getByLabel(/Folder on/).fill(mkdtempSync(join(tmpdir(), 'sb-opts-')));
+  await dialog.getByLabel('Name in the tree').fill('Phone opts');
+  await dialog.getByRole('button', { name: 'Create session' }).click();
+  await expect(page.getByLabel('Message this session')).toBeVisible();
+  await page.getByRole('button', { name: 'More' }).click();
+  await page.getByRole('menuitem', { name: 'Session settings…' }).click();
+  const sheet = page.getByRole('dialog', { name: 'Session settings' });
+  await expect(sheet.getByLabel('Model')).toBeVisible();
+  await sheet.getByLabel('Permission mode').selectOption('plan');
+  await sheet.getByRole('button', { name: 'Close' }).click();
+  await page.getByRole('button', { name: 'More' }).click();  // reopened: it kept the change
+  await page.getByRole('menuitem', { name: 'Session settings…' }).click();
+  await expect(page.getByRole('dialog', { name: 'Session settings' }).getByLabel('Permission mode')).toHaveValue('plan');
+});

@@ -87,6 +87,7 @@
   let machines = $state<Machine[]>(api.loadMachines());
   let tree = $state<Record<string, { entries: Entry[]; error?: string }>>({});
   let selected = $state<{ machine: Machine; entry: Entry; sub?: api.Sub } | null>(null);
+  let sessOpts = $state(false);  // the phone's sheet with the model / effort / mode / account pickers (the status bar has them on a desktop)
   // Background tasks list (from the slim bar or ⋯): which session it shows, kept current from the tree
   let tasksFor = $state<{ machine: Machine; entry: Entry } | null>(null);
   const tasksEntry = $derived(tasksFor ? tree[tasksFor.machine.url]?.entries.find((x) => x.id === tasksFor!.entry.id) ?? tasksFor.entry : null);
@@ -1273,12 +1274,46 @@
 
 <svelte:window onkeydown={(ev) => { if (ctx && ev.key === 'Escape') ctx = null; else onKey(ev); }} onclick={() => (ctx = null)} onblur={() => (ctx = null)} />
 
+{#snippet pickers()}
+{#if selected}
+      <label class="modepick">account
+        <select aria-label="Account" value={selected.entry.account ?? ''} onchange={(ev) => act((l, id) => { const v = (ev.target as HTMLSelectElement).value; l.setAccount(id, v || null); })}
+          title="Switching closes the live session; your next message resumes it on the new account">
+          <option value="">machine login</option>
+          {#each acctList[selected.machine.url] ?? [] as a (a.name)}<option value={a.name}>{a.name}</option>{/each}
+        </select>
+      </label>
+      <label class="modepick">model
+        <select aria-label="Model" value={selected.entry.model ?? 'default'} onchange={(ev) => act((l, id) => { const v = (ev.target as HTMLSelectElement).value; l.setModel(id, v === 'default' ? null : v); })}>
+          {#each modelList[selected.machine.url]?.length ? modelList[selected.machine.url] : [{ value: 'default', displayName: 'Default' }] as m (m.value)}
+            <option value={m.value} title={m.description ?? ''}>{m.value === 'default' && m.description ? `Default · ${m.description}` : m.displayName}</option>
+          {/each}
+        </select>
+      </label>
+      {@const mdl = (modelList[selected.machine.url] ?? []).find((m) => m.value === (selected!.entry.model ?? 'default'))}
+      {#if mdl?.supportsEffort && mdl.supportedEffortLevels?.length}
+        <label class="modepick">effort
+          <select aria-label="Effort" value={selected.entry.effort ?? ''} title="Applies from the next message (the live session restarts)"
+            onchange={(ev) => act((l, id) => l.setEffort(id, (ev.target as HTMLSelectElement).value || null))}>
+            <option value="">default</option>
+            {#each mdl.supportedEffortLevels as lvl}<option value={lvl}>{lvl}</option>{/each}
+          </select>
+        </label>
+      {/if}
+      <label class="modepick">mode
+        <select aria-label="Permission mode" value={selected.entry.mode ?? 'default'} onchange={(ev) => act((l, id) => l.setMode(id, (ev.target as HTMLSelectElement).value))}>
+          {#each api.MODES as m}<option value={m}>{m === 'default' && dset[selected.machine.url]?.claude_default_mode && dset[selected.machine.url]?.claude_default_mode !== 'default' ? `default (${dset[selected.machine.url]?.claude_default_mode})` : m}</option>{/each}
+        </select>
+      </label>
+{/if}
+{/snippet}
 {#if ctx}
   {@const mm = ctx}
   {#if mm.entry}
     {@const me = mm.entry}
     <div class="ctxmenu" role="menu" aria-label="{me.name} actions" style="left: {mm.x}px; top: {mm.y}px">
       <button role="menuitem" onclick={() => { const m = mm.machine, en = me; ctx = null; tasksFor = { machine: m, entry: en }; }}>Background tasks…{#if bgRunning(me)} <span class="muted small">({bgRunning(me)} running)</span>{/if}</button>
+      {#if phone && selected?.entry.id === me.id}<button role="menuitem" onclick={() => { ctx = null; sessOpts = true; }}>Session settings…</button>{/if}
       <button role="menuitem" onclick={() => startRename('e:' + me.id, me.name)}>Rename</button>
       <button role="menuitem" disabled={!LIVE_STATES.includes(me.state)} title="Ends the Claude process; it stays in the tree and resumes on your next message"
         onclick={() => closeSession(mm.machine, me)}>Close session</button>
@@ -1669,37 +1704,7 @@
   {/if}
   <footer class="status mono" hidden={!!solo?.embed || phone}>
     <span>{machines.length} machine{machines.length === 1 ? '' : 's'}</span>
-    {#if selected}
-      <label class="modepick">account
-        <select aria-label="Account" value={selected.entry.account ?? ''} onchange={(ev) => act((l, id) => { const v = (ev.target as HTMLSelectElement).value; l.setAccount(id, v || null); })}
-          title="Switching closes the live session; your next message resumes it on the new account">
-          <option value="">machine login</option>
-          {#each acctList[selected.machine.url] ?? [] as a (a.name)}<option value={a.name}>{a.name}</option>{/each}
-        </select>
-      </label>
-      <label class="modepick">model
-        <select aria-label="Model" value={selected.entry.model ?? 'default'} onchange={(ev) => act((l, id) => { const v = (ev.target as HTMLSelectElement).value; l.setModel(id, v === 'default' ? null : v); })}>
-          {#each modelList[selected.machine.url]?.length ? modelList[selected.machine.url] : [{ value: 'default', displayName: 'Default' }] as m (m.value)}
-            <option value={m.value} title={m.description ?? ''}>{m.value === 'default' && m.description ? `Default · ${m.description}` : m.displayName}</option>
-          {/each}
-        </select>
-      </label>
-      {@const mdl = (modelList[selected.machine.url] ?? []).find((m) => m.value === (selected!.entry.model ?? 'default'))}
-      {#if mdl?.supportsEffort && mdl.supportedEffortLevels?.length}
-        <label class="modepick">effort
-          <select aria-label="Effort" value={selected.entry.effort ?? ''} title="Applies from the next message (the live session restarts)"
-            onchange={(ev) => act((l, id) => l.setEffort(id, (ev.target as HTMLSelectElement).value || null))}>
-            <option value="">default</option>
-            {#each mdl.supportedEffortLevels as lvl}<option value={lvl}>{lvl}</option>{/each}
-          </select>
-        </label>
-      {/if}
-      <label class="modepick">mode
-        <select aria-label="Permission mode" value={selected.entry.mode ?? 'default'} onchange={(ev) => act((l, id) => l.setMode(id, (ev.target as HTMLSelectElement).value))}>
-          {#each api.MODES as m}<option value={m}>{m === 'default' && dset[selected.machine.url]?.claude_default_mode && dset[selected.machine.url]?.claude_default_mode !== 'default' ? `default (${dset[selected.machine.url]?.claude_default_mode})` : m}</option>{/each}
-        </select>
-      </label>
-    {/if}
+    {@render pickers()}
     <span class="grow"></span>
     {#if selected?.entry.usage}
       {@const u = selected.entry.usage}
@@ -1731,6 +1736,15 @@
   <WatchesView {machines} entries={Object.fromEntries(Object.entries(tree).map(([u, t]) => [u, t.entries]))} onClose={() => (dialog = null)} />
 {/if}
 
+{#if sessOpts && selected}
+  <div class="backdrop" role="presentation" {...backdrop(() => (sessOpts = false))}>
+    <div class="dialog sheet sessopts" role="dialog" aria-label="Session settings">
+      <div class="sheethead"><h2>Session settings</h2><span class="grow"></span><button type="button" class="tiny" aria-label="Close" onclick={() => (sessOpts = false)}>×</button></div>
+      <p class="muted small">{selected.entry.name}: changes apply from your next message.</p>
+      <div class="sessgrid">{@render pickers()}</div>
+    </div>
+  </div>
+{/if}
 {#if tasksFor && tasksEntry}
   {@const ts = bgTasks(tasksEntry)}
   {@const running = ts.filter((t) => t.status === 'running')}
@@ -2061,6 +2075,9 @@
   .status[hidden] { display: none; }
 
   /* ---- phone: one screen at a time (sessions | a chat | the inbox), chat as text messages ---- */
+  .sessopts .sessgrid { display: grid; gap: 12px; margin-top: 8px; }
+  .sessopts .modepick { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--sub0); }
+  .sessopts .modepick select { font-size: 16px; padding: 10px; width: 100%; }
   .app.phone .chips .chip:not(.dashed), .app.phone .sidebtn, .app.phone .tabs, .app.phone .divider, .app.phone .splitpane { display: none; }
   .app.phone .titlebar { padding: 8px 12px; gap: 8px; }
   .app.phone.inchat .titlebar { display: none; }
