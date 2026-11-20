@@ -142,7 +142,7 @@
   async function installUpdate() {
     if (!update) return;
     updBusy = 0;
-    try { await update.install((p) => (updBusy = p)); }
+    try { await update.install((p) => (updBusy = p)); if (isPhoneApp()) updBusy = null; }  // the phone: the browser downloads it
     catch (e) { updBusy = null; updMsg = `Update failed: ${(e as Error).message ?? e}`; }
   }
 
@@ -1300,10 +1300,10 @@
     <div class="updbar" role="status">
       <span><b>Switchboard {update.version}</b> is available{version ? ` (you have ${version})` : ''}.</span>
       {#if update.notes}<button class="link" onclick={() => (updNotes = !updNotes)}>What's new</button>{/if}
-      {#if liveHere && svc?.embedded !== false}<span class="muted small">{liveHere} live session{liveHere === 1 ? '' : 's'} will stop and resume on your next message.</span>{/if}
+      {#if liveHere && svc?.embedded !== false && !isPhoneApp()}<span class="muted small">{liveHere} live session{liveHere === 1 ? '' : 's'} will stop and resume on your next message.</span>{/if}
       <span class="grow"></span>
       {#if updBusy !== null}<span class="muted small">Downloading… {updBusy}%</span>
-      {:else}<button class="btn primary small" onclick={installUpdate}>Restart to update</button>
+      {:else}<button class="btn primary small" onclick={installUpdate}>{isPhoneApp() ? 'Download and install' : 'Restart to update'}</button>
         <button class="tiny" aria-label="Dismiss update" onclick={() => (update = null)}>Later</button>{/if}
     </div>
     {#if updNotes}<div class="updnotes md">{@html md(update.notes)}</div>{/if}
