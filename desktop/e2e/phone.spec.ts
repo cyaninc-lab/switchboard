@@ -61,6 +61,16 @@ test('phone layout: sessions → chat (as text messages) → back; inbox from th
   await page.getByRole('button', { name: 'Send' }).click();
   const log = page.getByRole('log', { name: 'Session history' });
   await expect(log).toContainText('Done: touch up the notes please');
+  // while Claude works the box's hint and the interrupt button stay small enough for a phone
+  await input.fill('slow one please');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await expect(input).toHaveAttribute('placeholder', 'Working… sends after');
+  const stop = page.getByRole('button', { name: 'Interrupt' });
+  await expect(stop).toHaveText('■');
+  const box = (await page.locator('form.inputbar').boundingBox())!;
+  expect(box.width).toBeLessThanOrEqual(390);
+  await stop.click();
+  await expect(input).toHaveAttribute('placeholder', 'Message');
   // text messages: you on the right, Claude on the left, steps as cards on the left
   const lb = (await log.boundingBox())!;
   const mine = (await log.locator('.you').last().boundingBox())!, theirs = (await log.locator('.reply').last().boundingBox())!;
