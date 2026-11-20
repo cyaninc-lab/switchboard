@@ -2,7 +2,7 @@
   import * as api from '$lib/api';
   import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell, openExternal, openLocal, appVersion, checkForUpdate, notify,
     soloOf, popOut, takeHandoff, focusWindow, onSoloClosing, onSoloEvents, soloOpened, closeThisWindow, setOnTop, useParentShell, canOpenLocally,
-    isPhoneApp, isDesktopApp, pairLink, scanPairCode } from '$lib/shell';
+    isPhoneApp, isDesktopApp, pairLink, scanPairCode, setPhonePush, takeNotificationOpen } from '$lib/shell';
   import qrcode from 'qrcode-generator';
   import { backdrop } from '$lib/backdrop';
   import { theme, THEMES, applyTheme, fonts, UI_FONTS, MONO_FONTS, CHAT_FONTS, SIZES, applyFonts } from '$lib/themes.svelte';
@@ -221,6 +221,53 @@
     netBusy = true; netError = '';
     try { net = await api.setNetwork(localMachine, !net.listen_tailscale); } catch (e) { netError = (e as Error).message; }
     netBusy = false;
+  }
+  // ---- phone notifications ----
+  let pushServer = $state('');
+  let pushOn = $state(false);
+  const PUSH_PREFS = 'switchboard.push.prefs', PUSH_TOPIC = 'switchboard.push.topic';
+  let pushPrefs = $state<{ details: boolean; finished: boolean }>((() => {
+    try { return { details: false, finished: true, ...JSON.parse(localStorage.getItem(PUSH_PREFS) ?? '{}') }; } catch { return { details: false, finished: true }; }
+  })());
+  const pushTopic = () => {
+    let t = ''; try { t = localStorage.getItem(PUSH_TOPIC) ?? ''; } catch {}
+    if (!t) { t = 'sb-' + api.uid().replace(/-/g, ''); try { localStorage.setItem(PUSH_TOPIC, t); } catch {} }  // unguessable: it's the only lock
+    return t;
+  };
+  // the server from whichever machine has one; in the phone app, subscribe this phone on every machine and hand the
+  // listener its config. Runs at start, after pairing, and when a setting changes.
+  async function syncPush() {
+    const infos = await Promise.all(machines.map((m) => api.push(m).catch(() => null)));
+    pushServer = infos.find((i) => i?.server)?.server ?? pushServer;
+    if (!isPhoneApp() || !pushServer) return;
+    const topic = pushTopic(), url = `${pushServer.replace(/\/$/, '')}/${topic}`;
+    const ok = await Promise.all(machines.map((m, i) => infos[i] ? api.setPush(m, { subscribe: url, machine_url: m.url }).then(() => m, () => null) : null));
+    await setPhonePush({ server: pushServer, topic, machines: ok.filter((m): m is Machine => !!m).map((m) => $state.snapshot(m)), ...pushPrefs })
+      .then(() => (pushOn = true), (e) => say(`Notifications: ${(e as Error).message ?? e}`));
+  }
+  async function savePushServer() {
+    const s = pushServer.trim().replace(/\/$/, '');
+    if (s && !/^https?:\/\//.test(s)) return say('The notification server address starts with http:// or https://');
+    await Promise.all(machines.map((m) => api.setPush(m, { server: s }).catch(() => null)));
+    await syncPush();
+  }
+  function savePushPrefs() {
+    try { localStorage.setItem(PUSH_PREFS, JSON.stringify(pushPrefs)); } catch {}
+    syncPush();
+  }
+  // a tapped notification: open its session (once the tree has it: right after start it may still be loading)
+  let fromNotification = $state<{ machine: string; entry: string } | null>(null);
+  function openNotified() {
+    const o = fromNotification, m = o && machines.find((x) => x.url.replace(/\/$/, '') === o.machine.replace(/\/$/, ''));
+    const en = m && tree[m.url]?.entries.find((x) => x.id === o!.entry);
+    if (m && en) { fromNotification = null; open(m, en, 'keep'); }
+  }
+  async function takeNotified() { fromNotification = (await takeNotificationOpen().catch(() => null)) ?? fromNotification; openNotified(); }
+  setTimeout(syncPush, 1500);
+  if (isPhoneApp()) {
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') takeNotified(); });
+    takeNotified();
+    $effect(() => { if (fromNotification && Object.keys(tree).length) openNotified(); });
   }
   const qrSvg = (text: string) => { const q = qrcode(0, 'M'); q.addData(text); q.make(); return q.createSvgTag({ cellSize: 4, margin: 2, scalable: true }); };
   async function newCode() {
@@ -1124,6 +1171,7 @@
     try {
       const m = await api.pair(cUrl.trim(), cCode.trim(), 'Switchboard desktop');
       machines = [...machines.filter((x) => x.url !== m.url), m];
+      syncPush();  // a new machine: subscribe this phone there too
       api.saveMachines(machines);
       dialog = null; cCode = '';
       refresh();
@@ -1801,6 +1849,17 @@
         </p>
       {/if}
       {#if svcError}<p class="error">{svcError}</p>{/if}
+
+      <h3 class="sub">Phone notifications</h3>
+      <p class="muted small">The Switchboard phone app gets notifications through an <a href="https://ntfy.sh" target="_blank" rel="noreferrer">ntfy</a> server you run (on one machine is enough).</p>
+      <label>Notification server<input placeholder="http://my-server:2586" bind:value={pushServer} onchange={savePushServer} inputmode="url" autocapitalize="off" /></label>
+      {#if isPhoneApp()}
+        <label class="toggle"><input type="checkbox" bind:checked={pushPrefs.details} onchange={savePushPrefs} />
+          <span><b>Show details on the lock screen</b><br /><span class="muted small">Off: just which session needs you.</span></span></label>
+        <label class="toggle"><input type="checkbox" bind:checked={pushPrefs.finished} onchange={savePushPrefs} />
+          <span><b>Tell me when a session finishes</b></span></label>
+        <p class="muted small" aria-live="polite">{pushServer ? (pushOn ? 'This phone gets notifications.' : 'Setting up…') : 'Add a server above to get notifications.'}</p>
+      {/if}
 
       <h3 class="sub">New sessions</h3>
       <p class="muted small">What sessions start with when you add or create them from now on (sessions already in the list keep theirs).</p>

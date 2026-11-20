@@ -1,0 +1,175 @@
+package org.cyaninc.switchboard
+
+// Phone notifications without Google: listens to the user's ntfy topic (set up by the web UI through push.json) and
+// shows what the machines' daemons publish there: a session needs you (Allow / Deny, or a reply), a session finished,
+// a watch fired. Android requires a visible notification for a service that stays connected; it sits in a silent channel.
+import android.app.*
+import android.content.*
+import android.os.*
+import androidx.core.app.NotificationCompat
+import androidx.core.app.RemoteInput
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
+import org.json.JSONObject
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import kotlin.concurrent.thread
+
+object Push {
+    const val CH_SESSIONS = "sessions"
+    const val CH_CONNECTION = "connection"
+    // written by the web UI (lib.rs push_config)
+    fun config(ctx: Context): JSONObject? = File(ctx.dataDir, "push.json").takeIf { it.exists() }?.let { JSONObject(it.readText()) }
+    fun start(ctx: Context) {
+        if (config(ctx)?.optString("server").isNullOrEmpty()) return
+        ctx.startForegroundService(Intent(ctx, PushService::class.java))
+    }
+    fun channels(ctx: Context) {
+        val nm = ctx.getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(NotificationChannel(CH_SESSIONS, "Sessions", NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "A session needs you, finished, or a watch fired" })
+        nm.createNotificationChannel(NotificationChannel(CH_CONNECTION, "Connection", NotificationManager.IMPORTANCE_MIN).apply {
+            description = "Shown while Switchboard listens for notifications (Android requires it); safe to hide" })
+    }
+    // the daemon this notice came from, with the token the app paired with
+    fun machine(ctx: Context, url: String): JSONObject? {
+        val ms = config(ctx)?.optJSONArray("machines") ?: return null
+        return (0 until ms.length()).map { ms.getJSONObject(it) }.firstOrNull { it.optString("url").trimEnd('/') == url.trimEnd('/') }
+    }
+    fun post(ctx: Context, machineUrl: String, path: String, body: JSONObject): Boolean {
+        val m = machine(ctx, machineUrl) ?: return false
+        return try {
+            val c = URL(m.getString("url").trimEnd('/') + path).openConnection() as HttpURLConnection
+            c.requestMethod = "POST"; c.doOutput = true; c.connectTimeout = 10000; c.readTimeout = 15000
+            c.setRequestProperty("Authorization", "Bearer " + m.getString("token"))
+            c.setRequestProperty("Content-Type", "application/json")
+            c.outputStream.use { it.write(body.toString().toByteArray()) }
+            val ok = c.responseCode in 200..299; c.disconnect(); ok
+        } catch (e: Exception) { false }
+    }
+}
+
+class PushService : Service() {
+    @Volatile private var running = true
+    private var worker: Thread? = null
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Push.channels(this)
+        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val n = NotificationCompat.Builder(this, Push.CH_CONNECTION).setSmallIcon(R.drawable.ic_notify)
+            .setContentTitle("Listening for your sessions").setContentIntent(open).setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_MIN).build()
+        if (Build.VERSION.SDK_INT >= 34) startForeground(1, n, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING)
+        else startForeground(1, n)
+        if (worker?.isAlive != true) worker = thread(name = "push") { listen() }
+        else worker?.interrupt()  // the config changed: reconnect with it
+        return START_STICKY
+    }
+
+    override fun onDestroy() { running = false; worker?.interrupt(); super.onDestroy() }
+
+    private fun listen() {
+        val prefs = getSharedPreferences("push", MODE_PRIVATE)
+        var wait = 2000L
+        while (running) {
+            val cfg = Push.config(this)
+            val server = cfg?.optString("server").orEmpty(); val topic = cfg?.optString("topic").orEmpty()
+            if (server.isEmpty() || topic.isEmpty()) { stopSelf(); return }
+            try {
+                val since = prefs.getString("last", null) ?: "all"
+                val c = URL("${server.trimEnd('/')}/$topic/json?since=$since").openConnection() as HttpURLConnection
+                c.connectTimeout = 15000; c.readTimeout = 90000  // ntfy sends a keepalive every 45s
+                c.inputStream.bufferedReader().useLines { lines ->
+                    wait = 2000L
+                    for (line in lines) {
+                        if (!running) break
+                        val ev = JSONObject(line)
+                        if (ev.optString("event") != "message") continue
+                        prefs.edit().putString("last", ev.getString("id")).apply()
+                        try { show(JSONObject(ev.getString("message")), cfg!!) } catch (_: Exception) {}
+                    }
+                }
+            } catch (_: InterruptedException) {
+            } catch (_: Exception) {
+                try { Thread.sleep(wait) } catch (_: InterruptedException) {}
+                wait = minOf(wait * 2, 60000L)
+            }
+        }
+    }
+
+    private fun inForeground(): Boolean {
+        var fg = false
+        val done = java.util.concurrent.CountDownLatch(1)
+        Handler(Looper.getMainLooper()).post { fg = ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED); done.countDown() }
+        done.await(); return fg
+    }
+
+    private fun show(note: JSONObject, cfg: JSONObject) {
+        val kind = note.optString("kind")
+        if (kind == "finished" && !cfg.optBoolean("finished", true)) return
+        val id = (note.optString("machine") + note.optString("entry") + note.optString("request_id")).hashCode()
+        val tag = note.optString("machine") + "|" + note.optString("entry")
+        if (kind == "resolved") { getSystemService(NotificationManager::class.java).cancel(tag, id); return }  // answered elsewhere
+        if (inForeground()) return  // the app is open: it shows this itself
+        val open = PendingIntent.getActivity(this, id, Intent(this, MainActivity::class.java)
+            .putExtra("machine", note.optString("machine")).putExtra("entry", note.optString("entry"))
+            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        fun act(action: String, extra: Bundle.() -> Unit = {}) = PendingIntent.getBroadcast(this, (id.toString() + action).hashCode(),
+            Intent(this, ActionReceiver::class.java).setAction(action).putExtras(Bundle().apply {
+                putString("note", note.toString()); putInt("id", id); extra() }),
+            PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val b = NotificationCompat.Builder(this, Push.CH_SESSIONS).setSmallIcon(R.drawable.ic_notify)
+            .setContentTitle(note.optString("title")).setContentText(note.optString("body"))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(note.optString("body")))
+            .setContentIntent(open).setAutoCancel(true)
+            .setCategory(if (kind == "finished" || kind == "inbox") NotificationCompat.CATEGORY_MESSAGE else NotificationCompat.CATEGORY_REMINDER)
+        if (!cfg.optBoolean("details", false)) {  // lock screen: who, not what
+            b.setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setPublicVersion(
+                NotificationCompat.Builder(this, Push.CH_SESSIONS).setSmallIcon(R.drawable.ic_notify)
+                    .setContentTitle(note.optString("title")).setContentText(
+                        when (kind) { "tool" -> "Permission needed"; "question" -> "Claude has a question"; "plan" -> "A plan to approve"; else -> "Open Switchboard" }).build())
+        }
+        val reply = RemoteInput.Builder("text").setLabel("Reply").build()
+        when (kind) {
+            "tool" -> { b.addAction(0, "Allow", act("allow")); b.addAction(0, "Deny", act("deny")) }
+            "question", "finished" -> b.addAction(NotificationCompat.Action.Builder(0, "Reply", act("reply")).addRemoteInput(reply).build())
+        }
+        getSystemService(NotificationManager::class.java).notify(tag, id, b.build())
+    }
+}
+
+class ActionReceiver : BroadcastReceiver() {
+    override fun onReceive(ctx: Context, intent: Intent) {
+        val note = JSONObject(intent.getStringExtra("note") ?: return)
+        val id = intent.getIntExtra("id", 0)
+        val tag = note.optString("machine") + "|" + note.optString("entry")
+        val text = RemoteInput.getResultsFromIntent(intent)?.getCharSequence("text")?.toString()
+        val pending = goAsync()
+        thread {
+            val entry = note.optString("entry"); val machine = note.optString("machine")
+            val ok = when (intent.action) {
+                "allow", "deny" -> Push.post(ctx, machine, "/v1/entries/$entry/answer",
+                    JSONObject().put("request_id", note.optString("request_id")).put("allow", intent.action == "allow"))
+                "reply" -> if (note.optString("kind") == "question")
+                    Push.post(ctx, machine, "/v1/entries/$entry/answer", JSONObject().put("request_id", note.optString("request_id"))
+                        .put("allow", true).put("answers", JSONObject().put(note.optString("question"), text ?: "")))
+                    else Push.post(ctx, machine, "/v1/entries/$entry/send", JSONObject().put("text", text ?: ""))
+                else -> false
+            }
+            val nm = ctx.getSystemService(NotificationManager::class.java)
+            if (ok) nm.cancel(tag, id)
+            else nm.notify(tag, id, NotificationCompat.Builder(ctx, Push.CH_SESSIONS).setSmallIcon(R.drawable.ic_notify)
+                .setContentTitle(note.optString("title")).setContentText("Couldn't reach ${note.optString("name")}'s machine. Open Switchboard.")
+                .setContentIntent(PendingIntent.getActivity(ctx, id, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
+                .setAutoCancel(true).build())
+            pending.finish()
+        }
+    }
+}
+
+class BootReceiver : BroadcastReceiver() {
+    override fun onReceive(ctx: Context, intent: Intent) { if (intent.action == Intent.ACTION_BOOT_COMPLETED) Push.start(ctx) }
+}

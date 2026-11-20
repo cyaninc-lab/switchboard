@@ -113,6 +113,11 @@ export type NewSessionDefaults = { mode?: string; model?: string; effort?: strin
 export type DaemonSettings = { idle_close_minutes: number; project_order?: string[]; new_session?: NewSessionDefaults; claude_default_mode?: string };
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export const settings = (m: Machine) => call<DaemonSettings>(m, '/v1/settings');
+// phone notifications: the ntfy server (set on one machine is enough) and the phones subscribed to this daemon
+export type PushInfo = { server: string; subscribers: number };
+export const push = (m: Machine) => call<PushInfo>(m, '/v1/push');
+export const setPush = (m: Machine, b: { server?: string; subscribe?: string; machine_url?: string; unsubscribe?: string }) =>
+  call<PushInfo>(m, '/v1/push', { method: 'PUT', body: JSON.stringify(b) });
 export const setSettings = (m: Machine, s: Partial<DaemonSettings>) => call<DaemonSettings>(m, '/v1/settings', { method: 'PUT', body: JSON.stringify(s) });
 export const setNetwork = (m: Machine, on: boolean) => call<Network>(m, '/v1/network', { method: 'PUT', body: JSON.stringify({ listen_tailscale: on }) });
 export const pairCode = (m: Machine) => call<{ code: string; expires_in: number }>(m, '/v1/pair_code', { method: 'POST' });
