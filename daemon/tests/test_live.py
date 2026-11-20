@@ -256,7 +256,8 @@ def test_accounts(tmp_path, monkeypatch):
         _, seen = await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
         assert any("Done: as work (token account)" in str(m) for m in seen)
         runner = client.server.app[appmod.RUNNER]
-        assert runner.live[eid].client.options.env == {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat-secret"}
+        env = runner.live[eid].client.options.env  # the account's token, and claude.ai Artifacts on (off by default in SDK sessions)
+        assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat-secret" and env["CLAUDE_CODE_ARTIFACT"] == "1"
         # removing the account falls the entry back to the machine login
         assert (await client.delete("/v1/accounts/work", headers=h)).status == 204
         assert store.entry(eid)["account"] is None and eid not in runner.live

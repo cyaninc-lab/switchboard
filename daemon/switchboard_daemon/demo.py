@@ -351,6 +351,10 @@ class ClaudeSDKClient:
             yield AssistantMessage([ToolUseBlock("e1", "Edit", {"file_path": "notes.md", "old_string": "draft", "new_string": "final"})])
             yield UserMessage([ToolResultBlock("e1", "The file notes.md has been updated successfully.", False)], tool_use_result={"structuredPatch": [
                 {"oldStart": 41, "oldLines": 3, "newStart": 41, "newLines": 3, "lines": [" ## Status", "-draft", "+final", " (see below)"]}]})
+        if "make an artifact" in text.lower():  # a claude.ai Artifact published, then updated (results as Claude Code 2.1.328 words them)
+            for n, tid in ((1, "a1"), (2, "a2")):
+                yield AssistantMessage([ToolUseBlock(tid, "Artifact", {"file_path": "/tmp/feed-report.html", "title": "Feed report", "icon": "chart"})])
+                yield UserMessage([ToolResultBlock(tid, f"Published /tmp/feed-report.html at https://claude.ai/artifact/Demo123abc (Version {n}, version id 17951-{n}) Icon: \"chart\".\n\nLive subscription: arming in the background", False)])
         if "show a link" in text.lower():  # a markdown link in the reply
             yield AssistantMessage([TextBlock("See [the docs](https://example.com/docs) for details.")])
         if "ask me" in text.lower():  # a clarifying question (AskUserQuestion)
