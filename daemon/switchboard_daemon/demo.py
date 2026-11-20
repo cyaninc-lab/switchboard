@@ -324,6 +324,11 @@ class ClaudeSDKClient:
             r = await tools["message_session"](args)
             yield UserMessage([ToolResultBlock("tm1", r["content"][0]["text"], bool(r.get("is_error")))])
             yield AssistantMessage([TextBlock(r["content"][0]["text"])])
+        if text == "call me":  # call_user: the phone rings (a push notice of kind "call")
+            args = {"message": "Hi! The migration's done. Two tests fail though: skip them, or fix them first?"}
+            yield AssistantMessage([ToolUseBlock("tc1", "mcp__switchboard__call_user", args)])
+            r = await tools["call_user"](args)
+            yield UserMessage([ToolResultBlock("tc1", r["content"][0]["text"], bool(r.get("is_error")))])
         if text == "list sessions":
             yield AssistantMessage([TextBlock((await tools["sessions"]({}))["content"][0]["text"])])
         for word in "Looking into it.".split(" "):

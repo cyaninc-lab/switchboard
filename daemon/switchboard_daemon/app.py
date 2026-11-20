@@ -456,7 +456,8 @@ async def set_settings(request):
 
 async def get_push(request):
     st = request.app[STORE]
-    return web.json_response({"server": st.setting(push.SERVER, ""), "subscribers": len(push.subscribers(st))})
+    return web.json_response({"server": st.setting(push.SERVER, ""), "subscribers": len(push.subscribers(st)),
+                              "voice": st.setting(push.VOICE, ""), "listen": st.setting(push.LISTEN, "")})
 
 
 async def set_push(request):
@@ -469,6 +470,11 @@ async def set_push(request):
         if body["server"] and not ok_url(body["server"]):
             raise web.HTTPBadRequest(text=json.dumps({"code": "bad_push_server"}), content_type="application/json")
         st.set_setting(push.SERVER, (body["server"] or "").rstrip("/"))
+    for k, key in (("voice", push.VOICE), ("listen", push.LISTEN)):  # calls: where the phone gets a voice and is understood
+        if k in body:
+            if body[k] and not ok_url(body[k]):
+                raise web.HTTPBadRequest(text=json.dumps({"code": f"bad_{k}_server"}), content_type="application/json")
+            st.set_setting(key, (body[k] or "").rstrip("/"))
     if "subscribe" in body or "unsubscribe" in body:
         u = body.get("subscribe") or body.get("unsubscribe")
         if not ok_url(u):
@@ -499,8 +505,16 @@ async def send_message(request):
         raise web.HTTPBadRequest(text=json.dumps({"code": "bad_send"}), content_type="application/json")
     if entry["session_id"] in await _off(open_in_terminal) - request.app[RUNNER].held_sessions():
         raise web.HTTPConflict(text=json.dumps({"code": "open_in_terminal"}), content_type="application/json")
-    await request.app[RUNNER].send(entry, b["text"])
-    return web.json_response({"sent": True})
+    if not b.get("wait"):
+        await request.app[RUNNER].send(entry, b["text"])
+        return web.json_response({"sent": True})
+    # a phone call: hold the request until Claude's turn ends, and answer with what it said (read aloud on the phone)
+    fut = asyncio.get_running_loop().create_future()
+    await request.app[RUNNER].send(entry, b["text"], origin={"reply": fut, "via": "call"})
+    try:
+        return web.json_response({"sent": True, "reply": await asyncio.wait_for(fut, 600)})
+    except asyncio.TimeoutError:
+        return web.json_response({"sent": True, "reply": None})
 
 
 async def pair_code(request):

@@ -23,7 +23,10 @@ def test_push_permission_answer_finish_and_reply(tmp_path, monkeypatch):
         assert bad.status == 400
         r = await client.put("/v1/push", headers=h, json={"server": "http://yagoo:2586/", "subscribe": str(fake.make_url("/sb-1")),
                                                           "machine_url": "http://fantome:7878/"})
-        assert await r.json() == {"server": "http://yagoo:2586", "subscribers": 1}
+        assert await r.json() == {"server": "http://yagoo:2586", "subscribers": 1, "voice": "", "listen": ""}
+        r = await client.put("/v1/push", headers=h, json={"voice": "http://fantome:8100/", "listen": "http://fantome:8102"})
+        assert (await r.json())["voice"] == "http://fantome:8100" and (await r.json())["listen"] == "http://fantome:8102"
+        assert (await client.put("/v1/push", headers=h, json={"voice": "ftp://x"})).status == 400
 
         # a permission prompt reaches the phone, with what it needs to answer
         await ws.send_json({"type": "send", "entry": e["id"], "text": "run the tests"})
@@ -49,6 +52,18 @@ def test_push_permission_answer_finish_and_reply(tmp_path, monkeypatch):
         assert r.status == 200
         m, _ = await until(ws, lambda m: m["type"] == "message" and "thanks" in json.dumps(m))
         assert (await client.post(f"/v1/entries/{e['id']}/send", headers=h, json={"text": " "})).status == 400
+
+        # a call: the phone rings with what to say; what the user says back waits for Claude's spoken reply
+        await ws.send_json({"type": "send", "entry": e["id"], "text": "call me"})
+        note = await asyncio.wait_for(got.get(), 5)
+        while note["kind"] != "call":
+            note = await asyncio.wait_for(got.get(), 5)
+        assert note["title"].endswith("is calling") and note["body"].startswith("Hi!") and note["entry"] == e["id"]
+        await until(ws, lambda m: m["type"] == "state" and m.get("state") == "ready")
+        r = await client.post(f"/v1/entries/{e['id']}/send", headers=h, json={"text": "fix them first", "wait": True})
+        assert "fix them first" in (await r.json())["reply"]  # the demo echoes: "Done: <what you said>"
+        await ws.send_json({"type": "send", "entry": e["id"], "text": "call me"})  # again straight away: the guardrail says no
+        await until(ws, lambda m: m["type"] == "message" and "tool_result" in json.dumps(m) and "minutes ago" in json.dumps(m))
 
         # unsubscribed: nothing more is posted; and no token, no answering
         await client.put("/v1/push", headers=h, json={"unsubscribe": str(fake.make_url("/sb-1"))})
