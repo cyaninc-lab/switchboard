@@ -10,11 +10,9 @@
   // links (in Claude's replies, the inbox, questions) never navigate this window: web and mail links open in the
   // default browser / mail app, anything else is ignored. ponytail: until sessions get windows or tabs of their own
   // ---- background tasks: shells and other non-agent tasks (background agents already show in the tree) ----
-  // finished ones drop off after a while (or with Clear); running ones always show
-  const BG_KEEP = 10 * 60_000;
-  let bgCleared = $state<Record<string, boolean>>({});
-  const bgTasks = (e: Entry) => (e.tasks ?? []).filter((t) => !/agent/i.test(t.type ?? '')
-    && (t.status === 'running' || (!bgCleared[t.id] && clock - (t.ended ?? clock) < BG_KEEP)));
+  // the slim bar shows only running ones; it (and ⋯ → Background tasks) opens the list of running and finished
+  const bgTasks = (e: Entry) => (e.tasks ?? []).filter((t) => !/agent/i.test(t.type ?? ''));
+
   const bgRunning = (e: Entry) => bgTasks(e).filter((t) => t.status === 'running').length;
   let bgOpen = $state(false);
   let clock = $state(Date.now());
@@ -87,6 +85,9 @@
   let machines = $state<Machine[]>(api.loadMachines());
   let tree = $state<Record<string, { entries: Entry[]; error?: string }>>({});
   let selected = $state<{ machine: Machine; entry: Entry; sub?: api.Sub } | null>(null);
+  // Background tasks list (from the slim bar or ⋯): which session it shows, kept current from the tree
+  let tasksFor = $state<{ machine: Machine; entry: Entry } | null>(null);
+  const tasksEntry = $derived(tasksFor ? tree[tasksFor.machine.url]?.entries.find((x) => x.id === tasksFor!.entry.id) ?? tasksFor.entry : null);
   let messages = $state<HistoryMessage[]>([]);
   let loadingHistory = $state(false);
   let openSeq = 0;
@@ -1195,6 +1196,7 @@
   {#if mm.entry}
     {@const me = mm.entry}
     <div class="ctxmenu" role="menu" aria-label="{me.name} actions" style="left: {mm.x}px; top: {mm.y}px">
+      <button role="menuitem" onclick={() => { const m = mm.machine, en = me; ctx = null; tasksFor = { machine: m, entry: en }; }}>Background tasks…{#if bgRunning(me)} <span class="muted small">({bgRunning(me)} running)</span>{/if}</button>
       <button role="menuitem" onclick={() => startRename('e:' + me.id, me.name)}>Rename</button>
       <button role="menuitem" disabled={!LIVE_STATES.includes(me.state)} title="Ends the Claude process; it stays in the tree and resumes on your next message"
         onclick={() => closeSession(mm.machine, me)}>Close session</button>
@@ -1378,6 +1380,7 @@
           <span class="grow"></span>
           <button class="tiny" class:on={termFor === selected.entry.id} onclick={() => { termFor = termFor === selected!.entry.id ? null : selected!.entry.id; if (!termFor) open(selected!.machine, selected!.entry); }}
             title="Switch between the chat view and the real claude terminal">{termFor === selected.entry.id ? 'Chat' : 'Terminal'}</button>
+          <button class="tiny hstop" aria-label="More" title="More: background tasks, rename, split…" onclick={(ev) => { const r = (ev.currentTarget as HTMLElement).getBoundingClientRect(); ev.stopPropagation(); ctx = { x: r.right - 210, y: r.bottom + 4, machine: selected!.machine, entry: selected!.entry }; }}>⋯</button>
           {#if LIVE_STATES.includes(selected.entry.state)}<button class="tiny hstop" onclick={() => act((l, id) => l.stop(id))} title="Close the live session; it resumes on your next message">Stop</button>{/if}
           {#if solo && !solo.embed}
             <button class="tiny" class:on={onTop} aria-pressed={onTop} onclick={() => { onTop = !onTop; setOnTop(onTop).catch(() => {}); }} title="Keep this window above other windows">Keep on top</button>
@@ -1477,28 +1480,11 @@
           </div>
         {/if}
         {#if queued[selected.entry.id]}<div class="queued muted small" aria-live="polite">{queued[selected.entry.id]} queued: sends when Claude finishes (Esc puts {queued[selected.entry.id] === 1 ? 'it' : 'them'} back here)</div>{/if}
-        {#if !selected.sub && bgTasks(selected.entry).length}
-          {@const ts = bgTasks(selected.entry)}
-          {@const run = ts.filter((t) => t.status === 'running').length}
+        {#if !selected.sub && bgRunning(selected.entry)}
           <div class="bgbar" role="region" aria-label="Background tasks">
-            <button type="button" class="bgtop" aria-expanded={bgOpen} onclick={() => (bgOpen = !bgOpen)}>
-              {#if run}<span class="bgspin" aria-hidden="true"></span><b>{run} running</b>{:else}<b class="muted">Background</b>{/if}
-              {#if ts.length - run}<span class="muted"> · {ts.length - run} finished</span>{/if}
-              <span class="grow"></span><span class="muted">{bgOpen ? '▾' : '▸'}</span>
+            <button type="button" class="bgtop" onclick={() => (tasksFor = { machine: selected!.machine, entry: selected!.entry })}>
+              <span class="bgspin" aria-hidden="true"></span><b>{bgRunning(selected.entry)} running</b><span class="grow"></span><span class="muted">›</span>
             </button>
-            {#if ts.length - run}<button type="button" class="tiny bgclear" title="Hide the finished ones" onclick={() => { for (const t of ts) if (t.status !== 'running') bgCleared[t.id] = true; }}>Clear</button>{/if}
-            {#if bgOpen}
-              {#each ts as t (t.id)}
-                <div class="bgrow">
-                  {#if t.status === 'running'}<span class="bgspin" aria-label="running"></span>
-                  {:else}<span class={t.status === 'completed' ? 'ok' : 'bad'} aria-label={t.status}>{t.status === 'completed' ? '✓' : t.status === 'stopped' ? '■' : '✗'}</span>{/if}
-                  <span class="bgdesc"><span class="mono">{t.description ?? t.id}</span>
-                    <span class="muted"> · {t.status === 'running' ? span(clock - t.started) : `${t.status} after ${span((t.ended ?? clock) - t.started)}`}{t.summary ? ` · ${t.summary}` : ''}</span></span>
-                  {#if t.output_file}<code class="path" title="Open its output">{t.output_file}</code>{/if}
-                  {#if t.status === 'running'}<button type="button" class="tiny stop" onclick={() => { try { live()!.stopTask(selected!.entry.id, t.id); } catch (err) { liveErr = (err as Error).message; } }}>Stop</button>{/if}
-                </div>
-              {/each}
-            {/if}
           </div>
         {/if}
         {#if atQ !== null && atList.length}
@@ -1651,6 +1637,34 @@
 
 {#if dialog === 'watches'}
   <WatchesView {machines} entries={Object.fromEntries(Object.entries(tree).map(([u, t]) => [u, t.entries]))} onClose={() => (dialog = null)} />
+{/if}
+
+{#if tasksFor && tasksEntry}
+  {@const ts = bgTasks(tasksEntry)}
+  {@const running = ts.filter((t) => t.status === 'running')}
+  {@const done = ts.filter((t) => t.status !== 'running').reverse()}
+  <div class="backdrop" role="presentation" {...backdrop(() => (tasksFor = null))}>
+    <div class="dialog tasksheet" class:sheet={phone} role="dialog" aria-label="Background tasks">
+      <div class="sheethead"><h2>Background tasks</h2><span class="grow"></span><button type="button" class="tiny" aria-label="Close" onclick={() => (tasksFor = null)}>×</button></div>
+      <p class="muted small">{tasksEntry.name}: commands Claude runs in the background. Background agents show in the session list.</p>
+      {#snippet taskRow(t: api.Task)}
+        <li class="taskrow">
+          {#if t.status === 'running'}<span class="bgspin" aria-label="running"></span>
+          {:else}<span class={t.status === 'completed' ? 'ok' : 'bad'} aria-label={t.status}>{t.status === 'completed' ? '✓' : t.status === 'stopped' ? '■' : '✗'}</span>{/if}
+          <span class="taskinfo"><span class="mono">{t.description ?? t.id}</span>
+            <span class="muted small">{t.status === 'running' ? `running ${span(clock - t.started)}` : `${t.status} after ${span((t.ended ?? clock) - t.started)}`}{t.summary ? ` · ${t.summary}` : ''}</span>
+            {#if t.output_file}<code class="path small" title="Open its output">{t.output_file}</code>{/if}</span>
+          {#if t.status === 'running'}<button type="button" class="tiny stop" onclick={() => { try { lives.get(tasksFor!.machine.url)!.stopTask(tasksEntry!.id, t.id); } catch (err) { liveErr = (err as Error).message; } }}>Stop</button>{/if}
+        </li>
+      {/snippet}
+      <h3 class="sub">Running</h3>
+      {#if running.length}<ul class="tasklist" aria-label="Running">{#each running as t (t.id)}{@render taskRow(t)}{/each}</ul>
+      {:else}<p class="muted small">Nothing running.</p>{/if}
+      <h3 class="sub">Finished{done.length ? ` · ${done.length}` : ''}</h3>
+      {#if done.length}<ul class="tasklist" aria-label="Finished">{#each done as t (t.id)}{@render taskRow(t)}{/each}</ul>
+      {:else}<p class="muted small">None yet{LIVE_STATES.includes(tasksEntry.state) ? '' : ' (the list starts again when the session does)'}.</p>{/if}
+    </div>
+  </div>
 {/if}
 
 {#if dialog === 'removed'}
@@ -2031,6 +2045,15 @@
   .defaults { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin-bottom: 12px; }
   .defaults .dname { grid-column: 1 / -1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
   .defaults label { font-size: 12px; }
+  .tasksheet { max-width: 560px; }
+  .sheethead { display: flex; align-items: center; } .sheethead h2 { margin: 0; }
+  .tasklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .taskrow { display: flex; align-items: flex-start; gap: 10px; padding: 9px 11px; background: var(--mantle); border: 1px solid var(--s0); border-radius: 10px; }
+  .taskrow .ok { color: var(--green); } .taskrow .bad { color: var(--red); }
+  .taskinfo { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }
+  .taskinfo code.path { background: none; padding: 0; cursor: pointer; text-decoration: underline dotted; }
+  /* on a phone the list slides up from the bottom */
+  .tasksheet.sheet { position: fixed; left: 0; right: 0; bottom: 0; max-width: none; width: auto; margin: 0; border-radius: 16px 16px 0 0; max-height: 85vh; overflow: auto; }
   .removedlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
   .removedlist li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--mantle); border: 1px solid var(--s0); border-radius: 8px; }
   .removedlist .rinfo { display: flex; flex-direction: column; min-width: 0; flex: 1; }
@@ -2140,8 +2163,6 @@
   .inputbar { align-items: flex-end; }
   /* background tasks: a slim bar on top of the message box */
   .bgbar { margin: 0 18px; border: 1px solid var(--s1); border-bottom: 0; border-radius: 8px 8px 0 0; background: var(--mantle); font-size: 12px; }
-  .bgbar { position: relative; }
-  .bgclear { position: absolute; top: 4px; right: 34px; }
   .bgtop { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: 0; color: var(--sky); font: inherit; padding: 6px 10px; cursor: pointer; text-align: left; }
   .bgrow { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 6px 10px; border-top: 1px solid var(--s0); }
   .bgdesc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

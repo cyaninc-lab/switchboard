@@ -437,7 +437,7 @@ class Runner:
             await lv.client.set_permission_mode(mode)
 
     # ---- background tasks (Bash run_in_background, background agents): what Claude Code reports about them ----
-    KEEP_FINISHED = 5
+    KEEP_FINISHED = 20  # finished ones kept to look back on (the app lists them under Background tasks)
 
     def _task_event(self, lv, sub, data):
         tid = data["task_id"]
