@@ -26,6 +26,18 @@ android {
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
     }
+    // release signing: CI writes the key from repo secrets; locally it lives in ~/.config/switchboard-android (backup: Bitwarden).
+    // Every update must be signed with this same key or Android refuses to install it over the old one.
+    val keyDir = System.getenv("SWITCHBOARD_ANDROID_KEYS") ?: "${System.getProperty("user.home")}/.config/switchboard-android"
+    val keyFile = file("$keyDir/release.jks")
+    signingConfigs {
+        if (keyFile.exists()) create("release") {
+            storeFile = keyFile
+            storePassword = file("$keyDir/password").readText().trim()
+            keyAlias = "switchboard"
+            keyPassword = storePassword
+        }
+    }
     buildTypes {
         getByName("debug") {
             manifestPlaceholders["usesCleartextTraffic"] = "true"
@@ -40,6 +52,7 @@ android {
             }
         }
         getByName("release") {
+            signingConfigs.findByName("release")?.let { signingConfig = it }
             optimization {
                enable = true
             }

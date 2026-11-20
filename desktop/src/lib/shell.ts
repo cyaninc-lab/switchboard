@@ -61,7 +61,8 @@ export type Update = { version: string; notes: string; install: (onProgress: (pc
 
 /** null when up to date (or outside the desktop app). Throws if the check itself fails. */
 export async function checkForUpdate(): Promise<Update | null> {
-  if (!isDesktopApp()) return null;  // the phone app updates through its APK (later: its own check)
+  if (isPhoneApp()) return checkPhoneUpdate();
+  if (!isDesktopApp()) return null;
   const { check } = await import('@tauri-apps/plugin-updater');
   const u = await check();
   if (!u) return null;
@@ -78,6 +79,23 @@ export async function checkForUpdate(): Promise<Update | null> {
       await relaunch();
     },
   };
+}
+
+// The phone app: the release's signed Switchboard.apk. Android only installs it through its own installer, after a tap
+// (and, the first time, "Install unknown apps" for Switchboard), so "install" hands the download to the browser.
+// ponytail: browser download, then tap to install; DownloadManager + an install intent saves a tap if it matters.
+async function checkPhoneUpdate(): Promise<Update | null> {
+  const r = await fetch('https://api.github.com/repos/cyaninc-lab/switchboard/releases/latest');
+  if (!r.ok) throw new Error(`GitHub said ${r.status}`);
+  const rel = await r.json(), version = String(rel.tag_name ?? '').replace(/^v/, '');
+  const apk = (rel.assets ?? []).find((a: { name: string }) => a.name === 'Switchboard.apk');
+  if (!apk || !newer(version, await appVersion())) return null;
+  return { version, notes: rel.body ?? '', install: () => openExternal(apk.browser_download_url) };
+}
+export function newer(a: string, b: string) {
+  const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+  return false;
 }
 
 /** A desktop notification (the system's own in the desktop app; the browser's if allowed; else nothing). */
