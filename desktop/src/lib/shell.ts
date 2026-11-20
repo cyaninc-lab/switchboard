@@ -4,16 +4,20 @@ import * as api from './api';
 import type { Machine } from './api';
 
 export const inShell = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+/** The phone app (Tauri on Android): no daemon of its own, no files, no windows, no self-update: it connects to machines. */
+export const isPhoneApp = () => inShell() && /Android|iPhone|iPad/i.test(navigator.userAgent);
+/** The desktop app (Tauri on Linux/Windows): its own daemon, background service, updater, windows. */
+export const isDesktopApp = () => inShell() && !isPhoneApp();
 // the split pane is an iframe, which the desktop app doesn't reach into: it asks the main window (its parent) to open
 // links and files and to notify (the parent says so on load; it only accepts these from its own pane)
 let viaParent = false;
 export const useParentShell = () => { viaParent = true; };
-export const canOpenLocally = () => inShell() || viaParent;
+export const canOpenLocally = () => isDesktopApp() || viaParent;  // the phone app has no machine files to open
 const askParent = (msg: Record<string, unknown>) => window.parent.postMessage({ sb: true, ...msg }, location.origin);
 
 /** Pair with this machine's daemon (the app's own or a background service) without a code prompt. */
 export async function pairLocal(): Promise<Machine | null> {
-  if (!inShell()) return null;
+  if (!isDesktopApp()) return null;
   const { invoke } = await import('@tauri-apps/api/core');
   const d = await invoke<{ url: string; code: string; embedded: boolean }>('local_daemon');
   return api.pair(d.url, d.code, 'Switchboard desktop (this machine)');
@@ -26,7 +30,7 @@ async function call<T>(cmd: string): Promise<T> {
   return invoke<T>(cmd);
 }
 /** Background service: keeps agents running while the app is closed (null outside the desktop app). */
-export const serviceStatus = () => (inShell() ? call<ServiceStatus>('service_status') : Promise.resolve(null));
+export const serviceStatus = () => (isDesktopApp() ? call<ServiceStatus>('service_status') : Promise.resolve(null));
 export const serviceInstall = () => call<void>('service_install');
 export const serviceUninstall = () => call<void>('service_uninstall');
 
@@ -57,7 +61,7 @@ export type Update = { version: string; notes: string; install: (onProgress: (pc
 
 /** null when up to date (or outside the desktop app). Throws if the check itself fails. */
 export async function checkForUpdate(): Promise<Update | null> {
-  if (!inShell()) return null;
+  if (!isDesktopApp()) return null;  // the phone app updates through its APK (later: its own check)
   const { check } = await import('@tauri-apps/plugin-updater');
   const u = await check();
   if (!u) return null;
@@ -148,4 +152,22 @@ export async function closeThisWindow() {
 export async function setOnTop(on: boolean) {
   const { getCurrentWindow } = await import('@tauri-apps/api/window');
   await getCurrentWindow().setAlwaysOnTop(on);
+}
+
+// ---- pairing by QR code: the machine's own address with the code, http://<machine>:7878/?pair=<code>. Any camera
+// can scan it (the browser opens the web app, which pairs at once); the phone app reads the same address ----
+export const pairLink = (url: string, code: string) => `${url.replace(/\/$/, '')}/?pair=${encodeURIComponent(code)}`;
+export function parsePairLink(text: string): { url: string; code: string } | null {
+  try {
+    const u = new URL(text.trim());
+    const code = u.searchParams.get('pair');
+    return /^https?:$/.test(u.protocol) && code ? { url: u.origin, code } : null;
+  } catch { return null; }
+}
+/** The phone app: scan a pairing QR code with the camera (asks for camera permission the first time). */
+export async function scanPairCode(): Promise<{ url: string; code: string } | null> {
+  const { scan, Format, checkPermissions, requestPermissions } = await import('@tauri-apps/plugin-barcode-scanner');
+  if ((await checkPermissions()) !== 'granted' && (await requestPermissions()) !== 'granted') throw new Error('camera permission denied');
+  const r = await scan({ formats: [Format.QRCode], windowed: false });
+  return parsePairLink(r.content);
 }

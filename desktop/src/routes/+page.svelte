@@ -1,7 +1,9 @@
 <script lang="ts">
   import * as api from '$lib/api';
   import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell, openExternal, openLocal, appVersion, checkForUpdate, notify,
-    soloOf, popOut, takeHandoff, focusWindow, onSoloClosing, onSoloEvents, soloOpened, closeThisWindow, setOnTop, useParentShell, canOpenLocally } from '$lib/shell';
+    soloOf, popOut, takeHandoff, focusWindow, onSoloClosing, onSoloEvents, soloOpened, closeThisWindow, setOnTop, useParentShell, canOpenLocally,
+    isPhoneApp, isDesktopApp, pairLink, scanPairCode } from '$lib/shell';
+  import qrcode from 'qrcode-generator';
   import { backdrop } from '$lib/backdrop';
   import { theme, THEMES, applyTheme, fonts, UI_FONTS, MONO_FONTS, CHAT_FONTS, SIZES, applyFonts } from '$lib/themes.svelte';
   applyTheme(theme.name);
@@ -220,6 +222,7 @@
     try { net = await api.setNetwork(localMachine, !net.listen_tailscale); } catch (e) { netError = (e as Error).message; }
     netBusy = false;
   }
+  const qrSvg = (text: string) => { const q = qrcode(0, 'M'); q.addData(text); q.make(); return q.createSvgTag({ cellSize: 4, margin: 2, scalable: true }); };
   async function newCode() {
     if (!localMachine) return;
     try { const c = await api.pairCode(localMachine); code = { code: c.code, until: Date.now() + c.expires_in * 1000 }; }
@@ -261,7 +264,7 @@
 
   // connect dialog
   // opened from a daemon's own address (a phone over Tailscale): that's the machine to connect to
-  let cUrl = $state(typeof location !== 'undefined' && !inShell() && location.port === '7878' ? location.origin : 'http://127.0.0.1:7878');
+  let cUrl = $state(typeof location !== 'undefined' && !inShell() && location.port === '7878' ? location.origin : isPhoneApp() ? '' : 'http://127.0.0.1:7878');
   let cCode = $state('');
   let cError = $state('');
 
@@ -869,7 +872,7 @@
       || ev.screenY < window.screenY || ev.screenY > window.screenY + window.outerHeight;
     if (out && (ev.dataTransfer?.dropEffect ?? 'none') === 'none') popOutTab(t);
   }
-  if (inShell() && !solo) onSoloEvents((id) => (inWindow[id] = 'window'), (h) => {
+  if (isDesktopApp() && !solo) onSoloEvents((id) => (inWindow[id] = 'window'), (h) => {
     delete inWindow[h.entry];
     drafts[h.entry] = { text: h.text, images: h.images as typeof attachments };
     const m = machines.find((x) => x.url === h.url), e = tree[h.url]?.entries.find((x) => x.id === h.entry);
@@ -993,8 +996,8 @@
   // ---- phone layout (a narrow window: a phone's browser now, the Android app later): one screen at a time ----
   // a narrow touch screen: not a desktop window (or split pane) that happens to be narrow
   const phoneQ = matchMedia('(max-width: 640px) and (pointer: coarse)');
-  let phone = $state(phoneQ.matches);
-  phoneQ.addEventListener('change', () => (phone = phoneQ.matches));
+  let phone = $state(phoneQ.matches || isPhoneApp());
+  phoneQ.addEventListener('change', () => (phone = phoneQ.matches || isPhoneApp()));
   let phoneTab = $state<'sessions' | 'inbox'>('sessions');
   // ---- the session tree folds away: by the button, and by itself when the window is narrow ----
   // sideWant: the user's choice for a wide window (remembered); a narrow window starts folded, the button still opens it
@@ -1097,6 +1100,24 @@
   };
 
   // ---- connect ----
+  // opened from a pairing QR code in a browser (http://<machine>:7878/?pair=<code>): pair with that machine at once
+  if (typeof location !== 'undefined' && !inShell()) {
+    const code = new URLSearchParams(location.search).get('pair');
+    if (code) {
+      history.replaceState(null, '', location.pathname);  // the code is single-use: keep it out of the address bar
+      if (!untrack(() => machines.some((m) => m.url === location.origin))) { cUrl = location.origin; cCode = code; dialog = 'connect'; tick().then(() => connect(new Event('submit'))); }
+    }
+  }
+  // the phone app: scan the QR code a computer shows (Settings → Pair another device) and connect straight away
+  async function scanToConnect() {
+    cError = '';
+    try {
+      const p = await scanPairCode();
+      if (!p) { cError = "That isn't a Switchboard pairing code."; return; }
+      cUrl = p.url; cCode = p.code;
+      await connect(new Event('submit'));
+    } catch (e) { cError = (e as Error).message ?? String(e); }
+  }
   async function connect(ev: Event) {
     ev.preventDefault();
     cError = '';
@@ -1203,7 +1224,7 @@
       <button role="menuitem" onclick={() => startRename('e:' + me.id, me.name)}>Rename</button>
       <button role="menuitem" disabled={!LIVE_STATES.includes(me.state)} title="Ends the Claude process; it stays in the tree and resumes on your next message"
         onclick={() => closeSession(mm.machine, me)}>Close session</button>
-      {#if inShell() && !solo}<button role="menuitem" onclick={async () => { const m = mm.machine, en = me; ctx = null; await open(m, en, 'keep'); if (!inWindow[en.id]) popOutCurrent(); }}>Open in new window</button>{/if}
+      {#if isDesktopApp() && !solo}<button role="menuitem" onclick={async () => { const m = mm.machine, en = me; ctx = null; await open(m, en, 'keep'); if (!inWindow[en.id]) popOutCurrent(); }}>Open in new window</button>{/if}
       {#if !solo}<button role="menuitem" onclick={() => { const m = mm.machine, en = me; ctx = null; openSplit(m, en, 'side'); }}>Open to the side</button>
         <button role="menuitem" onclick={() => { const m = mm.machine, en = me; ctx = null; openSplit(m, en, 'below'); }}>Open below</button>{/if}
       <button role="menuitem" title="Takes it off the tree; the session stays on its machine (find it under Removed to restore)"
@@ -1389,7 +1410,7 @@
             <button class="tiny" class:on={onTop} aria-pressed={onTop} onclick={() => { onTop = !onTop; setOnTop(onTop).catch(() => {}); }} title="Keep this window above other windows">Keep on top</button>
             <button class="tiny" onclick={() => closeThisWindow()} title="Close this window; the session goes back to a tab in the main window">Back to tabs</button>
           {:else if !solo}
-            {#if inShell()}<button class="tiny" onclick={popOutCurrent} title="Open this session in its own window">Pop out</button>{/if}
+            {#if isDesktopApp()}<button class="tiny" onclick={popOutCurrent} title="Open this session in its own window">Pop out</button>{/if}
             <button class="tiny" onclick={togglePin}>{selected.entry.pinned ? 'Unpin' : 'Pin'}</button>
             <button class="tiny" onclick={remove} title="Takes it off the tree; the session stays on its machine (find it under Removed to restore)">Remove from tree</button>
           {/if}
@@ -1630,8 +1651,11 @@
   <div class="backdrop" role="presentation" {...backdrop(() => (dialog = null))}>
     <form class="dialog" aria-label="Connect a machine" onsubmit={connect}>
       <h2>Connect a machine</h2>
-      <p class="muted">On that machine run <code>switchboard-daemon pair</code> and enter the code it prints.</p>
-      <label>Daemon address<input bind:value={cUrl} required /></label>
+      {#if isPhoneApp()}
+        <button type="button" class="btn primary" onclick={scanToConnect}>Scan QR code</button>
+        <p class="muted small">On the computer: Settings → Pair another device shows the code. Or type the address and code:</p>
+      {:else}<p class="muted">On that machine run <code>switchboard-daemon pair</code> and enter the code it prints.</p>{/if}
+      <label>Daemon address<input bind:value={cUrl} required placeholder="http://my-computer:7878" inputmode="url" autocapitalize="off" /></label>
       <label>One-time code<input bind:value={cCode} required autocomplete="off" placeholder="e.g. K7QM2XRA" use:focusOnMount /></label>
       {#if cError}<p class="error">{cError}</p>{/if}
       <div class="actions"><button type="button" class="btn ghost" onclick={() => (dialog = null)}>Cancel</button><button class="btn primary">Connect</button></div>
@@ -1825,6 +1849,8 @@
               <div>On the other device, open Switchboard → <b>+ Connect a machine</b>:</div>
               <div>Address <code>{net.url ?? `http://${net.active[0]}`}</code> · code <b class="mono big">{code.code}</b></div>
               <div class="muted small">Valid for {Math.max(0, Math.round((code.until - now) / 1000 / 60))} more min, once.</div>
+              <div class="pairqr" aria-label="Pairing QR code for the phone app">{@html qrSvg(pairLink(net.url ?? `http://${net.active[0]}`, code.code))}</div>
+              <div class="muted small">Or scan this with the Switchboard phone app.</div>
             </div>
           {:else if code}<p class="muted small">That code expired. <button class="link" onclick={newCode}>New code</button></p>{/if}
         {/if}
@@ -1955,7 +1981,8 @@
 
   /* pinned to the window's edges rather than 100vh: under the text-size zoom, WebView2 doesn't scale vh but WebKitGTK
      does, so 100vh overflowed on Windows (the whole window scrolled) and a calc() on it broke Linux instead */
-  .app { display: flex; flex-direction: column; position: fixed; inset: 0; background: var(--base); }
+  .app { display: flex; flex-direction: column; position: fixed; inset: 0; background: var(--base);
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }  /* the phone app is drawn under the status and gesture bars */
   .titlebar[hidden] { display: none; }
   .status[hidden] { display: none; }
 
@@ -2057,6 +2084,8 @@
   .taskinfo code.path { background: none; padding: 0; cursor: pointer; text-decoration: underline dotted; }
   /* on a phone the list slides up from the bottom */
   .tasksheet.sheet { position: fixed; left: 0; right: 0; bottom: 0; max-width: none; width: auto; margin: 0; border-radius: 16px 16px 0 0; max-height: 85vh; overflow: auto; }
+  .pairqr { width: 180px; background: #fff; border-radius: 8px; padding: 6px; margin-top: 6px; }
+  .pairqr :global(svg) { display: block; width: 100%; height: auto; }
   .removedlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
   .removedlist li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--mantle); border: 1px solid var(--s0); border-radius: 8px; }
   .removedlist .rinfo { display: flex; flex-direction: column; min-width: 0; flex: 1; }
