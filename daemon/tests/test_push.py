@@ -38,10 +38,11 @@ def test_push_permission_answer_finish_and_reply(tmp_path, monkeypatch):
         r = await client.post(f"/v1/entries/{e['id']}/answer", headers=h, json={"request_id": req["request_id"], "allow": True})
         assert (await r.json()) == {"answered": True}
         assert (await client.post(f"/v1/entries/{e['id']}/answer", headers=h, json={"request_id": req["request_id"], "allow": True})).status == 409
-        kinds = []
-        while "finished" not in kinds:  # resolved, then the turn ends
-            kinds.append((await asyncio.wait_for(got.get(), 5))["kind"])
-        assert "resolved" in kinds
+        notes = []
+        while not notes or notes[-1]["kind"] != "finished":  # resolved, then the turn ends
+            notes.append(await asyncio.wait_for(got.get(), 5))
+        assert "resolved" in [n["kind"] for n in notes]
+        assert notes[-1]["body"] and notes[-1]["body"] != "Claude is done and waiting for you", notes[-1]  # what you reply to
 
         # a reply from the notification goes to the session
         r = await client.post(f"/v1/entries/{e['id']}/send", headers=h, json={"text": "thanks"})
