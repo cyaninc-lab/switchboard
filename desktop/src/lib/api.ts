@@ -165,7 +165,12 @@ export type Line =
 
 // how the daemon delivers another session's message (runner._tools); parsed so history renders it too
 const MAIL_IN = /^Message from the session "([^"]*)" \(sent through Switchboard[^\n]*\):\n\n([\s\S]*)$/;
+// Claude Code tells the session a background task ended with a "user" message holding <task-notification>: it's
+// Claude Code talking, not the user, so it shows as a step on Claude's side ("Background command … completed")
+const TASK_NOTE = /^\s*<task-notification>[\s\S]*?<summary>([\s\S]*?)<\/summary>[\s\S]*<\/task-notification>\s*$/;
 const userText = (msg: HistoryMessage, t: string): Line => {
+  const note = msg.type === 'user' ? TASK_NOTE.exec(t) : null;
+  if (note) return { kind: 'tool', text: note[1].trim(), name: 'TaskNotification', id: '', input: {} };
   const m = msg.type === 'user' ? MAIL_IN.exec(t) : null;
   return m ? { kind: 'mail', dir: 'in', who: m[1], text: m[2] } : { kind: 'text', text: t };
 };
