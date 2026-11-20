@@ -157,7 +157,8 @@ export function hunkLines(hunks: Hunk[]): DiffLine[] {
 /** Flatten an SDK message into display lines: text, tool calls and tool results. */
 export type DiffLine = { t: '+' | '-' | ' ' | '…'; s: string; n?: number };
 export type Line =
-  | { kind: 'text' | 'result' | 'image' | 'thinking'; text: string }
+  | { kind: 'text' | 'image' | 'thinking'; text: string }
+  | { kind: 'result'; text: string; id?: string }  // id: the tool_use it answers (a Bash window shows its command)
   | { kind: 'tool'; text: string; name: string; id: string; input: any }
   | { kind: 'diff'; text: string; file: string; lines: DiffLine[]; note?: string; id?: string }
   | { kind: 'todos'; text: string; items: { content: string; status: string; activeForm?: string }[] }
@@ -231,7 +232,7 @@ export function render(msg: HistoryMessage): Line[] {
     if (b.type === 'tool_result') {
       const t = Array.isArray(b.content) ? b.content.map((x: any) => x.text ?? '').join('\n') : String(b.content ?? '');
       if (/^Todos have been modified successfully/.test(t)) return [];  // the checklist above already shows it
-      return [{ kind: 'result' as const, text: t }];
+      return [{ kind: 'result' as const, text: t, id: b.tool_use_id }];
     }
     return [];
   });
