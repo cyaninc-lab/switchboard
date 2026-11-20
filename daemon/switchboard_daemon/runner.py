@@ -138,7 +138,9 @@ class Runner:
         opts = self.sdk.ClaudeAgentOptions(
             **start, cwd=(info.cwd if info else entry["cwd"]) or None, include_partial_messages=True,
             permission_mode=entry.get("mode") or "default", can_use_tool=can_use_tool,
-            **({"env": acct} if acct else {}),
+            # claude.ai Artifacts: off by default for SDK sessions; CLAUDE_CODE_ARTIFACT turns them on (not in the docs: found in
+            # anthropics/claude-code#93796, checked on 2.1.328). No browser on the session's machine: the card in the chat links it.
+            env={"CLAUDE_CODE_ARTIFACT": "1", "CLAUDE_CODE_ARTIFACT_AUTO_OPEN": "0", **acct},
             **({"effort": entry["effort"]} if entry.get("effort") else {}),
             # SWITCHBOARD_MODEL overrides everything (tests run on Haiku); else the entry's choice; else Claude Code's default
             **({"model": m} if (m := os.environ.get("SWITCHBOARD_MODEL") or entry.get("model")) else {}),

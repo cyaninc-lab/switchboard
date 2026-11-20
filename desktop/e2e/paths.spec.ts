@@ -49,3 +49,35 @@ test('paths in step headers (Edit, Read) are clickable like those in replies', a
   await expect(page.locator('.toast')).toContainText(`${dir}/notes.md`);
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`${dir}/notes.md`);
 });
+
+test('a claude.ai Artifact shows as a card that opens it', async ({ page }) => {
+  const { execFileSync } = await import('node:child_process');
+  const { DAEMON_PORT, DATA } = await import('../playwright.config');
+  const daemon = process.env.SB_DAEMON ?? '../.venv/bin/switchboard-daemon';
+  await page.goto('/');
+  await page.getByRole('button', { name: '+ Connect a machine' }).click();
+  await page.getByLabel('Daemon address').fill(`http://127.0.0.1:${DAEMON_PORT}`);
+  await page.getByLabel('One-time code').fill(execFileSync(daemon, ['--data', DATA, 'pair']).toString().trim());
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  await page.getByRole('button', { name: '+ Add' }).click();
+  const dialog = page.getByRole('form', { name: 'Add to Switchboard' });
+  await dialog.getByRole('tab', { name: 'New session' }).click();
+  await dialog.getByLabel(/Folder on/).fill(mkdtempSync(join(tmpdir(), 'sb-e2e-')));
+  await dialog.getByLabel('Name in the tree').fill('Artifact card');
+  await dialog.getByRole('button', { name: 'Create session' }).click();
+  const input = page.getByLabel('Message this session');
+  await input.fill('make an artifact of the feed');
+  await input.press('Enter');
+  const cards = page.getByRole('log', { name: 'Session history' }).locator('.artcard');
+  await expect(cards).toHaveCount(2);
+  await expect(cards.first()).toContainText('Feed report');
+  await expect(cards.first()).toContainText('Published on claude.ai');
+  await expect(cards.nth(1)).toContainText('Updated on claude.ai');  // Version 2
+  await expect(cards.first()).toHaveAttribute('title', 'https://claude.ai/artifact/Demo123abc');
+  const popup = page.waitForEvent('popup');  // outside the app: a new tab
+  await cards.first().click();
+  expect((await popup).url()).toContain('claude.ai/artifact/Demo123abc');
+});

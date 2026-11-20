@@ -379,6 +379,12 @@
   // Bash commands by tool_use id: a terminal window's title says "Bash" and its body starts with "$ <command>"
   let bashCmd = $derived(Object.fromEntries(messages.flatMap((m) => Array.isArray(m.message?.content) ? m.message.content : [])
     .filter((b: any) => b?.type === 'tool_use' && b.name === 'Bash' && b.input?.command).map((b: any) => [b.id, String(b.input.command)])) as Record<string, string>);
+  // claude.ai Artifacts by tool_use id: the result shows as a card linking the published page
+  let artifacts = $derived(Object.fromEntries(messages.flatMap((m) => Array.isArray(m.message?.content) ? m.message.content : [])
+    .filter((b: any) => b?.type === 'tool_use' && b.name === 'Artifact' && (b.input?.action ?? 'publish') === 'publish')
+    .map((b: any) => [b.id, String(b.input?.title || b.input?.file_path?.split('/').pop() || 'Artifact')])) as Record<string, string>);
+  const artifactUpdated = (t: string) => Number(t.match(/\(Version (\d+)/)?.[1] ?? 1) > 1;  // "Published … at <url> (Version 2, …)"
+  const artifactUrl = (t: string) => t.match(/https:\/\/claude\.ai\/(?:code\/)?artifact\/[\w-]+/)?.[0];
   const diffLines = (l: { lines: api.DiffLine[]; id?: string }) => (l.id && hunks[l.id] ? api.hunkLines(hunks[l.id]) : l.lines);
   const FILE_TOOLS = ['Read', 'NotebookEdit', 'NotebookRead'];  // Edit/Write are diffs, whose header carries the path too
   let queued = $state<Record<string, number>>({});
@@ -1523,6 +1529,12 @@
                 <ul class="todos" aria-label="To-dos">
                   {#each line.items as t}<li class={t.status}><span class="box">{t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '▸' : ''}</span>{t.status === 'in_progress' && t.activeForm ? t.activeForm : t.content}</li>{/each}
                 </ul>
+              {:else if 'id' in line && line.id && artifacts[line.id] && artifactUrl(line.text)}
+                {@const url = artifactUrl(line.text)!}
+                <button class="artcard" onclick={() => openExternal(url)} title={url}>
+                  <span class="articon" aria-hidden="true">⧉</span>
+                  <span class="arttext"><b>{artifacts[line.id]}</b><span class="muted small">{artifactUpdated(line.text) ? 'Updated' : 'Published'} on claude.ai · Open</span></span>
+                </button>
               {:else}
                 {@const rows = line.text.split('\n')}
                 {@const cmd = 'id' in line && line.id ? bashCmd[line.id] : undefined}
@@ -2067,6 +2079,12 @@
   .app.phone .log .you .prompt { display: none; }
   .app.phone .log .reply { align-self: flex-start; max-width: 88%; background: var(--s0); border-radius: 16px 16px 16px 5px; padding: 8px 12px; }
   .app.phone .log .reply > .bullet, .app.phone .log .step > .bullet { display: none; }
+  .log .artcard { display: flex; align-items: center; gap: 12px; width: min(100%, 420px); margin: 2px 0 8px; padding: 10px 14px;
+    text-align: left; background: var(--mantle); border: 1px solid var(--s0); border-radius: 10px; color: var(--text); cursor: pointer; }
+  .log .artcard:hover { border-color: var(--mauve); }
+  .log .articon { font-size: 1.4em; color: var(--mauve); }
+  .log .arttext { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .log .arttext b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .app.phone .log .diff, .app.phone .log .todos, .app.phone .log details.agent {
     align-self: flex-start; max-width: 92%; border: 1px solid var(--s0); border-radius: 10px; padding: 5px 9px; font-size: 11.5px; color: var(--sub0); overflow: hidden; }
   .app.phone .inputbar { padding: 8px 10px 12px; gap: 8px; }
