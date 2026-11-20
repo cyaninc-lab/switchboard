@@ -64,8 +64,9 @@ class PushService : Service() {
             .setPriority(NotificationCompat.PRIORITY_MIN).build()
         if (Build.VERSION.SDK_INT >= 34) startForeground(1, n, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING)
         else startForeground(1, n)
+        // no interrupt() to pick up a new config: a pending interrupt made the next notice's foreground check throw, and
+        // that notice was dropped. listen() re-reads push.json on every line instead (ntfy sends a keepalive every 45s).
         if (worker?.isAlive != true) worker = thread(name = "push") { listen() }
-        else worker?.interrupt()  // the config changed: reconnect with it
         return START_STICKY
     }
 
@@ -86,10 +87,12 @@ class PushService : Service() {
                     wait = 2000L
                     for (line in lines) {
                         if (!running) break
+                        val now = Push.config(this@PushService)
+                        if (now?.optString("server") != server || now.optString("topic") != topic) break  // moved: reconnect
                         val ev = JSONObject(line)
                         if (ev.optString("event") != "message") continue
                         prefs.edit().putString("last", ev.getString("id")).apply()
-                        try { show(JSONObject(ev.getString("message")), cfg!!) } catch (_: Exception) {}
+                        try { show(JSONObject(ev.getString("message")), now) } catch (e: Exception) { android.util.Log.w("PushService", "notice not shown", e) }
                     }
                 }
             } catch (_: InterruptedException) {
@@ -126,7 +129,8 @@ class PushService : Service() {
             .setStyle(NotificationCompat.BigTextStyle().bigText(note.optString("body")))
             .setContentIntent(open).setAutoCancel(true)
             .setCategory(if (kind == "finished" || kind == "inbox") NotificationCompat.CATEGORY_MESSAGE else NotificationCompat.CATEGORY_REMINDER)
-        if (!cfg.optBoolean("details", false)) {  // lock screen: who, not what
+        if (cfg.optBoolean("details", false)) b.setVisibility(NotificationCompat.VISIBILITY_PUBLIC)  // even if the phone hides sensitive content
+        else {  // lock screen: who, not what
             b.setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setPublicVersion(
                 NotificationCompat.Builder(this, Push.CH_SESSIONS).setSmallIcon(R.drawable.ic_notify)
                     .setContentTitle(note.optString("title")).setContentText(
