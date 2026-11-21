@@ -43,7 +43,10 @@ export const openLocal = (path: string): Promise<string> =>
 /** Open a URL in the user's browser (the system one in the desktop app). */
 export async function openExternal(url: string) {
   if (viaParent && !inShell()) return askParent({ do: 'url', url });
-  if (inShell()) {
+  if (isDesktopApp()) {  // the app's own opener: once, in the user's environment (an AppImage's leaked into browsers)
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('open_url', { url });
+  } else if (inShell()) {
     const { openUrl } = await import('@tauri-apps/plugin-opener');
     await openUrl(url);
   } else {

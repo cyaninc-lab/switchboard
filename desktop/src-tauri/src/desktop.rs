@@ -30,9 +30,52 @@ fn sidecar() -> PathBuf {
     exe.with_file_name(name)
 }
 
-/// The daemon must not inherit CLAUDE* vars (e.g. when the app is started from inside a Claude session).
-/// On Windows it also must not flash a console window: it's a console program started from a GUI app.
+/// The AppImage runs the app with its own libraries, GIO modules and search paths first (LD_LIBRARY_PATH,
+/// GIO_MODULE_DIR, PATH and XDG_DATA_DIRS entries under $APPDIR, ...). Programs it starts inherit them and break: the
+/// system's gio can't load ("undefined symbol"), so xdg-open fell back to launching browsers itself, and a link opened
+/// in Firefox and then Chromium too. Children get the user's own environment back.
+fn host_env(cmd: &mut Command) -> &mut Command {
+    let Some(appdir) = std::env::var_os("APPDIR").map(|d| d.to_string_lossy().trim_end_matches('/').to_string()) else { return cmd };
+    for k in ["LD_LIBRARY_PATH", "GIO_MODULE_DIR", "GDK_PIXBUF_MODULE_FILE", "GTK_PATH", "GTK_DATA_PREFIX", "GTK_EXE_PREFIX",
+              "GTK_IM_MODULE_FILE", "GSETTINGS_SCHEMA_DIR", "PYTHONHOME", "PYTHONPATH", "PERLLIB", "QT_PLUGIN_PATH", "APPDIR", "APPIMAGE", "ARGV0", "OWD"] {
+        cmd.env_remove(k);
+    }
+    for k in ["PATH", "XDG_DATA_DIRS"] {
+        if let Ok(v) = std::env::var(k) {
+            cmd.env(k, without_appdir(&v, &appdir));
+        }
+    }
+    cmd
+}
+
+fn without_appdir(list: &str, appdir: &str) -> String {
+    list.split(':').filter(|p| !p.is_empty() && !p.starts_with(appdir)).collect::<Vec<_>>().join(":")
+}
+
+/// Open a web or mail link in the user's browser / mail app: once, with xdg-open in the user's own environment on
+/// Linux (the opener plugin tries a chain of launchers, and a launcher reporting failure after opening it opened it
+/// twice), the system way elsewhere.
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    if !(url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:")) {
+        return Err("only web and mail links".into());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        host_env(Command::new("xdg-open").arg(&url)).stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().map(|_| ()).map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        tauri_plugin_opener::open_url(&url, None::<&str>).map_err(|e| e.to_string())
+    }
+}
+
+/// The daemon must not inherit CLAUDE* vars (e.g. when the app is started from inside a Claude session), nor the
+/// AppImage's environment (its sessions run the user's tools). On Windows it also must not flash a console window:
+/// it's a console program started from a GUI app.
 fn clean(cmd: &mut Command) -> &mut Command {
+    host_env(cmd);
     for (k, _) in std::env::vars() {
         if k.starts_with("CLAUDE") {
             cmd.env_remove(k);
@@ -136,6 +179,11 @@ fn open_local(path: String) -> Result<String, String> {
         None => PathBuf::from(&path),
     };
     let meta = std::fs::metadata(&p).map_err(|_| format!("No such file or folder: {}", p.display()))?;
+    #[cfg(target_os = "linux")]
+    if decide(&p, meta.is_dir()) != Open::Reveal {  // once, in the user's own environment (see open_url)
+        return host_env(Command::new("xdg-open").arg(&p)).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null()).spawn().map(|_| "opened".into()).map_err(|e| e.to_string());
+    }
     match decide(&p, meta.is_dir()) {
         Open::Folder | Open::File => tauri_plugin_opener::open_path(&p, None::<&str>).map(|_| "opened".into()),
         Open::Reveal => tauri_plugin_opener::reveal_item_in_dir(&p).map(|_| "revealed".into()),
@@ -151,6 +199,23 @@ fn dirs_home() -> PathBuf {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn programs_it_starts_get_the_users_environment_not_the_appimages() {
+        assert_eq!(without_appdir("/tmp/.mount_X/usr/bin/:/usr/bin:/tmp/.mount_X/bin::/bin", "/tmp/.mount_X"), "/usr/bin:/bin");
+        // as an AppImage sets it up (one test sets env: no other test reads these)
+        unsafe {
+            std::env::set_var("APPDIR", "/tmp/.mount_Test");
+            std::env::set_var("LD_LIBRARY_PATH", "/tmp/.mount_Test/usr/lib/");
+            std::env::set_var("GIO_MODULE_DIR", "/tmp/.mount_Test/usr/lib/gio/modules");
+            std::env::set_var("XDG_DATA_DIRS", "/tmp/.mount_Test/usr/share/:/usr/local/share:/usr/share");
+        }
+        let out = host_env(Command::new("sh").args(["-c", "echo \"$LD_LIBRARY_PATH|$GIO_MODULE_DIR|$APPDIR|$XDG_DATA_DIRS\""]))
+            .output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "|||/usr/local/share:/usr/share");
+        unsafe { for k in ["APPDIR", "LD_LIBRARY_PATH", "GIO_MODULE_DIR"] { std::env::remove_var(k); } }
+    }
     #[test]
     fn service_copy_is_refreshed_only_when_it_differs() {
         let d = std::env::temp_dir().join(format!("sb-same-{}", std::process::id()));
@@ -301,7 +366,7 @@ pub fn run() {
             start_embedded(&app.state::<Embedded>());
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![local_daemon, service_status, service_install, service_uninstall, open_local])
+        .invoke_handler(tauri::generate_handler![local_daemon, service_status, service_install, service_uninstall, open_local, open_url])
         // popped-out session windows belong to the main one: closing it closes the app, not just that window
         .on_window_event(|w, e| {
             if w.label() == "main" && matches!(e, tauri::WindowEvent::Destroyed) {
