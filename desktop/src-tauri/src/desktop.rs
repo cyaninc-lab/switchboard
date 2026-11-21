@@ -152,6 +152,18 @@ mod tests {
     use super::*;
     use std::path::Path;
     #[test]
+    fn service_copy_is_refreshed_only_when_it_differs() {
+        let d = std::env::temp_dir().join(format!("sb-same-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let (a, b, c) = (d.join("a"), d.join("b"), d.join("c"));
+        std::fs::write(&a, b"daemon v2").unwrap(); std::fs::write(&b, b"daemon v2").unwrap(); std::fs::write(&c, b"daemon v1").unwrap();
+        assert!(same_contents(&a, &b));
+        assert!(!same_contents(&a, &c));                  // same size, different bytes: an update
+        assert!(!same_contents(&a, &d.join("missing")));  // the service has no copy yet
+        assert!(same_contents(&d.join("missing"), &a));   // no bundled daemon (dev): leave the service alone
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+    #[test]
     fn opening_never_runs_anything() {
         assert_eq!(decide(Path::new("/x/notes.md"), false), Open::File);
         assert_eq!(decide(Path::new("C:/x/Shot.PNG"), false), Open::File);
@@ -240,6 +252,26 @@ fn stop_embedded(state: &Embedded) {
     }
 }
 
+/// The background service runs its own copy of the daemon (`service_install`), so an app update never reached it: the
+/// service kept the old daemon. At start, a release build whose bundled daemon differs from the service's copy puts the
+/// new one in and restarts the service (live sessions resume on their next message), then waits for it to answer.
+fn refresh_service() {
+    if !cfg!(target_os = "linux") || cfg!(debug_assertions) || !unit_path().exists() { return; }
+    let bin = data_dir().join("bin").join("switchboard-daemon");
+    if same_contents(&sidecar(), &bin) { return; }
+    let tmp = bin.with_extension("new");
+    if std::fs::copy(sidecar(), &tmp).and_then(|_| std::fs::rename(&tmp, &bin)).is_err() { return; }
+    if systemctl(&["restart", "switchboard-daemon"]).is_ok() { let _ = wait_alive(); }
+}
+
+fn same_contents(a: &std::path::Path, b: &std::path::Path) -> bool {
+    match (std::fs::metadata(a), std::fs::metadata(b)) {
+        (Ok(x), Ok(y)) if x.len() == y.len() => std::fs::read(a).ok() == std::fs::read(b).ok(),
+        (Err(_), _) => true,  // no bundled daemon (a dev run): nothing to hand over
+        _ => false,
+    }
+}
+
 fn start_embedded(state: &Embedded) {
     if daemon_alive() { return; }
     let mut cmd = Command::new(sidecar());
@@ -264,6 +296,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Embedded(Mutex::new(None)))
         .setup(|app| {
+            refresh_service();  // an update: the background service gets this version's daemon too
             // no daemon answering (no background service): run our own for as long as the app runs
             start_embedded(&app.state::<Embedded>());
             Ok(())
