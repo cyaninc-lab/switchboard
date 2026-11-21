@@ -50,3 +50,22 @@ def test_serve_starts_with_auto_update(tmp_path):
         assert "Running on" in out, out
     finally:
         p.terminate(); p.wait(10)
+
+
+def test_service_daemon_restarts_into_a_replaced_file_only_when_idle(tmp_path):
+    f = tmp_path / "switchboard-daemon"; f.write_text("old")
+    lv = SimpleNamespace(working=True, pending={}, queue=[])
+    closed, quits = [], []
+    async def close_all(): closed.append(1)
+    runner = SimpleNamespace(live={"e": lv}, running_tasks=lambda lv: [], close_all=close_all)
+    async def t():
+        task = asyncio.create_task(update.restart_when_replaced(runner, path=str(f), every=0.02, quit=lambda: quits.append(1)))
+        await asyncio.sleep(0.05)
+        assert quits == []  # unchanged
+        f.write_text("new build")
+        await asyncio.sleep(0.1)
+        assert quits == []  # replaced, but a session is mid-reply
+        lv.working = False
+        await asyncio.wait_for(task, 1)
+        assert quits == [1] and closed == [1]
+    asyncio.run(t())

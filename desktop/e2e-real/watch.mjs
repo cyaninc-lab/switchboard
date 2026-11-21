@@ -14,6 +14,7 @@ const SLOW = Number(process.env.SLOW ?? 1200);
 // a run that crashed can leave a WebDriver session holding the only slot
 try { _x('pkill -x tauri-driver; pkill -x WebKitWebDriver'); } catch {} // stale
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('CLAUDE')));
+env.SWITCHBOARD_NO_SERVICE_REFRESH = '1';  // a test build must never put its daemon into the real background service
 env.SWITCHBOARD_MODEL ??= 'claude-haiku-5-5';
 
 const step = async (msg) => { console.log('·', msg); await sleep(SLOW); };

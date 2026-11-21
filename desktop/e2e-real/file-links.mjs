@@ -11,6 +11,7 @@ const APP = new URL('../src-tauri/target/release/switchboard', import.meta.url).
 const SLOW = Number(process.env.SLOW ?? 1500);
 try { _x('pkill -x tauri-driver; pkill -x WebKitWebDriver'); } catch {} // stale
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('CLAUDE')));
+env.SWITCHBOARD_NO_SERVICE_REFRESH = '1';  // a test build must never put its daemon into the real background service
 env.SWITCHBOARD_MODEL ??= 'claude-haiku-5-5';
 
 // a folder with a note and a script; the script would leave a marker if it ever ran

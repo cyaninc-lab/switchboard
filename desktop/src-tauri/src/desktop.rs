@@ -323,14 +323,15 @@ fn stop_embedded(state: &Embedded) {
 
 /// The background service runs its own copy of the daemon (`service_install`), so an app update never reached it: the
 /// service kept the old daemon. At start, a release build whose bundled daemon differs from the service's copy puts the
-/// new one in and restarts the service (live sessions resume on their next message), then waits for it to answer.
+/// new one in. It doesn't restart the service: the daemon sees its file change and restarts itself once no session is
+/// busy (a restart here cut sessions off mid-reply). SWITCHBOARD_NO_SERVICE_REFRESH: test builds leave it alone.
 fn refresh_service() {
-    if !cfg!(target_os = "linux") || cfg!(debug_assertions) || !unit_path().exists() { return; }
+    if !cfg!(target_os = "linux") || cfg!(debug_assertions) || !unit_path().exists()
+        || std::env::var_os("SWITCHBOARD_NO_SERVICE_REFRESH").is_some() { return; }
     let bin = data_dir().join("bin").join("switchboard-daemon");
     if same_contents(&sidecar(), &bin) { return; }
     let tmp = bin.with_extension("new");
-    if std::fs::copy(sidecar(), &tmp).and_then(|_| std::fs::rename(&tmp, &bin)).is_err() { return; }
-    if systemctl(&["restart", "switchboard-daemon"]).is_ok() { let _ = wait_alive(); }
+    let _ = std::fs::copy(sidecar(), &tmp).and_then(|_| std::fs::rename(&tmp, &bin));
 }
 
 fn same_contents(a: &std::path::Path, b: &std::path::Path) -> bool {
