@@ -53,6 +53,7 @@ object Push {
 class PushService : Service() {
     @Volatile private var running = true
     private var worker: Thread? = null
+    private var updater: Thread? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -67,6 +68,12 @@ class PushService : Service() {
         // no interrupt() to pick up a new config: a pending interrupt made the next notice's foreground check throw, and
         // that notice was dropped. listen() re-reads push.json on every line instead (ntfy sends a keepalive every 45s).
         if (worker?.isAlive != true) worker = thread(name = "push") { listen() }
+        if (updater?.isAlive != true) updater = thread(name = "update") {  // a newer app release: download it, say it's ready
+            while (running) {
+                try { Updater.check(this) } catch (e: Exception) { android.util.Log.w("Updater", "check failed", e) }
+                try { Thread.sleep(Updater.EVERY) } catch (_: InterruptedException) {}
+            }
+        }
         return START_STICKY
     }
 
