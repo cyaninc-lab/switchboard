@@ -264,7 +264,13 @@ class Runner:
             if len(im.get("data", "")) > MAX_IMAGE_B64:
                 raise ValueError("image_too_large")
         lv = await self._open(entry)
-        if lv.working:  # like Claude Code: a message typed while it works goes out when the turn ends
+        if lv.working and not origin and not lv.queue:
+            # like Claude Code: the CLI reads a message sent mid-turn after its current step (a tool call finishing),
+            # or as the next turn if this one has no step left. Clients move it into the chat now.
+            await self._query(lv, text, images)
+            await self.broadcast({"type": "queued", "entry": entry["id"], "count": 0, "sent": 1})
+            return
+        if lv.working:  # a watch's or another session's message waits for its own turn: its reply is that turn's text
             lv.queue.append((entry, text, images, origin))
             await self.broadcast({"type": "queued", "entry": entry["id"], "count": len(lv.queue)})
             return
@@ -274,6 +280,9 @@ class Runner:
         if origin:  # clients show what they typed themselves; a watch's prompt has to be announced
             await self.broadcast({"type": "message", "entry": entry["id"], "message": {
                 "type": "user", "uuid": uuid.uuid4().hex, "message": {"role": "user", "content": text}}})
+        await self._query(lv, text, images)
+
+    async def _query(self, lv, text, images):
         if images:
             content = [{"type": "image", "source": {"type": "base64", "media_type": im["media_type"], "data": im["data"]}} for im in images]
             content.append({"type": "text", "text": text or "(image)"})

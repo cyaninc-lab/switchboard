@@ -620,6 +620,7 @@ async def messages(request):
     # the most recent `limit` messages: the SDK's offset counts from the start, which showed long sessions only their
     # beginning (it parses the whole file either way, so reading everything costs nothing extra)
     msgs = [_plain(m) for m in (await _off(sdk.get_session_messages, e["session_id"]))]
+    msgs = await _off(patchmod.with_mid_turn, e["session_id"], msgs)  # what the user sent mid-turn (the SDK drops it)
     shown = msgs[-limit:]
     blocks = lambda m: (m.get("message") or {}).get("content") if isinstance(m, dict) and isinstance(m.get("message"), dict) else None
     edits = {b.get("id") for m in shown for b in (blocks(m) if isinstance(blocks(m), list) else []) if isinstance(b, dict) and b.get("type") == "tool_use"}

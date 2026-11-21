@@ -33,3 +33,43 @@ def for_session(session_id, wanted=None):
             if wanted is None or tid in wanted:
                 out |= from_result(tid, d.get("toolUseResult"))
     return out
+
+
+def with_mid_turn(session_id, msgs):
+    """Put back the messages the user sent while Claude was working. Claude Code reads those between steps and stores
+    them as `queued_command` attachments, which get_session_messages() drops, so history read without this lost them.
+    Each goes in after the message it followed in the conversation (attachments chain to it through parentUuid)."""
+    path = _transcript(session_id)
+    if not path:
+        return msgs
+    parent, queued = {}, []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if '"attachment"' not in line:  # cheap skip: only attachments sit between the messages the SDK returns
+                continue
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            if d.get("type") != "attachment" or not d.get("uuid"):
+                continue
+            parent[d["uuid"]] = d.get("parentUuid")
+            a = d.get("attachment") or {}
+            if a.get("type") == "queued_command" and a.get("prompt"):
+                queued.append((d["uuid"], a["prompt"]))
+    if not queued:
+        return msgs
+    known = {m.get("uuid") for m in msgs if isinstance(m, dict)}
+    after = {}  # message uuid -> the user's messages that came right after it
+    for uid, prompt in queued:
+        anchor, seen = parent.get(uid), set()
+        while anchor and anchor not in known and anchor in parent and anchor not in seen:
+            seen.add(anchor); anchor = parent[anchor]
+        if anchor in known:
+            after.setdefault(anchor, []).append({"type": "user", "uuid": uid, "session_id": session_id, "parent_tool_use_id": None,
+                                                 "message": {"role": "user", "content": prompt}})
+    out = []
+    for m in msgs:
+        out.append(m)
+        out.extend(after.get(m.get("uuid") if isinstance(m, dict) else None, []))
+    return out
