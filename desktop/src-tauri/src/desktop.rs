@@ -252,6 +252,10 @@ fn service_install(state: tauri::State<Embedded>) -> Result<(), String> {
     std::fs::rename(&tmp, &bin).map_err(|e| e.to_string())?;  // atomic swap, safe while an old copy runs
     let claude = which("claude").map(|p| format!("Environment=SWITCHBOARD_CLAUDE={}\n", p.display())).unwrap_or_default();
     let path = std::env::var("PATH").unwrap_or_default();
+    let path = match std::env::var("APPDIR") {  // not the AppImage's own folders (gone once it exits)
+        Ok(appdir) => without_appdir(&path, appdir.trim_end_matches('/')),
+        Err(_) => path,
+    };
     let unit = format!(
         "[Unit]\nDescription=Switchboard daemon (keeps Claude agents running)\n\n[Service]\nExecStart={} serve --port {PORT}\nRestart=on-failure\nEnvironment=PATH={path}\n{claude}\n[Install]\nWantedBy=default.target\n",
         bin.display());
