@@ -1,7 +1,7 @@
 [project]
 name = "switchboard-daemon"
 license = "AGPL-3.0-only"
-version = "0.1.27"
+version = "0.1.28"
 description = "Switchboard daemon: serves this machine's Claude Code sessions to Switchboard clients"
 requires-python = ">=3.10"
 dependencies = ["claude-agent-sdk>=0.2.182", "aiohttp>=3.9", "pywinpty>=2.0; sys_platform == 'win32'"]

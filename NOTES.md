@@ -1,3 +1,3 @@
-## Switchboard 0.1.27
+## Switchboard 0.1.28
 
-- Fix: a machine's daemon started with `--auto-update` (machines without the desktop app) crashed at start. It now starts, and installs new releases by itself.
+- Fix (Linux desktop app): a link opened twice, in your browser and in another one. Links and files now open once, with your default app.
