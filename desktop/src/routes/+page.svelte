@@ -399,7 +399,9 @@
   let streaming = $state<Record<string, string>>({});
   let thinkingLive = $state<Record<string, string>>({});
   // subagents: their messages carry parent_tool_use_id; show them inside the Agent step that started them
-  let mainMsgs = $derived(messages.filter((m) => !m.parent_tool_use_id));
+  // each message once: a repeated id (a transcript line Claude Code wrote twice, a live copy of a loaded one) made Svelte's
+  // keyed list throw, and the whole chat showed blank
+  let mainMsgs = $derived.by(() => { const seen = new Set<string>(); return messages.filter((m) => !m.parent_tool_use_id && !seen.has(m.uuid) && !!seen.add(m.uuid)); });
   let byParent = $derived(messages.reduce((acc, m) => {
     if (m.parent_tool_use_id) (acc[m.parent_tool_use_id] ??= []).push(m);
     return acc;

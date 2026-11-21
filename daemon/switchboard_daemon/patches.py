@@ -42,7 +42,7 @@ def with_mid_turn(session_id, msgs):
     path = _transcript(session_id)
     if not path:
         return msgs
-    parent, queued = {}, []
+    parent, queued, seen = {}, [], set()
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             if '"attachment"' not in line:  # cheap skip: only attachments sit between the messages the SDK returns
@@ -55,8 +55,8 @@ def with_mid_turn(session_id, msgs):
                 continue
             parent[d["uuid"]] = d.get("parentUuid")
             a = d.get("attachment") or {}
-            if a.get("type") == "queued_command" and a.get("prompt"):
-                queued.append((d["uuid"], a["prompt"]))
+            if a.get("type") == "queued_command" and a.get("prompt") and d["uuid"] not in seen:  # Claude Code can write a line twice
+                seen.add(d["uuid"]); queued.append((d["uuid"], a["prompt"]))
     if not queued:
         return msgs
     known = {m.get("uuid") for m in msgs if isinstance(m, dict)}
