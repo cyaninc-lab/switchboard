@@ -6,7 +6,7 @@ from aiohttp import web
 import claude_agent_sdk as sdk
 from . import __version__, peers
 from .store import Store
-from .runner import Runner, scrub_env, BTW_TITLE
+from .runner import Runner, scrub_env, login_path, BTW_TITLE
 from .tty import Terminals
 from .procs import alive
 from . import files as filesmod
@@ -796,6 +796,8 @@ def make_app(store: Store, name=None):
 
     async def start(app):
         scrub_env()
+        if (path := await asyncio.get_running_loop().run_in_executor(None, login_path)):
+            os.environ["PATH"] = path  # sessions get the user's terminal PATH (nvm's node for plugin hooks, ...)
         app[WATCH_TASK] = asyncio.get_running_loop().create_task(app[WATCHES].run())
         app[REAPER] = asyncio.get_running_loop().create_task(app[RUNNER].reap_loop())
 

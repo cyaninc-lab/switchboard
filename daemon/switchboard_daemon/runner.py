@@ -2,6 +2,7 @@
 
 Events (docs/protocol.md): state, delta, message, permission_request, permission_resolved, error.
 """
+import functools, subprocess
 import asyncio, dataclasses, os, shutil, sys, time, uuid
 from .logs import log, scrub
 from . import patches, peers
@@ -33,6 +34,32 @@ def scrub_env():
             os.environ["LD_LIBRARY_PATH"] = orig
         else:
             os.environ.pop("LD_LIBRARY_PATH", None)
+
+
+def login_path(shell=None, current=None):
+    """The PATH sessions get: the user's login shell's first (what a terminal has: nvm's node, ~/.cargo/bin, ...), then
+    the daemon's own, keeping only folders that exist. A daemon started by systemd or the desktop app had neither nvm's
+    node (plugin hooks like ponytail's run `node` and quietly did nothing) nor a clean PATH (an AppImage's /tmp mounts)."""
+    if os.name == "nt":
+        return None
+    shell = shell or os.environ.get("SHELL") or "/bin/bash"
+    current = os.environ.get("PATH", "") if current is None else current
+    return _login_path(shell, current)
+
+
+@functools.lru_cache(maxsize=8)  # once per daemon (tests start many apps)
+def _login_path(shell, current):
+    try:  # interactive + login: nvm and most PATH setup live in .bashrc / .zshrc; the markers skip anything rc files print
+        out = subprocess.run([shell, "-ilc", 'printf "\n<<SBPATH:%s>>\n" "$PATH"'], capture_output=True, text=True,
+                             timeout=10, stdin=subprocess.DEVNULL, env={**os.environ, "TERM": "dumb"}).stdout
+        theirs = out.split("<<SBPATH:", 1)[1].split(">>", 1)[0]
+    except Exception:
+        theirs = ""
+    seen, keep = set(), []
+    for d in theirs.split(":") + current.split(":"):
+        if d and d not in seen and os.path.isdir(d):
+            seen.add(d); keep.append(d)
+    return ":".join(keep) or None
 
 
 def _keep_synthetic():
@@ -188,6 +215,8 @@ class Runner:
             # SWITCHBOARD_MODEL overrides everything (tests run on Haiku); else the entry's choice; else Claude Code's default
             **({"model": m} if (m := os.environ.get("SWITCHBOARD_MODEL") or entry.get("model")) else {}),
             **({"cli_path": self.cli_path} if self.cli_path else {}),
+            # Claude Code's own system prompt (how it works, stays brief, uses tools): the SDK's default is an empty one
+            system_prompt={"type": "preset", "preset": "claude_code"},
             mcp_servers={"switchboard": self._tools(entry["id"])}, allowed_tools=list(TOOLS),
             max_buffer_size=MAX_MESSAGE,
             # Claude in Chrome: the terminal turns it on by itself, SDK sessions only with --chrome (checked on 2.1.327)

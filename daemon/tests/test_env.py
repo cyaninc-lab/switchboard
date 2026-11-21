@@ -22,3 +22,19 @@ def test_not_bundled_leaves_it_alone(monkeypatch):
     monkeypatch.setenv("LD_LIBRARY_PATH", "/opt/mine")
     scrub_env()
     assert os.environ["LD_LIBRARY_PATH"] == "/opt/mine"
+
+
+def test_sessions_get_the_login_shells_path_first(tmp_path):
+    """A daemon run by systemd or the desktop app lacked what a terminal has on PATH (nvm's node: plugin hooks that run
+    `node` quietly did nothing) and carried dead AppImage mounts. Sessions get the login shell's PATH, then the daemon's."""
+    if os.name == "nt":
+        return
+    from switchboard_daemon.runner import login_path
+    nvm, mine = tmp_path / "nvm-bin", tmp_path / "local-bin"
+    nvm.mkdir(); mine.mkdir()
+    sh = tmp_path / "fakeshell"  # an rc file that prints things, then the PATH a terminal would have
+    sh.write_text(f'#!/bin/sh\necho "welcome back!"\nPATH="{nvm}:/usr/bin:/tmp/.mount_gone/usr/bin"\nexec /bin/sh -c "$2"\n')
+    sh.chmod(0o755)
+    got = login_path(shell=str(sh), current=f"/tmp/.mount_SwitchX/usr/bin:{mine}:/usr/bin")
+    assert got == f"{nvm}:/usr/bin:{mine}"  # theirs first, no duplicates, folders that don't exist dropped
+    assert login_path(shell="/nonexistent/shell", current=f"{mine}:/nope") == str(mine)  # no shell: own PATH, cleaned

@@ -198,6 +198,7 @@ class ClaudeAgentOptions:
     env: dict = None
     effort: str = None
     mcp_servers: dict = None
+    system_prompt: object = None
     allowed_tools: list = None
     max_buffer_size: int = None
     extra_args: dict = None
