@@ -183,6 +183,11 @@ export async function setPhonePush(cfg: PhonePush) {
   await invoke('push_config', { config: JSON.stringify(cfg) });
   phonePushOn = cfg.machines.length > 0;
 }
+/** The phone app: which chat is on screen, so notifications for it are skipped while you read it (null: none). */
+export async function setPhoneViewing(machineUrl: string | null, entry?: string) {
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('push_viewing', { view: machineUrl && entry ? `${machineUrl.replace(/\/$/, '')}|${entry}` : null });
+}
 /** The session a tapped notification named (once), or null. */
 export async function takeNotificationOpen(): Promise<{ machine: string; entry: string } | null> {
   const { invoke } = await import('@tauri-apps/api/core');
