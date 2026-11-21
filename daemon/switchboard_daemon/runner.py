@@ -4,7 +4,7 @@ Events (docs/protocol.md): state, delta, message, permission_request, permission
 """
 import asyncio, dataclasses, os, shutil, sys, time, uuid
 from .logs import log, scrub
-from . import patches
+from . import patches, peers
 
 # one message from Claude Code (a Read of a big screenshot is one line of base64); the SDK's 1 MB default kills the session
 MAX_MESSAGE = 64 * 1024 * 1024
@@ -112,6 +112,7 @@ class Runner:
         self.side: dict[str, Side] = {}  # entry id -> its open /btw side chat
         self.elsewhere = lambda: set()  # {session id} a process outside this daemon holds (set by the app)
         self.last_call: dict[str, float] = {}  # entry id -> when it last rang the user
+        self.machine = "this machine"  # its name in clients (set by the app): how other machines address its sessions
 
     # ---- state ----
     def state(self, entry_id):
@@ -180,11 +181,29 @@ class Runner:
 
         async def sessions(args):
             others = [e for e in self.store.entries() if e["id"] != entry_id]
-            return say("\n".join(f'- "{e["name"]}" ({e["grp"]}): {view(e)}' for e in others) or "No other sessions in Switchboard on this machine.")
+            lines = [f'- "{e["name"]}" ({e["grp"]}): {view(e)}' for e in others] or ["No other sessions in Switchboard on this machine."]
+            for p in peers.peers(self.store):  # the user's other machines, if they linked them
+                es = await peers.entries(p)
+                lines += [f"- {p['name']}: can't be reached right now"] if es is None else \
+                    [f'- "{e["name"]}@{p["name"]}" ({e.get("group", "")}, on {p["name"]}): {e.get("state", "")}' for e in es]
+            return say("\n".join(lines))
 
         async def message(args):
             want, text = str(args.get("session", "")).strip(), str(args.get("text", ""))
             me = self.store.entry(entry_id)
+            name, _, machine = want.rpartition("@")
+            if name and (p := peers.find(self.store, machine)):  # "session@machine": one of the user's other machines
+                if not text.strip():
+                    return say("The message is empty.", True)
+                es = await peers.entries(p)
+                if es is None:
+                    return say(f"{p['name']} can't be reached right now.", True)
+                hits = [e for e in es if e["id"] == name] or [e for e in es if e["name"].lower() == name.lower()]
+                if len(hits) != 1:
+                    return say(f'{"No" if not hits else len(hits)} session{"s" if len(hits) > 1 else ""} named "{name}" on {p["name"]}; '
+                               "use the sessions tool to see their names.", True)
+                err = await peers.send(p, hits[0]["id"], text, f'{me["name"]}@{self.machine}')
+                return say(f'Couldn\'t deliver to "{want}": {err}', True) if err else say(f'Delivered to "{hits[0]["name"]}" on {p["name"]}.')
             hits = [e for e in self.store.entries() if e["id"] == want] or [e for e in self.store.entries() if e["name"].lower() == want.lower()]
             if not hits:
                 return say(f'No session named "{want}". Use the sessions tool to see their names.', True)
@@ -222,9 +241,11 @@ class Runner:
                        "conversationally (upbeat, exclamation marks where they fit), no markdown or lists, as it is read aloud. End your turn now. If they decline, carry on in the chat.")
 
         return sdk.create_sdk_mcp_server("switchboard", tools=[
-            sdk.tool("sessions", "List the other Claude sessions in Switchboard on this machine, by name, with their state. "
-                     "Stopped ones are included: unlike SendMessage, message_session can reach them.", {})(sessions),
-            sdk.tool("message_session", "Send a message to another Switchboard session on this machine, by its name from the sessions tool. "
+            sdk.tool("sessions", "List the other Claude sessions in Switchboard, by name, with their state: this machine's, and "
+                     "(as name@machine) those on the user's other machines if they linked them. Stopped ones are included: unlike "
+                     "SendMessage, message_session can reach them.", {})(sessions),
+            sdk.tool("message_session", "Send a message to another Switchboard session, by its name from the sessions tool "
+                     "(name@machine for one on another machine). "
                      "A stopped session is resumed to receive it. It arrives as a new prompt; the reply comes back the same way only "
                      "if that session chooses to answer.", {"session": str, "text": str})(message),
             sdk.tool("call_user", "Phone the user: their phone rings, and if they answer it reads your message aloud and you talk, turn by turn. "

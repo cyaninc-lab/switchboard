@@ -223,6 +223,27 @@
     try { net = await api.setNetwork(localMachine, !net.listen_tailscale); } catch (e) { netError = (e as Error).message; }
     netBusy = false;
   }
+  // ---- sessions messaging sessions on the user's other machines (each daemon gets the others' address + a peer token) ----
+  let linkMsg = $state(''), linking = $state(false);
+  async function linkMachines() {
+    linking = true; linkMsg = '';
+    try {
+      // the address other machines reach it at: the app's own unless that's localhost (this machine), then its Tailscale one
+      const reach: Record<string, string | null> = {};
+      for (const m of machines) reach[m.url] = /\/\/(127\.0\.0\.1|localhost)[:/]/.test(m.url + '/') ? (await api.network(m).catch(() => null))?.url ?? null : m.url;
+      const ok = machines.filter((m) => reach[m.url] && tree[m.url] && !tree[m.url].error);
+      for (const a of ok) {
+        const list = [];
+        for (const b of ok) if (b !== a) list.push({ name: b.name, url: reach[b.url]!, token: (await api.peerToken(b, a.name)).token });
+        await api.setPeers(a, list);
+      }
+      const left = machines.filter((m) => !ok.includes(m)).map((m) => m.name);
+      linkMsg = (ok.length > 1 ? `Linked: ${ok.map((m) => m.name).join(', ')}.` : 'Nothing to link yet.') +
+        (left.length ? ` Not linked (offline, or not reachable from your other machines): ${left.join(', ')}.` : '');
+    } catch (e) { linkMsg = `Couldn't link them: ${(e as Error).message}`; }
+    finally { linking = false; }
+  }
+
   // ---- phone notifications ----
   let pushServer = $state('');
   let pushOn = $state(false);
@@ -1885,6 +1906,11 @@
         </p>
       {/if}
       {#if svcError}<p class="error">{svcError}</p>{/if}
+
+      <h3 class="sub">Sessions across machines</h3>
+      <p class="muted small">Lets a session message sessions on your other machines (they show as <code>name@machine</code>), as it can on its own machine. Each machine gets its own revocable key for the others. Link again after adding a machine.</p>
+      <div class="actions" style="justify-content: flex-start"><button type="button" class="btn ghost" disabled={linking || machines.length < 2} onclick={linkMachines}>{linking ? 'Linking…' : 'Let sessions on my machines message each other'}</button></div>
+      {#if linkMsg}<p class="muted small" role="status">{linkMsg}</p>{/if}
 
       <h3 class="sub">Phone notifications</h3>
       <p class="muted small">The Switchboard phone app gets notifications through an <a href="https://ntfy.sh" target="_blank" rel="noreferrer">ntfy</a> server you run (on one machine is enough).</p>
