@@ -4,7 +4,7 @@ from pathlib import Path
 import aiohttp
 from aiohttp import web
 import claude_agent_sdk as sdk
-from . import __version__
+from . import __version__, peers
 from .store import Store
 from .runner import Runner, scrub_env, BTW_TITLE
 from .tty import Terminals
@@ -505,6 +505,13 @@ async def send_message(request):
         raise web.HTTPBadRequest(text=json.dumps({"code": "bad_send"}), content_type="application/json")
     if entry["session_id"] in await _off(open_in_terminal) - request.app[RUNNER].held_sessions():
         raise web.HTTPConflict(text=json.dumps({"code": "open_in_terminal"}), content_type="application/json")
+    sender = b.get("from")
+    if isinstance(sender, str) and sender.strip():  # a session on another of the user's machines (cross-machine messages)
+        sender = sender.strip()[:200]
+        await request.app[RUNNER].send(entry, f'Message from the session "{sender}" (on another machine, sent through Switchboard; '
+                                              f'to answer, use the switchboard message_session tool with session "{sender}"):\n\n{b["text"]}',
+                                       origin={"from": sender})
+        return web.json_response({"sent": True})
     if not b.get("wait"):
         await request.app[RUNNER].send(entry, b["text"])
         return web.json_response({"sent": True})
@@ -515,6 +522,29 @@ async def send_message(request):
         return web.json_response({"sent": True, "reply": await asyncio.wait_for(fut, 600)})
     except asyncio.TimeoutError:
         return web.json_response({"sent": True, "reply": None})
+
+
+async def peer_token(request):
+    """{machine}: a token for that other daemon of the user's, so its sessions can message this one's (the app links them)."""
+    b = await request.json()
+    if not isinstance(b.get("machine"), str) or not b["machine"].strip():
+        raise web.HTTPBadRequest(text=json.dumps({"code": "bad_machine"}), content_type="application/json")
+    return web.json_response({"token": request.app[STORE].peer_token(b["machine"].strip()[:100]), "machine": request.app[NAME]})
+
+
+async def get_peers(request):
+    return web.json_response({"peers": [{"name": p["name"], "url": p["url"]} for p in peers.peers(request.app[STORE])]})
+
+
+async def set_peers(request):
+    """{peers: [{name, url, token}]}: the user's other machines this one's sessions may message (replaces the list)."""
+    ps = (await request.json()).get("peers")
+    ok = lambda p: isinstance(p, dict) and all(isinstance(p.get(k), str) and p[k] for k in ("name", "url", "token")) \
+        and p["url"].startswith(("http://", "https://"))
+    if not isinstance(ps, list) or not all(map(ok, ps)):
+        raise web.HTTPBadRequest(text=json.dumps({"code": "bad_peers"}), content_type="application/json")
+    peers.set_peers(request.app[STORE], ps)
+    return await get_peers(request)
 
 
 async def pair_code(request):
@@ -747,6 +777,7 @@ def make_app(store: Store, name=None):
     app[SOCKETS] = set()
     app[PUSH_STATE] = {}
     app[RUNNER] = Runner(store, sdk, lambda ev: _broadcast(app, ev))
+    app[RUNNER].machine = app[NAME]
     app[TTYS] = Terminals(lambda ev: _broadcast(app, ev))
     app[RUNNER].elsewhere = lambda: open_in_terminal() - app[RUNNER].held_sessions() - app[TTYS].held_sessions()
     app[NET] = Network(store)
@@ -780,6 +811,7 @@ def make_app(store: Store, name=None):
         web.post("/v1/entries/{id}/answer", answer_request), web.post("/v1/entries/{id}/send", send_message),
         web.get("/v1/github", github_status), web.post("/v1/github/device", github_start), web.post("/v1/github/poll", github_poll),
         web.delete("/v1/github", github_sign_out), web.post("/v1/github/issue", github_issue), web.post("/v1/pair_code", pair_code),
+        web.post("/v1/peer_token", peer_token), web.get("/v1/peers", get_peers), web.put("/v1/peers", set_peers),
         web.get("/v1/watches", list_watches), web.post("/v1/watches", add_watch), web.patch("/v1/watches/{id}", update_watch),
         web.delete("/v1/watches/{id}", remove_watch), web.post("/v1/watches/{id}/test", test_watch),
         web.get("/v1/inbox", list_inbox), web.post("/v1/inbox/read", read_inbox), web.post("/v1/inbox/{id}/read", read_inbox), web.delete("/v1/inbox/{id}", delete_inbox),

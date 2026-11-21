@@ -101,6 +101,10 @@ export const removeAccount = (m: Machine, name: string) => call<void>(m, `/v1/ac
 export type Network = { listen_tailscale: boolean; active: string[]; error: string | null; port: number;
   url: string | null; tailscale: { name: string | null; dns: string | null; ips: string[] } | null };
 export const network = (m: Machine) => call<Network>(m, '/v1/network');
+// cross-machine messages: a token from `m` for another machine's daemon; `m`'s list of machines its sessions may message
+export const peerToken = (m: Machine, machine: string) => call<{ token: string }>(m, '/v1/peer_token', { method: 'POST', body: JSON.stringify({ machine }) });
+export const setPeers = (m: Machine, peers: { name: string; url: string; token: string }[]) =>
+  call<{ peers: { name: string; url: string }[] }>(m, '/v1/peers', { method: 'PUT', body: JSON.stringify({ peers }) });
 export const files = (m: Machine, entry: string, q: string) => call<{ files: string[] }>(m, `/v1/entries/${entry}/files?q=${encodeURIComponent(q)}`);
 // bug reports to GitHub through this machine's daemon (GitHub's sign-in can't be called from a page)
 export type GitHub = { signed_in: boolean; login: string | null };

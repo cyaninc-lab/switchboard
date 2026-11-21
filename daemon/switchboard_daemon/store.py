@@ -79,6 +79,14 @@ class Store:
         self.db.execute("INSERT INTO clients VALUES (?, ?, ?)", (_hash(token), client_name or "client", time.time()))
         return token
 
+    def peer_token(self, machine):
+        """A token for another of the user's daemons (cross-machine messages); a fresh one replaces its old one."""
+        name = f"peer: {machine}"
+        self.db.execute("DELETE FROM clients WHERE name = ?", (name,))
+        token = secrets.token_urlsafe(32)
+        self.db.execute("INSERT INTO clients VALUES (?, ?, ?)", (_hash(token), name, time.time()))
+        return token
+
     def client_for(self, token):
         row = self.db.execute("SELECT name FROM clients WHERE token_hash = ?", (_hash(token),)).fetchone()
         return row["name"] if row else None
