@@ -1,5 +1,5 @@
-"""switchboard-daemon: serve | pair | clients | revoke <hash prefix>"""
-import argparse, asyncio, os, signal, time
+"""switchboard-daemon: serve | pair | clients | revoke <hash prefix> | account | update"""
+import argparse, asyncio, os, signal, sys, time
 from aiohttp import web
 from .app import make_app
 from .store import Store, default_data_dir
@@ -60,6 +60,8 @@ def main():
     s.add_argument("--name", help="machine name shown in clients (default: hostname)")
     s.add_argument("--exit-with", type=int, metavar="PID", help="exit when this process ends (the desktop app passes its own pid)")
     s.add_argument("--demo", action="store_true", help="serve canned demo sessions instead of this machine's (UI tests, screenshots)")
+    s.add_argument("--auto-update", action="store_true", help="install new releases by itself, then exit for the service manager to restart it (pip installs only)")
+    sub.add_parser("update", help="install the latest release now if it's newer (pip installs only; restart the service after)")
     sub.add_parser("pair", help="print a one-time pairing code (10 minutes, single use)")
     sub.add_parser("clients", help="list paired clients")
     r = sub.add_parser("revoke", help="revoke a client by the start of its token hash")
@@ -87,10 +89,27 @@ def main():
         app = make_app(store, a.name or ("demo" if a.demo else None))
         if a.exit_with:
             app.on_startup.append(lambda _app: _watch(a.exit_with))
+        if a.auto_update and not getattr(sys, "frozen", False):  # the bundled daemon is the desktop app's to update
+            from . import update
+            from .app import RUNNER
+            async def auto(app):
+                app["update_task"] = asyncio.get_running_loop().create_task(update.loop(app[RUNNER]))
+            app.on_startup.append(auto)
         try:
             asyncio.run(_serve(app, a.host, a.port))
         except KeyboardInterrupt:
             pass
+    elif a.cmd == "update":
+        from . import update, __version__
+        if getattr(sys, "frozen", False):
+            sys.exit("This daemon came with the desktop app; the app updates it.")
+        tag = asyncio.run(update.latest())
+        if not update.newer(tag):
+            print(f"Up to date ({__version__})")
+        elif asyncio.run(update.install(tag)):
+            print(f"Installed {tag}; restart the daemon to use it (systemctl --user restart switchboard-daemon)")
+        else:
+            sys.exit(f"Installing {tag} failed")
     elif a.cmd == "pair":
         print(store.new_pair_code())
     elif a.cmd == "clients":
