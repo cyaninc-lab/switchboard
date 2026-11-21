@@ -2,7 +2,7 @@
   import * as api from '$lib/api';
   import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell, openExternal, openLocal, appVersion, checkForUpdate, notify,
     soloOf, popOut, takeHandoff, focusWindow, onSoloClosing, onSoloEvents, soloOpened, closeThisWindow, setOnTop, useParentShell, canOpenLocally,
-    isPhoneApp, isDesktopApp, pairLink, scanPairCode, setPhonePush, takeNotificationOpen, setPhoneViewing } from '$lib/shell';
+    isPhoneApp, isDesktopApp, pairLink, scanPairCode, setPhonePush, takeNotificationOpen, setPhoneViewing, clipboardImage } from '$lib/shell';
   import qrcode from 'qrcode-generator';
   import { backdrop } from '$lib/backdrop';
   import { theme, THEMES, applyTheme, fonts, UI_FONTS, MONO_FONTS, CHAT_FONTS, SIZES, applyFonts } from '$lib/themes.svelte';
@@ -509,7 +509,9 @@
   }
   function onPaste(ev: ClipboardEvent) {
     const files = [...(ev.clipboardData?.items ?? [])].filter((i) => i.kind === 'file').map((i) => i.getAsFile()!).filter(Boolean);
-    if (files.length) { ev.preventDefault(); addFiles(files); }
+    if (files.length) { ev.preventDefault(); addFiles(files); return; }
+    // the desktop app on Linux: the paste carries no image, so read it from the system clipboard (text pastes as usual)
+    if (!ev.clipboardData?.getData('text/plain')) clipboardImage().then((f) => { if (f) addFiles([f]); });
   }
   function onDrop(ev: DragEvent) { ev.preventDefault(); if (ev.dataTransfer?.files.length) addFiles(ev.dataTransfer.files); }
   async function loadCommands(m: Machine) { try { cmdList[m.url] = await api.commands(m); } catch {} }

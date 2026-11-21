@@ -40,6 +40,24 @@ export const openLocal = (path: string): Promise<string> =>
   viaParent && !inShell() ? (askParent({ do: 'path', path }), Promise.resolve('asked'))
     : import('@tauri-apps/api/core').then(({ invoke }) => invoke<string>('open_local', { path }));
 
+/** The desktop app: an image on the system clipboard, as a PNG file, or null. A paste in the app's webview (WebKitGTK
+ * on Linux) carries no image files, so a copied screenshot or picture pasted as nothing. */
+export async function clipboardImage(): Promise<File | null> {
+  if (!isDesktopApp()) return null;
+  try {
+    const { readImage } = await import('@tauri-apps/plugin-clipboard-manager');
+    const img = await readImage();
+    const { width, height } = await img.size();
+    const rgba = await img.rgba();
+    const c = Object.assign(document.createElement('canvas'), { width, height });
+    c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(rgba), width, height), 0, 0);
+    const blob = await new Promise<Blob | null>((ok) => c.toBlob(ok, 'image/png'));
+    return blob ? new File([blob], 'pasted image.png', { type: 'image/png' }) : null;
+  } catch {
+    return null;  // no image on the clipboard (text, or empty)
+  }
+}
+
 /** Open a URL in the user's browser (the system one in the desktop app). */
 export async function openExternal(url: string) {
   if (viaParent && !inShell()) return askParent({ do: 'url', url });
