@@ -35,3 +35,18 @@ def test_up_to_date_or_failed_install_keeps_running(monkeypatch):
     monkeypatch.setattr(update, "latest", new); monkeypatch.setattr(update, "install", broken)
     assert asyncio.run(update.check(runner, quit=lambda: quits.append(1))) is None
     assert quits == []
+
+
+def test_serve_starts_with_auto_update(tmp_path):
+    """The daemon must come up with --auto-update (0.1.26 crashed: a later `import sys` in main() made sys local)."""
+    import socket, subprocess, time
+    s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
+    p = subprocess.Popen([sys.executable, "-m", "switchboard_daemon", "--data", str(tmp_path), "serve", "--port", str(port), "--auto-update"],
+                         cwd=os.path.join(os.path.dirname(__file__), ".."), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    try:
+        deadline, out = time.time() + 20, ""
+        while time.time() < deadline and "Running on" not in out and p.poll() is None:
+            out += p.stdout.readline()
+        assert "Running on" in out, out
+    finally:
+        p.terminate(); p.wait(10)

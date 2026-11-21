@@ -124,7 +124,7 @@ def main():
         elif not a.name:
             p.error("account add/remove needs a name")
         elif a.action == "add":
-            import getpass, sys
+            import getpass
             secret = sys.stdin.readline() if not sys.stdin.isatty() else getpass.getpass("Token (from `claude setup-token`): ")
             store.add_account(a.name, secret, "api_key" if a.api_key else "oauth")
             print(f"added account {a.name}")
