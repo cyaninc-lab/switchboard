@@ -1707,7 +1707,7 @@
           <button type="button" class="tiny" aria-label="Attach images" title="Attach images (or paste / drop them)" onclick={() => fileInput?.click()}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" /></svg>
           </button>
-          {#if selected.entry.state === 'working'}<button type="button" class="tiny" aria-label={phone ? 'Interrupt' : undefined} title="Interrupt (Esc)" onclick={() => act((l, id) => l.interrupt(id))}>{phone ? '■' : 'Esc · interrupt'}</button>{/if}
+          {#if selected.entry.state === 'working' || selected.entry.state === 'waiting'}<button type="button" class="tiny" aria-label={phone ? 'Interrupt' : undefined} title="Interrupt (Esc)" onclick={() => act((l, id) => l.interrupt(id))}>{phone ? '■' : 'Esc · interrupt'}</button>{/if}
           {#if phone}<button type="submit" class="sendbtn" aria-label="Send" title="Send (hold for send now)"
             oncontextmenu={(ev) => { ev.preventDefault(); sendNow = true; (ev.currentTarget as HTMLButtonElement).form?.requestSubmit(); }}>↑</button>{/if}
         </form>
