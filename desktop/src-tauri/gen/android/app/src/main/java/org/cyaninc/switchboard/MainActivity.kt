@@ -20,12 +20,22 @@ class MainActivity : TauriActivity() {
 
   // a tapped notification names a session: leave it for the web UI to open (lib.rs push_take_open)
   private fun remember(intent: Intent?) {
+    intent?.getStringExtra(Updater.EXTRA)?.let { pendingUpdate = it; installUpdate() }  // "Update ready" was tapped
     val entry = intent?.getStringExtra("entry") ?: return
     File(dataDir, "open.json").writeText(JSONObject().put("machine", intent.getStringExtra("machine")).put("entry", entry).toString())
   }
 
+  // the downloaded update to install; kept if Android first needs "allow installing" (back from that screen: go on)
+  private var pendingUpdate: String? = null
+  private fun installUpdate() {
+    val p = pendingUpdate ?: return
+    if (packageManager.canRequestPackageInstalls()) pendingUpdate = null
+    Thread { Updater.install(this, File(p)) }.start()
+  }
+
   override fun onResume() {
     super.onResume()
+    if (pendingUpdate != null && packageManager.canRequestPackageInstalls()) installUpdate()
     // once notifications are set up: ask once to be left out of battery saving, or Android delays them for hours
     val prefs = getSharedPreferences("push", MODE_PRIVATE)
     if (Push.config(this) != null && !prefs.getBoolean("asked_battery", false)
