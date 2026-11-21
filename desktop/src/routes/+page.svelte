@@ -1404,8 +1404,14 @@
             <div class="mhead">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2" /><line x1="8" y1="20" x2="16" y2="20" /></svg>
               <span class="mname">{m.name}</span>
+              {#if !tree[m.url]}<span class="muted small">connecting…</span>
+              {:else if tree[m.url].error}<span class="offtag" title={tree[m.url].error}>can't reach</span>{/if}
               <button class="tiny" title="Disconnect" aria-label="Disconnect {m.name}" onclick={() => disconnect(m)}>×</button>
             </div>
+            {#if tree[m.url]?.error}
+              <p class="offnote">{m.name} isn't answering. Is it on, and is this device connected to it (Tailscale)?
+                <button class="link" onclick={() => refresh()}>Retry</button></p>
+            {/if}
             {#each groups(m) as [g, es] (g)}
               {@const gk = `g:${m.url}|${g}`}
               {@const gOpen = subOpen[gk] ?? true}
@@ -2146,7 +2152,9 @@
   :global(input) { width: 100%; box-sizing: border-box; background: var(--base); border: 1px solid var(--s1); border-radius: 8px; padding: 8px 10px; color: var(--text); font: inherit; }
   .scroll { flex: 1; overflow: auto; padding: 0 8px 12px; }
   .empty { color: var(--o2); padding: 8px; }
-  .machine { margin-top: 6px; } .machine.offline { opacity: 0.6; }
+  .machine { margin-top: 6px; } .machine.offline .group, .machine.offline .entry { opacity: 0.6; }
+  .offtag { font-size: 11px; color: var(--red); border: 1px solid var(--red); border-radius: 4px; padding: 0 5px; }
+  .offnote { margin: 4px 8px 8px; font-size: 12px; color: var(--sub0); }
   .mhead { display: flex; align-items: center; gap: 6px; padding: 6px 8px; }
   .mname { font-weight: 600; flex: 1; }
   :global(.tiny.on) { border-color: var(--mauve); color: var(--text); }

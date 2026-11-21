@@ -70,7 +70,8 @@ export async function pair(url: string, code: string, clientName: string): Promi
   return { url, token: d.token, name: d.machine };
 }
 
-export const entries = (m: Machine) => call<{ entries: Entry[] }>(m, '/v1/entries').then((d) => d.entries);
+// 10 s: a machine that can't be reached (off, or this device off its Tailscale) otherwise hangs for minutes, looking empty
+export const entries = (m: Machine) => call<{ entries: Entry[] }>(m, '/v1/entries', { signal: AbortSignal.timeout(10_000) }).then((d) => d.entries);
 export const sessions = (m: Machine, q = '', limit = 50) =>
   call<{ total: number; sessions: Session[] }>(m, `/v1/sessions?q=${encodeURIComponent(q)}&limit=${limit}`);
 export type WatchKind = 'schedule' | 'command' | 'http' | 'github';
