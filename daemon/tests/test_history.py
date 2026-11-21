@@ -21,6 +21,9 @@ def test_mid_turn_messages_come_back_where_they_were_read(tmp_path, monkeypatch)
     assert [m["uuid"] for m in out] == ["u1", "a1", "r1", "q1", "a2"]
     assert out[3]["message"] == {"role": "user", "content": "also BANANA"}
     assert patches.with_mid_turn("missing", msgs) == msgs
+    # Claude Code sometimes writes the same lines again further down: still put back once
+    (d / "s1.jsonl").write_text("\n".join(json.dumps(l) for l in lines + lines[3:]))
+    assert [m["uuid"] for m in patches.with_mid_turn("s1", msgs)] == ["u1", "a1", "r1", "q1", "a2"]
 
 
 def test_claude_codes_own_notes_are_not_shown_as_the_users():
