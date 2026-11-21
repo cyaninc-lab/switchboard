@@ -89,6 +89,12 @@ def main():
         app = make_app(store, a.name or ("demo" if a.demo else None))
         if a.exit_with:
             app.on_startup.append(lambda _app: _watch(a.exit_with))
+        if getattr(sys, "frozen", False) and not a.exit_with:  # the background service: restart itself into a replaced file
+            from . import update as upd
+            from .app import RUNNER
+            async def watch_file(app):
+                app["file_task"] = asyncio.get_running_loop().create_task(upd.restart_when_replaced(app[RUNNER]))
+            app.on_startup.append(watch_file)
         if a.auto_update and not getattr(sys, "frozen", False):  # the bundled daemon is the desktop app's to update
             from . import update
             from .app import RUNNER

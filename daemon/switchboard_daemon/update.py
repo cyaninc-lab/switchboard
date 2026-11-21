@@ -72,3 +72,27 @@ async def loop(runner):
         except Exception:
             log.exception("update check")
         await asyncio.sleep(EVERY)
+
+
+RESTART = 75  # exit code: "my file was replaced, start me again" (the service restarts on a failure exit)
+
+
+async def restart_when_replaced(runner, path=None, every=30, quit=lambda: os._exit(RESTART)):
+    """The background service's daemon (the bundled one): when the desktop app or an update script puts a new file in
+    its place, wait until no session is busy, close them, and exit for systemd to start the new one. Restarting from
+    outside cut sessions off mid-reply."""
+    path = path or sys.executable
+    def stamp():
+        try:
+            st = os.stat(path); return st.st_mtime_ns, st.st_size
+        except OSError:
+            return None
+    was = stamp()
+    while True:
+        await asyncio.sleep(every)
+        now = stamp()
+        if now and now != was and not busy(runner):
+            log.info("daemon file replaced: restarting into the new one (no session busy)")
+            await runner.close_all()
+            quit()
+            return

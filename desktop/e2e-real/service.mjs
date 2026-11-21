@@ -12,6 +12,7 @@ const SLOW = Number(process.env.SLOW ?? 1500);
 // a run that crashed can leave a WebDriver session holding the only slot
 try { _x('pkill -x tauri-driver; pkill -x WebKitWebDriver'); } catch {} // stale
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('CLAUDE')));
+env.SWITCHBOARD_NO_SERVICE_REFRESH = '1';  // a test build must never put its daemon into the real background service
 const sh = (c) => { try { return execSync(c, { encoding: 'utf8' }).trim(); } catch (e) { return (e.stdout || '').trim(); } };
 const port = () => sh("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:7878/v1/machine");
 const embeddedProcs = () => sh("pgrep -fc 'release/switchboard-daemo[n] serve' || true");

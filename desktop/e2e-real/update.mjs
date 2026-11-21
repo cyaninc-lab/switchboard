@@ -10,6 +10,7 @@ const APPIMAGE = process.env.SB_APPIMAGE ?? `${process.env.HOME}/Applications/Sw
 const SLOW = Number(process.env.SLOW ?? 2000);
 try { _x('pkill -x tauri-driver; pkill -x WebKitWebDriver'); } catch {} // stale
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('CLAUDE')));
+env.SWITCHBOARD_NO_SERVICE_REFRESH = '1';  // a test build must never put its daemon into the real background service
 const sha = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
 const before = sha(APPIMAGE);
 const latest = await (await fetch('https://github.com/cyaninc-lab/switchboard-releases/releases/latest/download/latest.json')).json();

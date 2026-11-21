@@ -10,6 +10,7 @@ const DRIVER = process.env.SB_DRIVER_URL;
 const SLOW = Number(process.env.SLOW ?? 1500);
 if (!DRIVER) try { _x('pkill -x tauri-driver; pkill -x WebKitWebDriver'); } catch {} // stale
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('CLAUDE')));
+env.SWITCHBOARD_NO_SERVICE_REFRESH = '1';  // a test build must never put its daemon into the real background service
 env.SWITCHBOARD_MODEL ??= 'claude-haiku-5-5';
 const folder = process.env.SB_FOLDER ?? mkdtempSync('/tmp/sb-new-');
 const step = async (m) => { console.log('·', m); await sleep(SLOW); };

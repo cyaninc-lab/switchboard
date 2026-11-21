@@ -14,6 +14,7 @@ const PORT = 7899;
 try { _x('pkill -x tauri-driver; pkill -x WebKitWebDriver'); } catch {} // stale
 const home = mkdtempSync(join(tmpdir(), 'sb-win-'));
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('CLAUDE')));
+env.SWITCHBOARD_NO_SERVICE_REFRESH = '1';  // a test build must never put its daemon into the real background service
 Object.assign(env, { XDG_DATA_HOME: join(home, 'data'), XDG_CONFIG_HOME: join(home, 'config'), XDG_CACHE_HOME: join(home, 'cache'),
   // if no Switchboard runs here, the test app starts its own daemon on 7878: never let that one reach real Claude
   SWITCHBOARD_CLAUDE: '/bin/false' });
