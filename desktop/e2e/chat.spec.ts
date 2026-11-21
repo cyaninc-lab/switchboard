@@ -94,8 +94,17 @@ test('chat: stream, approve, deny, interrupt, auto mode, stop', async ({ page })
   await expect(log).toContainText('Done: run in auto');
   await expect(card).toHaveCount(0);
 
-  // stop closes the live session; it stays in the tree
+  // Stop interrupts what it's doing; the session stays open (no re-reading its history on the next message)
+  await input.fill('a slow job');
+  await input.press('Enter');
+  await expect(entry).toHaveAttribute('title', 'Working');
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect(entry).toHaveAttribute('title', 'Live and ready', { timeout: 5000 });
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);  // nothing to stop now
+
+  // ⋯ → Close session ends the process; it stays in the tree
+  await page.getByRole('button', { name: 'More' }).click();
+  await page.getByRole('menuitem', { name: 'Close session' }).click();
   await expect(entry).toHaveAttribute('title', /Stopped/);
   await page.screenshot({ path: 'e2e/.results/chat.png' });
 });

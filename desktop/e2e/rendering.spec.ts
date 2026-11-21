@@ -80,6 +80,7 @@ test('diffs, to-dos, expandable output and the context/cost meter', async ({ pag
   expect(copied).toMatch(/^\/srv\/agents\/[^ ]+\/server\/app\.py$/);  // the session's folder + the path, no :212
   await expect(page.getByRole('status').filter({ hasText: 'Copied:' })).toContainText(copied);
 
-  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await page.getByRole('button', { name: 'More' }).click();
+  await page.getByRole('menuitem', { name: 'Close session' }).click();
   await page.getByRole('button', { name: 'Remove from tree' }).click();
 });

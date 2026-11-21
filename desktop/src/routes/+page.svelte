@@ -1371,7 +1371,7 @@
       <button role="menuitem" onclick={() => { const m = mm.machine, en = me; ctx = null; tasksFor = { machine: m, entry: en }; }}>Background tasks…{#if bgRunning(me)} <span class="muted small">({bgRunning(me)} running)</span>{/if}</button>
       {#if phone && selected?.entry.id === me.id}<button role="menuitem" onclick={() => { ctx = null; sessOpts = true; }}>Session settings…</button>{/if}
       <button role="menuitem" onclick={() => startRename('e:' + me.id, me.name)}>Rename</button>
-      <button role="menuitem" disabled={!LIVE_STATES.includes(me.state)} title="Ends the Claude process; it stays in the tree and resumes on your next message"
+      <button role="menuitem" disabled={!LIVE_STATES.includes(me.state)} title="Ends the Claude process; it stays in the tree and resumes on your next message, which re-reads its whole history (costly for a long session). To stop what it's doing, use Stop"
         onclick={() => closeSession(mm.machine, me)}>Close session</button>
       {#if isDesktopApp() && !solo}<button role="menuitem" onclick={async () => { const m = mm.machine, en = me; ctx = null; await open(m, en, 'keep'); if (!inWindow[en.id]) popOutCurrent(); }}>Open in new window</button>{/if}
       {#if !solo}<button role="menuitem" onclick={() => { const m = mm.machine, en = me; ctx = null; openSplit(m, en, 'side'); }}>Open to the side</button>
@@ -1560,7 +1560,9 @@
           <button class="tiny" class:on={termFor === selected.entry.id} onclick={() => { termFor = termFor === selected!.entry.id ? null : selected!.entry.id; if (!termFor) open(selected!.machine, selected!.entry); }}
             title="Switch between the chat view and the real claude terminal">{termFor === selected.entry.id ? 'Chat' : 'Terminal'}</button>
           <button class="tiny hstop" aria-label="More" title="More: background tasks, rename, split…" onclick={(ev) => { const r = (ev.currentTarget as HTMLElement).getBoundingClientRect(); ev.stopPropagation(); ctx = { x: r.right - 210, y: r.bottom + 4, machine: selected!.machine, entry: selected!.entry }; }}>⋯</button>
-          {#if LIVE_STATES.includes(selected.entry.state)}<button class="tiny hstop" onclick={() => act((l, id) => l.stop(id))} title="Close the live session; it resumes on your next message">Stop</button>{/if}
+          <!-- Stop interrupts: the session stays open, so its next message doesn't re-read (and re-cache) the whole history.
+               Closing the process is ⋯ → Close session. -->
+          {#if selected.entry.state === 'working' || selected.entry.state === 'waiting'}<button class="tiny hstop" onclick={() => act((l, id) => l.interrupt(id))} title="Stop what Claude is doing (Esc). The session stays open">Stop</button>{/if}
           {#if solo && !solo.embed}
             <button class="tiny" class:on={onTop} aria-pressed={onTop} onclick={() => { onTop = !onTop; setOnTop(onTop).catch(() => {}); }} title="Keep this window above other windows">Keep on top</button>
             <button class="tiny" onclick={() => closeThisWindow()} title="Close this window; the session goes back to a tab in the main window">Back to tabs</button>
