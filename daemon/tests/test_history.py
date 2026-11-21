@@ -21,3 +21,14 @@ def test_mid_turn_messages_come_back_where_they_were_read(tmp_path, monkeypatch)
     assert [m["uuid"] for m in out] == ["u1", "a1", "r1", "q1", "a2"]
     assert out[3]["message"] == {"role": "user", "content": "also BANANA"}
     assert patches.with_mid_turn("missing", msgs) == msgs
+
+
+def test_claude_codes_own_notes_are_not_shown_as_the_users():
+    from claude_agent_sdk._internal import message_parser
+    from switchboard_daemon.runner import as_history
+    note = message_parser.parse_message({"type": "user", "isSynthetic": True, "uuid": "n1", "session_id": "s", "parent_tool_use_id": None,
+        "message": {"role": "user", "content": [{"type": "text", "text": "[Image: original 1080x2400, displayed at 900x2000.]"}]}})
+    assert as_history(note) is None
+    typed = message_parser.parse_message({"type": "user", "uuid": "u1", "session_id": "s", "parent_tool_use_id": None,
+        "message": {"role": "user", "content": "hello"}})
+    assert as_history(typed)["message"]["content"] == "hello"

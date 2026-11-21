@@ -35,10 +35,34 @@ def scrub_env():
             os.environ.pop("LD_LIBRARY_PATH", None)
 
 
+def _keep_synthetic():
+    """Claude Code adds notes of its own as user messages (after Read shows an image: "[Image: original 1080x2400,
+    displayed at …]"), flagged isSynthetic. The SDK's parser drops the flag, so they showed as if the user had sent
+    them; history never had them (the transcript flags them isMeta, which get_session_messages() skips)."""
+    try:
+        from claude_agent_sdk._internal import message_parser, client as internal
+    except ImportError:
+        return
+    orig = message_parser.parse_message
+
+    def parse(data):
+        m = orig(data)
+        if isinstance(data, dict) and data.get("isSynthetic"):
+            try:
+                m.synthetic = True
+            except AttributeError:
+                pass
+        return m
+    message_parser.parse_message = internal.parse_message = parse
+
+
+_keep_synthetic()
+
+
 def as_history(msg):
     """Live SDK message -> the same shape get_session_messages() returns, so the UI renders both alike."""
     name = type(msg).__name__
-    if name not in ("AssistantMessage", "UserMessage"):
+    if name not in ("AssistantMessage", "UserMessage") or getattr(msg, "synthetic", False):
         return None
     content = msg.content
     if not isinstance(content, str):
