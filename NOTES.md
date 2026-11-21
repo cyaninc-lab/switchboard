@@ -1,4 +1,3 @@
-## Switchboard 0.1.30
+## Switchboard 0.1.31
 
-- **Paste images with Ctrl+V** in the desktop app on Linux (it did nothing before).
-- **Updates never cut a session off:** when the app updates the background service, the service now restarts itself only once no session is replying, waiting on you or running a task.
+- **The phone app updates itself:** it checks for a new version every few hours, downloads it in the background and shows "Switchboard … is ready". Tap it to install. The first time, Android asks you to allow Switchboard to install updates; after that, updates install without the extra screens.
