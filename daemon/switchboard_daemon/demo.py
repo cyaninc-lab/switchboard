@@ -240,6 +240,7 @@ class ClaudeSDKClient:
         self.options, self.prompt, self.interrupted, self.images, self.started = options, "", False, 0, False
         self.go = asyncio.Event()
         self.side = []
+        self.inbox = []  # (prompt, images) in order: one sent mid-turn waits for the turn to end, as when the real CLI has no step left
 
     async def connect(self):
         pass
@@ -248,15 +249,12 @@ class ClaudeSDKClient:
         pass
 
     async def query(self, text):
-        self.interrupted, self.images = False, 0
         if isinstance(text, str):
-            self.prompt = text
-            self.go.set()
-            return
-        async for msg in text:  # a user message with content blocks (images)
-            blocks = msg["message"]["content"]
-            self.images = sum(b["type"] == "image" for b in blocks)
-            self.prompt = " ".join(b.get("text", "") for b in blocks if b["type"] == "text")
+            self.inbox.append((text, 0))
+        else:
+            async for msg in text:  # a user message with content blocks (images)
+                blocks = msg["message"]["content"]
+                self.inbox.append((" ".join(b.get("text", "") for b in blocks if b["type"] == "text"), sum(b["type"] == "image" for b in blocks)))
         self.go.set()
 
     async def receive_messages(self):
@@ -268,8 +266,10 @@ class ClaudeSDKClient:
                 while self.side:
                     yield self.side.pop(0)
                 continue
-            async for m in self.receive_response():
-                yield m
+            while self.inbox:
+                (self.prompt, self.images), self.interrupted = self.inbox.pop(0), False
+                async for m in self.receive_response():
+                    yield m
 
     async def stop_task(self, task_id):  # as Claude Code reports a killed task: a task_updated with status killed
         self.side.append(SystemMessage("task_updated", {"task_id": task_id, "patch": {"status": "killed"}}))
@@ -392,7 +392,7 @@ class ClaudeSDKClient:
 
             async def later():
                 await asyncio.sleep(float(os.environ.get("SB_DEMO_BG_SECONDS", 1)))
-                self.prompt = "background task finished"
+                self.inbox.append(("background task finished", 0))
                 self.go.set()
             asyncio.get_running_loop().create_task(later())
         if text == "background task finished":

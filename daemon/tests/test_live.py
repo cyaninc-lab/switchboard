@@ -194,18 +194,19 @@ def test_new_session(tmp_path, monkeypatch):
     asyncio.run(t())
 
 
-def test_queue_while_working(tmp_path, monkeypatch):
+def test_message_while_working_goes_straight_in(tmp_path, monkeypatch):
+    """Like Claude Code: a message sent while Claude works goes to the CLI at once (it reads it after its current
+    step), not held until the turn ends. Clients are told it's sent right away."""
     async def t():
         client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
         eid = e["id"]
         await ws.send_json({"type": "send", "entry": eid, "text": "first"})
         await until(ws, lambda m: m["type"] == "state" and m["state"] == "working")
         await ws.send_json({"type": "send", "entry": eid, "text": "second"})
-        q, _ = await until(ws, lambda m: m["type"] == "queued")
-        assert q["count"] == 1
+        q, seen = await until(ws, lambda m: m["type"] == "queued")
+        assert q["count"] == 0 and q["sent"] == 1
+        assert not any("Done: first" in str(m) for m in seen)  # before the first turn ended
         _, seen = await until(ws, lambda m: m["type"] == "message" and "Done: second" in str(m))
-        texts = [str(m) for m in seen if m["type"] == "message"]
-        assert any("Done: first" in t for t in texts)  # first finished before second started
         await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
         await client.close()
     asyncio.run(t())
@@ -483,17 +484,14 @@ def test_session_options(tmp_path, monkeypatch):
 
 
 def test_send_now_interrupts_and_sends_first(tmp_path, monkeypatch):
-    """Ctrl+Enter (send now): the running turn is interrupted and this message goes ahead of anything already queued."""
+    """Ctrl+Enter (send now): the running turn is interrupted and this message is sent."""
     async def t():
         client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
         await ws.send_json({"type": "send", "entry": e["id"], "text": "a slow job"})
         await until(ws, lambda m: m["type"] == "state" and m["state"] == "working")
-        await ws.send_json({"type": "send", "entry": e["id"], "text": "queued earlier"})
-        await until(ws, lambda m: m["type"] == "queued" and m["count"] == 1)
         await ws.send_json({"type": "send", "entry": e["id"], "text": "jump the queue", "now": True})
-        _, seen = await until(ws, lambda m: m["type"] == "message" and "Done: queued earlier" in str(m), timeout=8)
-        dones = [str(m) for m in seen if m["type"] == "message" and "Done: " in str(m)]
-        assert "Done: jump the queue" in dones[0] and "Done: queued earlier" in dones[1]  # first, and the old queue kept
+        _, seen = await until(ws, lambda m: m["type"] == "message" and "Done: jump the queue" in str(m), timeout=8)
+        assert not any("Done: a slow job" in str(m) for m in seen)  # the slow job was cut short
         await client.close()
     asyncio.run(t())
 
@@ -511,23 +509,16 @@ def test_interrupting_is_not_an_error(tmp_path, monkeypatch):
     asyncio.run(t())
 
 
-def test_queue_reports_sent_and_dropped(tmp_path, monkeypatch):
-    """Clients keep queued messages at the bottom: the daemon says when one leaves the queue, and when Esc drops them."""
+def test_message_while_waiting_on_a_prompt(tmp_path, monkeypatch):
+    """Sent while Claude waits for a permission answer: it goes in at once too, and is answered after."""
     async def t():
         client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
         await ws.send_json({"type": "send", "entry": e["id"], "text": "please run the checks"})
         req, _ = await until(ws, lambda m: m["type"] == "permission_request")
         await ws.send_json({"type": "send", "entry": e["id"], "text": "next"})
-        await until(ws, lambda m: m["type"] == "queued" and m["count"] == 1)
-        await ws.send_json({"type": "permission_reply", "request_id": req["request_id"], "allow": True})
         await until(ws, lambda m: m["type"] == "queued" and m["count"] == 0 and m.get("sent") == 1)
+        await ws.send_json({"type": "permission_reply", "request_id": req["request_id"], "allow": True})
         await until(ws, lambda m: m["type"] == "message" and "Done: next" in str(m))
-        await ws.send_json({"type": "send", "entry": e["id"], "text": "a slow job"})
-        await until(ws, lambda m: m["type"] == "state" and m["state"] == "working")
-        await ws.send_json({"type": "send", "entry": e["id"], "text": "never mind"})
-        await until(ws, lambda m: m["type"] == "queued" and m["count"] == 1)
-        await ws.send_json({"type": "interrupt", "entry": e["id"]})
-        await until(ws, lambda m: m["type"] == "queued" and m["count"] == 0 and m.get("dropped"))
         await client.close()
     asyncio.run(t())
 
