@@ -98,6 +98,7 @@ class Live:
     started: float = dataclasses.field(default_factory=time.time)  # when this process started: older subagents died with theirs
     working: bool = False
     pending: dict = dataclasses.field(default_factory=dict)  # request id -> Future
+    asks: dict = dataclasses.field(default_factory=dict)  # request id -> its permission_request event (sent again to clients that connect later)
     said: bool = False  # did this turn produce any assistant text (built-in commands may only return a result)
     queue: list = dataclasses.field(default_factory=list)  # messages sent while working, sent in order afterwards
     origin: dict = None  # set when a watch (its reply goes to the inbox) or another session started this turn
@@ -144,6 +145,12 @@ class Runner:
         if not lv:
             return None  # not live: the API decides stopped/terminal/missing
         return "waiting" if lv.pending else ("working" if lv.working else "ready")
+
+    def open_asks(self):
+        """Questions and permission requests still waiting for an answer: a client that connects (or reconnects: a
+        phone drops its connection in the background) after one was asked gets it too, or the session sat waiting
+        on a question nobody could see."""
+        return [a for lv in self.live.values() for a in lv.asks.values()]
 
     def held_sessions(self):
         return {self.store.entry(e)["session_id"] for e in self.live if self.store.entry(e)}
@@ -423,13 +430,15 @@ class Runner:
         kind = {"AskUserQuestion": "question", "ExitPlanMode": "plan"}.get(tool, "tool")
         suggestions = list(getattr(ctx, "suggestions", None) or [])
         remember = sorted({s.destination for s in suggestions if getattr(s, "destination", None) in ("session", "localSettings")})
-        await self.broadcast({"type": "permission_request", "entry": lv.entry_id, "request_id": rid, "tool": tool,
-                              "kind": kind, "input": inp, "remember": remember if kind == "tool" else []})
+        lv.asks[rid] = {"type": "permission_request", "entry": lv.entry_id, "request_id": rid, "tool": tool,
+                        "kind": kind, "input": inp, "remember": remember if kind == "tool" else []}
+        await self.broadcast(lv.asks[rid])
         await self._emit_state(lv.entry_id)
         try:
             a = await fut
         finally:
             lv.pending.pop(rid, None)
+            lv.asks.pop(rid, None)
         await self._emit_state(lv.entry_id)
         Allow, Deny = self.sdk.PermissionResultAllow, self.sdk.PermissionResultDeny
         if kind == "question":

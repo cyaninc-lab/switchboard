@@ -629,9 +629,10 @@
       if (selected?.entry.id === e.entry && !selected.sub) messages = [...messages, e.message];
       if (e.message.type === 'assistant') { const said = msgText(e.message).trim(); if (said) lastSaid[e.entry] = said; streaming[e.entry] = ''; thinkingLive[e.entry] = ''; if ((selected?.entry.id !== e.entry || selected.sub) && !inWindow[e.entry]) unread[e.entry] = true; }
     } else if (e.type === 'permission_request') {
-      prompts[e.entry] = [...(prompts[e.entry] ?? []), { request_id: e.request_id, tool: e.tool, kind: e.kind ?? 'tool', input: e.input, remember: e.remember ?? [] }];
+      const again = (prompts[e.entry] ?? []).some((p) => p.request_id === e.request_id);  // sent again on reconnecting
+      if (!again) prompts[e.entry] = [...(prompts[e.entry] ?? []), { request_id: e.request_id, tool: e.tool, kind: e.kind ?? 'tool', input: e.input, remember: e.remember ?? [] }];
       // a session you're not looking at needs you: say so outside the app too
-      if (notLooking(e.entry)) {
+      if (!again && notLooking(e.entry)) {
         notify(`${entryName(e.entry)} needs you`, e.kind === 'question' ? (e.input?.questions?.[0]?.question ?? 'Claude has a question')
           : e.kind === 'plan' ? 'Claude has a plan for you to approve' : `Allow ${e.tool}: ${summary(e.input)}?`);
       }
