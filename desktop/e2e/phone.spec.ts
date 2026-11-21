@@ -170,3 +170,43 @@ test('on a phone, ⋯ → Session settings changes the mode (the desktop keeps t
   await page.getByRole('menuitem', { name: 'Session settings…' }).click();
   await expect(page.getByRole('dialog', { name: 'Session settings' }).getByLabel('Permission mode')).toHaveValue('plan');
 });
+
+test('on a phone: an image Claude read shows as a thumbnail (tap for full size); back goes to the session list', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '+ Connect a machine' }).click();
+  await page.getByLabel('Daemon address').fill(`http://127.0.0.1:${DAEMON_PORT}`);
+  await page.getByLabel('One-time code').fill(execFileSync(daemon, ['--data', DATA, 'pair']).toString().trim());
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await page.getByRole('button', { name: '+ Add' }).click();
+  const dialog = page.getByRole('form', { name: 'Add to Switchboard' });
+  await dialog.getByRole('tab', { name: 'New session' }).click();
+  await dialog.getByLabel(/Folder on/).fill(mkdtempSync(join(tmpdir(), 'sb-thumb-')));
+  await dialog.getByLabel('Name in the tree').fill('Thumbs');
+  await dialog.getByRole('button', { name: 'Create session' }).click();
+
+  const input = page.getByLabel('Message this session');
+  await input.fill('look at the screenshot');
+  await page.getByRole('button', { name: 'Send' }).click();
+  const thumb = page.getByRole('img', { name: 'What Claude read' });
+  await expect(thumb).toBeVisible();
+  expect((await thumb.boundingBox())!.height).toBeLessThanOrEqual(160);
+  const frame = page.locator('button.readimg');
+  await frame.click();
+  await expect(frame).toHaveClass(/big/);
+  await frame.click();
+  await expect(frame).not.toHaveClass(/big/);
+
+  // Android's back (the browser's here) leaves the chat for the session list, not the app
+  const tree = page.getByRole('navigation', { name: 'Sessions' });
+  await expect(tree).toBeHidden();
+  await page.goBack();
+  await expect(tree).toBeVisible();
+  await expect(input).toHaveCount(0);
+  // ‹ in the app does the same, and doesn't leave an extra step behind
+  await tree.getByRole('button', { name: /Thumbs/ }).click();
+  await page.getByRole('button', { name: 'Back to sessions' }).click();
+  await expect(tree).toBeVisible();
+  await tree.getByRole('button', { name: /Thumbs/ }).click();
+  await page.goBack();
+  await expect(tree).toBeVisible();
+});

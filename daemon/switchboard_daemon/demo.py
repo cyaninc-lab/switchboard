@@ -235,6 +235,17 @@ class PermissionResultDeny:
     behavior: str = "deny"
 
 
+def _png(w=48, h=32):  # a small purple rectangle, for an image Claude "read"
+    import base64, struct, zlib
+    def chunk(t, d): return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d))
+    raw = b"".join(b"\x00" + b"\x90\x60\xd0" * w for _ in range(h))
+    return base64.b64encode(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+                            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")).decode()
+
+
+_PNG = _png()
+
+
 class ClaudeSDKClient:
     """Scripted stand-in: streams a reply; "run" asks to use Bash; "slow" works for 30 s (interruptible)."""
     def __init__(self, options):
@@ -361,6 +372,9 @@ class ClaudeSDKClient:
             for n, tid in ((1, "a1"), (2, "a2")):
                 yield AssistantMessage([ToolUseBlock(tid, "Artifact", {"file_path": "/tmp/feed-report.html", "title": "Feed report", "icon": "chart"})])
                 yield UserMessage([ToolResultBlock(tid, f"Published /tmp/feed-report.html at https://claude.ai/artifact/Demo123abc (Version {n}, version id 17951-{n}) Icon: \"chart\".\n\nLive subscription: arming in the background", False)])
+        if "look at the screenshot" in text.lower():  # Read on a picture: its result carries the image (shown as a thumbnail)
+            yield AssistantMessage([ToolUseBlock("r1", "Read", {"file_path": "/tmp/screenshot.png"})])
+            yield UserMessage([ToolResultBlock("r1", [{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": _PNG}}], False)])
         if "show a link" in text.lower():  # a markdown link in the reply
             yield AssistantMessage([TextBlock("See [the docs](https://example.com/docs) for details.")])
         if "ask me" in text.lower():  # a clarifying question (AskUserQuestion)

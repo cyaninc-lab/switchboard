@@ -167,7 +167,7 @@ export function hunkLines(hunks: Hunk[]): DiffLine[] {
 /** Flatten an SDK message into display lines: text, tool calls and tool results. */
 export type DiffLine = { t: '+' | '-' | ' ' | '…'; s: string; n?: number };
 export type Line =
-  | { kind: 'text' | 'image' | 'thinking'; text: string }
+  | { kind: 'text' | 'image' | 'thinking'; text: string; read?: boolean }  // read: an image Claude read, not one you sent
   | { kind: 'result'; text: string; id?: string }  // id: the tool_use it answers (a Bash window shows its command)
   | { kind: 'tool'; text: string; name: string; id: string; input: any }
   | { kind: 'diff'; text: string; file: string; lines: DiffLine[]; note?: string; id?: string }
@@ -242,7 +242,10 @@ export function render(msg: HistoryMessage): Line[] {
     if (b.type === 'tool_result') {
       const t = Array.isArray(b.content) ? b.content.map((x: any) => x.text ?? '').join('\n') : String(b.content ?? '');
       if (/^Todos have been modified successfully/.test(t)) return [];  // the checklist above already shows it
-      return [{ kind: 'result' as const, text: t, id: b.tool_use_id }];
+      // an image Claude read (Read on a picture): shown as a thumbnail under its step, on any device (it's in the history)
+      const imgs = (Array.isArray(b.content) ? b.content : []).filter((x: any) => x?.type === 'image' && x.source?.type === 'base64')
+        .map((x: any) => ({ kind: 'image' as const, text: `data:${x.source.media_type};base64,${x.source.data}`, read: true }));
+      return [{ kind: 'result' as const, text: t, id: b.tool_use_id }, ...imgs];
     }
     return [];
   });
