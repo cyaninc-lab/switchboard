@@ -1097,6 +1097,17 @@
   let phone = $state(phoneQ.matches || isPhoneApp());
   phoneQ.addEventListener('change', () => (phone = phoneQ.matches || isPhoneApp()));
   let phoneTab = $state<'sessions' | 'inbox'>('sessions');
+  // a phone: an open chat is a step in the history, so Android's back (or a browser's) goes back to the session list
+  // instead of leaving the app. The ‹ button closes it the same way.
+  let chatInHistory = false;
+  $effect(() => {
+    if (!phone) return;
+    if (selected && !chatInHistory) { history.pushState({ chat: true }, ''); chatInHistory = true; }
+    else if (!selected && chatInHistory) { chatInHistory = false; history.back(); }
+  });
+  if (typeof window !== 'undefined') window.addEventListener('popstate', () => {
+    if (phone && chatInHistory) { chatInHistory = false; swapDraft('\u0000none'); selected = null; }
+  });
   // ---- "you're here": a computer's window that's in front and used in the last 3 minutes tells every machine, so the
   // phone stays quiet while you watch replies come in (the daemons' "pause while I'm in Switchboard" setting) ----
   const HERE_MS = 3 * 60_000;
@@ -1587,7 +1598,8 @@
           {#snippet lines(msg: HistoryMessage)}
             {#each api.render(msg) as line, li}
               {#if line.kind === 'image'}
-                <img class="shot" src={line.text} alt="Attachment" />
+                {#if line.read}<button type="button" class="readimg" title="Click for full size" onclick={(ev) => ev.currentTarget.classList.toggle('big')}><img src={line.text} alt="What Claude read" /></button>
+                {:else}<img class="shot" src={line.text} alt="Attachment" />{/if}
               {:else if line.kind === 'mail'}
                 <div class="mail" class:out={line.dir === 'out'} role="note" aria-label="{line.dir === 'out' ? 'To' : 'From'} {line.who}">
                   <div class="mailhead">✉ <b>{line.dir === 'out' ? 'To' : 'From'} {line.who}</b></div>
@@ -2416,6 +2428,10 @@
   .allow { background: var(--green); color: var(--crust); border: 0; border-radius: 8px; padding: 8px 16px; font-weight: 600; }
   .deny { background: none; color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 45%, transparent); border-radius: 8px; padding: 8px 16px; }
   /* its own shape: in the chat's column it was stretched to the full width while its height was capped (squashed) */
+  .readimg { align-self: flex-start; padding: 0; margin: 2px 0 6px 18px; border: 1px solid var(--s1); border-radius: 8px; background: none; cursor: zoom-in; line-height: 0; max-width: calc(100% - 18px); }
+  .readimg img { max-height: 160px; max-width: 240px; object-fit: contain; border-radius: 8px; }
+  .readimg:global(.big) { cursor: zoom-out; }  /* toggled on click */
+  .readimg:global(.big) img { max-height: none; max-width: 100%; }
   .shot { align-self: flex-start; width: auto; height: auto; max-width: min(320px, 100%); max-height: 200px; object-fit: contain; border-radius: 8px; border: 1px solid var(--s1); display: block; margin: 4px 0 4px 18px; }
   .cmdmenu { margin: 0 18px; background: var(--mantle); border: 1px solid var(--s1); border-radius: 10px; padding: 4px; display: flex; flex-direction: column; }
   .cmdmenu button { display: grid; grid-template-columns: minmax(140px, auto) 1fr; gap: 12px; text-align: left; background: none; border: 0; color: var(--text); padding: 6px 10px; border-radius: 6px; }
