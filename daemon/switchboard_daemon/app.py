@@ -661,6 +661,8 @@ async def ws_handler(request):
     request.app[SOCKETS].add(ws)
     log.info("client connected: %s", client)
     await ws.send_json({"type": "hello", "machine": request.app[NAME]})
+    for ask in runner.open_asks():  # asked before this client connected
+        await ws.send_json(ask)
     try:
         async for msg in ws:
             if msg.type != web.WSMsgType.TEXT:

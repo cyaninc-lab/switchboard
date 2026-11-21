@@ -830,3 +830,25 @@ def test_daemon_serves_the_web_app(tmp_path, monkeypatch):
         assert (await client.get("/v1/entries", headers=h)).status == 200
         await client.close()
     asyncio.run(t())
+
+
+def test_a_question_asked_before_a_client_connects_reaches_it(tmp_path, monkeypatch):
+    """A phone drops its connection in the background: one that connects after a question was asked must still get
+    it, or the session waits on a question nobody can see (and messages queue behind it forever)."""
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        await ws.send_json({"type": "send", "entry": e["id"], "text": "please run the checks"})
+        req, _ = await until(ws, lambda m: m["type"] == "permission_request")
+        late = await client.ws_connect("/v1/ws")
+        await late.send_json({"type": "auth", "token": token})
+        assert (await late.receive_json())["type"] == "hello"
+        again, _ = await until(late, lambda m: m["type"] == "permission_request")
+        assert again["request_id"] == req["request_id"] and again["tool"] == req["tool"]
+        await ws.send_json({"type": "permission_reply", "request_id": req["request_id"], "allow": True})
+        await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        later = await client.ws_connect("/v1/ws")
+        await later.send_json({"type": "auth", "token": token})
+        await later.receive_json()
+        assert client.app[appmod.RUNNER].open_asks() == []  # answered: nothing to send again
+        await client.close()
+    asyncio.run(t())
