@@ -2,7 +2,7 @@
 
 Events (docs/protocol.md): state, delta, message, permission_request, permission_resolved, error.
 """
-import asyncio, dataclasses, os, shutil, time, uuid
+import asyncio, dataclasses, os, shutil, sys, time, uuid
 from .logs import log, scrub
 from . import patches
 
@@ -24,6 +24,15 @@ def scrub_env():
     drop them from the daemon's own environment once, so every child starts clean."""
     for k in [k for k in os.environ if k.startswith("CLAUDE") and k != "CLAUDE_CONFIG_DIR"]:
         del os.environ[k]
+    # The bundled (PyInstaller one-file) daemon: its loader points LD_LIBRARY_PATH at the bundle's own libraries, and every
+    # child inherited that, so system tools in sessions and hooks broke (adb, Python's curses: "GLIBCXX_3.4.31 not found").
+    # The loader has already used it; give children the system's value back (it saves the original as *_ORIG).
+    if getattr(sys, "frozen", False):
+        orig = os.environ.pop("LD_LIBRARY_PATH_ORIG", None)
+        if orig is not None:
+            os.environ["LD_LIBRARY_PATH"] = orig
+        else:
+            os.environ.pop("LD_LIBRARY_PATH", None)
 
 
 def as_history(msg):
