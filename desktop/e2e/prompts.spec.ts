@@ -66,6 +66,7 @@ test('questions, plan approval, and allow for this session', async ({ page }) =>
   await perm.getByRole('button', { name: 'Allow for this session' }).click();
   await expect(log).toContainText('(remembered for: session)');
 
-  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await page.getByRole('button', { name: 'More' }).click();
+  await page.getByRole('menuitem', { name: 'Close session' }).click();
   await page.getByRole('button', { name: 'Remove from tree' }).click();
 });

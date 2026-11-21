@@ -38,6 +38,7 @@ test('create a new session in a folder', async ({ page }) => {
   await input.fill('first words');
   await input.press('Enter');
   await expect(page.getByRole('log', { name: 'Session history' })).toContainText('Done: first words');
-  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await page.getByRole('button', { name: 'More' }).click();
+  await page.getByRole('menuitem', { name: 'Close session' }).click();
   await expect(entry).toHaveAttribute('title', /Stopped/);  // it exists now: an ordinary session
 });
