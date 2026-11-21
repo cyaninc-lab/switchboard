@@ -27,6 +27,7 @@ TTYS = web.AppKey("ttys", Terminals)
 NET = web.AppKey("net", Network)
 WATCHES, WATCH_TASK = web.AppKey("watches", Watches), web.AppKey("watch_task", asyncio.Task)
 PUSH_STATE = web.AppKey("push_state", dict)  # entry id -> last state, to notice a turn finishing
+DESK = web.AppKey("desk", object)  # is the user in a desktop window: phone notifications pause
 CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
 
 
@@ -457,7 +458,8 @@ async def set_settings(request):
 async def get_push(request):
     st = request.app[STORE]
     return web.json_response({"server": st.setting(push.SERVER, ""), "subscribers": len(push.subscribers(st)),
-                              "voice": st.setting(push.VOICE, ""), "listen": st.setting(push.LISTEN, "")})
+                              "voice": st.setting(push.VOICE, ""), "listen": st.setting(push.LISTEN, ""),
+                              "pause_at_desk": st.setting(push.PAUSE, "1") != "0", "at_desk": request.app[DESK].present()})
 
 
 async def set_push(request):
@@ -475,6 +477,8 @@ async def set_push(request):
             if body[k] and not ok_url(body[k]):
                 raise web.HTTPBadRequest(text=json.dumps({"code": f"bad_{k}_server"}), content_type="application/json")
             st.set_setting(key, (body[k] or "").rstrip("/"))
+    if "pause_at_desk" in body:  # no phone notifications while the user is in a desktop window (on by default)
+        st.set_setting(push.PAUSE, "1" if body["pause_at_desk"] else "0")
     if "subscribe" in body or "unsubscribe" in body:
         u = body.get("subscribe") or body.get("unsubscribe")
         if not ok_url(u):
@@ -709,6 +713,8 @@ async def ws_handler(request):
                 elif t == "set_model":
                     await runner.set_model(eid, m.get("model"))
                     await _broadcast(request.app, {"type": "model", "entry": eid, "model": m.get("model") or None})
+                elif t == "presence":  # a desktop window: the user is in it (focused, touched lately) or not
+                    request.app[DESK].report(ws, bool(m.get("here")))
                 elif t == "permission_reply":
                     await runner.answer(m["request_id"], m.get("allow"), m.get("message"), by=client,
                                         remember=m.get("remember"), answers=m.get("answers"), response=m.get("response"))
@@ -718,12 +724,13 @@ async def ws_handler(request):
                                     "code": type(e).__name__, "message": str(e)})
     finally:
         request.app[SOCKETS].discard(ws)
+        request.app[DESK].gone(ws)
     return ws
 
 
 async def _broadcast(app, event):
     note = push.notice(app[STORE], event, app[PUSH_STATE])
-    if note:  # phones hear about it through ntfy, in the background (a slow push server mustn't hold the daemon)
+    if note and (note := app[DESK].filter(note)):  # phones hear about it through ntfy, in the background (a slow push server mustn't hold the daemon)
         asyncio.get_running_loop().create_task(push.send(app[STORE], note))
     for ws in list(app[SOCKETS]):
         try:
@@ -777,6 +784,7 @@ def make_app(store: Store, name=None):
     app[STORE], app[NAME] = store, name or socket.gethostname()
     app[SOCKETS] = set()
     app[PUSH_STATE] = {}
+    app[DESK] = push.Desk(store, lambda st, n: push.send(st, n))  # late-bound: tests stand in for push.send
     app[RUNNER] = Runner(store, sdk, lambda ev: _broadcast(app, ev))
     app[RUNNER].machine = app[NAME]
     app[TTYS] = Terminals(lambda ev: _broadcast(app, ev))

@@ -23,7 +23,7 @@ def test_push_permission_answer_finish_and_reply(tmp_path, monkeypatch):
         assert bad.status == 400
         r = await client.put("/v1/push", headers=h, json={"server": "http://yagoo:2586/", "subscribe": str(fake.make_url("/sb-1")),
                                                           "machine_url": "http://fantome:7878/"})
-        assert await r.json() == {"server": "http://yagoo:2586", "subscribers": 1, "voice": "", "listen": ""}
+        assert await r.json() == {"server": "http://yagoo:2586", "subscribers": 1, "voice": "", "listen": "", "pause_at_desk": True, "at_desk": False}
         r = await client.put("/v1/push", headers=h, json={"voice": "http://fantome:8100/", "listen": "http://fantome:8102"})
         assert (await r.json())["voice"] == "http://fantome:8100" and (await r.json())["listen"] == "http://fantome:8102"
         assert (await client.put("/v1/push", headers=h, json={"voice": "ftp://x"})).status == 400

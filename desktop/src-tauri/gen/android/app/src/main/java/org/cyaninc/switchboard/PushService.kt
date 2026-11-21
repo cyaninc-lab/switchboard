@@ -110,13 +110,16 @@ class PushService : Service() {
         done.await(); return fg
     }
 
+    /** The chat on screen as "<machine url>|<entry>" (the web UI writes it through push_viewing), or null. */
+    private fun viewing(): String? = File(dataDir, "viewing.txt").takeIf { it.exists() }?.readText()
+
     private fun show(note: JSONObject, cfg: JSONObject) {
         val kind = note.optString("kind")
         if (kind == "finished" && !cfg.optBoolean("finished", true)) return
         val id = (note.optString("machine") + note.optString("entry") + note.optString("request_id")).hashCode()
         val tag = note.optString("machine") + "|" + note.optString("entry")
         if (kind == "resolved") { getSystemService(NotificationManager::class.java).cancel(tag, id); return }  // answered elsewhere
-        if (inForeground()) return  // the app is open: it shows this itself
+        if (inForeground() && viewing() == note.optString("machine").trimEnd('/') + "|" + note.optString("entry")) return  // that chat is on screen: you're reading it
         val open = PendingIntent.getActivity(this, id, Intent(this, MainActivity::class.java)
             .putExtra("machine", note.optString("machine")).putExtra("entry", note.optString("entry"))
             .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)

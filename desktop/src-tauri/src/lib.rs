@@ -12,7 +12,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_barcode_scanner::init())  // scanning a machine's pairing QR code
-        .invoke_handler(tauri::generate_handler![phone::push_config, phone::push_take_open])
+        .invoke_handler(tauri::generate_handler![phone::push_config, phone::push_take_open, phone::push_viewing])
         .run(tauri::generate_context!())
         .expect("error while running the phone app");
 }
@@ -32,6 +32,20 @@ mod phone {
         let p = file(&app, "push.json")?;
         std::fs::create_dir_all(p.parent().unwrap()).map_err(|e| e.to_string())?;
         std::fs::write(p, config).map_err(|e| e.to_string())
+    }
+
+    /// The session open on screen ("<machine url>|<entry id>"), or None: PushService.kt skips notices for it while
+    /// the app is in front (you're reading it), and shows the rest.
+    #[tauri::command]
+    pub fn push_viewing(app: tauri::AppHandle, view: Option<String>) -> Result<(), String> {
+        let p = file(&app, "viewing.txt")?;
+        match view {
+            Some(v) => {
+                std::fs::create_dir_all(p.parent().unwrap()).map_err(|e| e.to_string())?;
+                std::fs::write(p, v).map_err(|e| e.to_string())
+            }
+            None => { let _ = std::fs::remove_file(p); Ok(()) }
+        }
     }
 
     /// The session a tapped notification named, once (MainActivity.kt leaves it in open.json).

@@ -2,7 +2,7 @@
   import * as api from '$lib/api';
   import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell, openExternal, openLocal, appVersion, checkForUpdate, notify,
     soloOf, popOut, takeHandoff, focusWindow, onSoloClosing, onSoloEvents, soloOpened, closeThisWindow, setOnTop, useParentShell, canOpenLocally,
-    isPhoneApp, isDesktopApp, pairLink, scanPairCode, setPhonePush, takeNotificationOpen } from '$lib/shell';
+    isPhoneApp, isDesktopApp, pairLink, scanPairCode, setPhonePush, takeNotificationOpen, setPhoneViewing } from '$lib/shell';
   import qrcode from 'qrcode-generator';
   import { backdrop } from '$lib/backdrop';
   import { theme, THEMES, applyTheme, fonts, UI_FONTS, MONO_FONTS, CHAT_FONTS, SIZES, applyFonts } from '$lib/themes.svelte';
@@ -259,9 +259,11 @@
   // the server from whichever machine has one; in the phone app, subscribe this phone on every machine and hand the
   // listener its config. Runs at start, after pairing, and when a setting changes.
   let pushCfg: { server: string; topic: string; machines: Machine[] } | null = null;  // what the listener has, bar the switches
+  let pauseAtDesk = $state(true);  // the daemons' setting: no phone notifications while you're in a desktop window
   async function syncPush() {
     const infos = await Promise.all(machines.map((m) => api.push(m).catch(() => null)));
     pushServer = infos.find((i) => i?.server)?.server ?? pushServer;
+    pauseAtDesk = !infos.some((i) => i?.pause_at_desk === false);
     if (!isPhoneApp() || !pushServer) return;
     const topic = pushTopic(), url = `${pushServer.replace(/\/$/, '')}/${topic}`;
     const ok = await Promise.all(machines.map((m, i) => infos[i] ? api.setPush(m, { subscribe: url, machine_url: m.url }).then(() => m, () => null) : null));
@@ -274,6 +276,9 @@
     if (s && !/^https?:\/\//.test(s)) return say('The notification server address starts with http:// or https://');
     await Promise.all(machines.map((m) => api.setPush(m, { server: s }).catch(() => null)));
     await syncPush();
+  }
+  async function savePauseAtDesk() {
+    await Promise.all(machines.map((m) => api.setPush(m, { pause_at_desk: pauseAtDesk }).catch(() => null)));
   }
   function savePushPrefs() {
     try { localStorage.setItem(PUSH_PREFS, JSON.stringify(pushPrefs)); } catch {}
@@ -294,6 +299,10 @@
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') takeNotified(); });
     takeNotified();
     $effect(() => { if (fromNotification && Object.keys(tree).length) openNotified(); });
+    $effect(() => {  // notifications for the chat on screen are skipped; every other session's still show
+      const s = selected;
+      setPhoneViewing(s && !s.sub ? s.machine.url : null, s?.entry.id).catch(() => {});
+    });
   }
   const qrSvg = (text: string) => { const q = qrcode(0, 'M'); q.addData(text); q.make(); return q.createSvgTag({ cellSize: 4, margin: 2, scalable: true }); };
   async function newCode() {
@@ -573,6 +582,12 @@
   }
   let liveErr = $state('');
   const LIVE_STATES = ['working', 'waiting', 'ready'];
+  const lastSaid: Record<string, string> = {};  // what each session said last this turn: a "finished" notification's text
+  const entryName = (id: string) => Object.values(tree).flatMap((t) => t.entries).find((x) => x.id === id)?.name ?? 'A session';
+  // is that session out of sight? The main window speaks for sessions in its tabs, a popped-out window for its own
+  // (when it isn't in front)
+  const notLooking = (id: string) => typeof document !== 'undefined' &&
+    (solo ? id === solo.entry && !document.hasFocus() : !inWindow[id] && (!document.hasFocus() || selected?.entry.id !== id || !!selected.sub));
   // real-terminal toggle: which entry shows the claude TUI, and who receives its output
   let termFor = $state<string | null>(null);
   let termSink: ((data: string) => void) | null = null;
@@ -599,6 +614,9 @@
     if (e.type === 'state') {
       const was = Object.values(tree).flatMap((t) => t.entries).find((x) => x.id === e.entry)?.state;
       setEntry(e.entry, { state: e.state as Entry['state'] });
+      if (was === 'working' && e.state === 'ready' && notLooking(e.entry))  // done while you were on another session
+        notify(`${entryName(e.entry)} finished`, (lastSaid[e.entry] ?? '').slice(0, 240) || 'Claude is done and waiting for you');
+      if (e.state !== 'working' && e.state !== 'waiting') delete lastSaid[e.entry];
       if (was && !LIVE_STATES.includes(was) && LIVE_STATES.includes(e.state)) refresh();  // which subagents run is the daemon's call
       if (e.state !== 'working' && e.state !== 'waiting') {
         streaming[e.entry] = ''; thinkingLive[e.entry] = ''; queued[e.entry] = 0;
@@ -609,14 +627,12 @@
       else streaming[e.entry] = (streaming[e.entry] ?? '') + e.text;
     } else if (e.type === 'message') {
       if (selected?.entry.id === e.entry && !selected.sub) messages = [...messages, e.message];
-      if (e.message.type === 'assistant') { streaming[e.entry] = ''; thinkingLive[e.entry] = ''; if ((selected?.entry.id !== e.entry || selected.sub) && !inWindow[e.entry]) unread[e.entry] = true; }
+      if (e.message.type === 'assistant') { const said = msgText(e.message).trim(); if (said) lastSaid[e.entry] = said; streaming[e.entry] = ''; thinkingLive[e.entry] = ''; if ((selected?.entry.id !== e.entry || selected.sub) && !inWindow[e.entry]) unread[e.entry] = true; }
     } else if (e.type === 'permission_request') {
       prompts[e.entry] = [...(prompts[e.entry] ?? []), { request_id: e.request_id, tool: e.tool, kind: e.kind ?? 'tool', input: e.input, remember: e.remember ?? [] }];
       // a session you're not looking at needs you: say so outside the app too
-      // the main window speaks for sessions in its tabs, a popped-out window for its own (when it isn't in front)
-      if (typeof document !== 'undefined' && (solo ? e.entry === solo.entry && !document.hasFocus() : !inWindow[e.entry] && (!document.hasFocus() || selected?.entry.id !== e.entry))) {
-        const name = Object.values(tree).flatMap((t) => t.entries).find((x) => x.id === e.entry)?.name ?? 'A session';
-        notify(`${name} needs you`, e.kind === 'question' ? (e.input?.questions?.[0]?.question ?? 'Claude has a question')
+      if (notLooking(e.entry)) {
+        notify(`${entryName(e.entry)} needs you`, e.kind === 'question' ? (e.input?.questions?.[0]?.question ?? 'Claude has a question')
           : e.kind === 'plan' ? 'Claude has a plan for you to approve' : `Allow ${e.tool}: ${summary(e.input)}?`);
       }
     } else if (e.type === 'permission_resolved') {
@@ -1078,6 +1094,24 @@
   let phone = $state(phoneQ.matches || isPhoneApp());
   phoneQ.addEventListener('change', () => (phone = phoneQ.matches || isPhoneApp()));
   let phoneTab = $state<'sessions' | 'inbox'>('sessions');
+  // ---- "you're here": a computer's window that's in front and used in the last 3 minutes tells every machine, so the
+  // phone stays quiet while you watch replies come in (the daemons' "pause while I'm in Switchboard" setting) ----
+  const HERE_MS = 3 * 60_000;
+  let lastInput = Date.now(), wasHere: boolean | null = null;
+  const isHere = () => !phone && document.hasFocus() && document.visibilityState === 'visible' && Date.now() - lastInput < HERE_MS;
+  function reportHere(again = false) {
+    const h = isHere();
+    if (h === wasHere && !(h && again)) return;  // changes at once; while here, again every minute (a report lasts 90 s)
+    wasHere = h;
+    for (const l of lives.values()) l.presence(h);
+  }
+  if (typeof window !== 'undefined' && !isPhoneApp()) {
+    const touched = () => { lastInput = Date.now(); reportHere(); };
+    for (const ev of ['keydown', 'pointerdown', 'wheel', 'focus']) window.addEventListener(ev, touched, { passive: true });
+    window.addEventListener('blur', () => reportHere());
+    document.addEventListener('visibilitychange', () => reportHere());
+    setInterval(() => reportHere(true), 60_000);
+  }
   // ---- the session tree folds away: by the button, and by itself when the window is narrow ----
   // sideWant: the user's choice for a wide window (remembered); a narrow window starts folded, the button still opens it
   const SIDE_KEY = 'switchboard.side';
@@ -1915,6 +1949,8 @@
       <h3 class="sub">Phone notifications</h3>
       <p class="muted small">The Switchboard phone app gets notifications through an <a href="https://ntfy.sh" target="_blank" rel="noreferrer">ntfy</a> server you run (on one machine is enough).</p>
       <label>Notification server<input placeholder="http://my-server:2586" bind:value={pushServer} onchange={savePushServer} inputmode="url" autocapitalize="off" /></label>
+      <label class="toggle"><input type="checkbox" bind:checked={pauseAtDesk} onchange={savePauseAtDesk} />
+        <span><b>Pause while I'm in Switchboard on a computer</b><br /><span class="muted small">While a Switchboard window on a computer is in front and you've used it in the last 3 minutes, the phone stays quiet: you see replies come in. A question still unanswered when you leave goes to the phone then.</span></span></label>
       {#if isPhoneApp()}
         <label class="toggle"><input type="checkbox" bind:checked={pushPrefs.finished} onchange={savePushPrefs} />
           <span><b>Tell me when a session finishes</b></span></label>
