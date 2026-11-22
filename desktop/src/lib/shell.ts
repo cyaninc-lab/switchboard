@@ -58,6 +58,32 @@ export async function clipboardImage(): Promise<File | null> {
   }
 }
 
+/** The desktop app: requests and live connections to other machines go through Rust (Tauri's http and websocket
+ * plugins). A request that times out drops its connection there, so the next one starts fresh after a network change. */
+export async function desktopTransport() {
+  const { fetch: rustFetch } = await import('@tauri-apps/plugin-http');
+  const W = (await import('@tauri-apps/plugin-websocket')).default;
+  const socket = (url: string) => {
+    const s = { readyState: 0, onopen: null as (() => void) | null, onmessage: null as ((ev: { data: string }) => void) | null,
+      onclose: null as (() => void) | null, ws: null as InstanceType<typeof W> | null, off: null as null | (() => void),
+      done() { if (s.readyState === 3) return; s.readyState = 3; s.off?.(); s.onclose?.(); },
+      send(d: string) { s.ws?.send(d).catch(() => s.close()); },
+      close() { if (s.readyState === 3) return; s.ws?.disconnect().catch(() => {}); s.done(); } };
+    W.connect(url, { headers: { 'User-Agent': 'Switchboard-desktop' } }).then((ws) => {  // default limits: 64 MB a message
+      if (s.readyState === 3) { ws.disconnect().catch(() => {}); return; }  // closed while connecting
+      s.ws = ws; s.readyState = 1;
+      s.off = ws.addListener((m) => { if (m.type === 'Text') s.onmessage?.({ data: m.data }); else if (m.type === 'Close') s.done(); });
+      s.onopen?.();
+    }, (e) => { console.warn('websocket via Rust:', e); s.done(); });
+    return s;
+  };
+  // each request has a deadline: past it, its connection is dropped (a dead one doesn't hold up the next)
+  const f: typeof fetch = (input, init) => rustFetch(input as string, { connectTimeout: 10_000, ...init,
+    headers: { 'User-Agent': 'Switchboard-desktop', ...(init?.headers as Record<string, string> | undefined) },  // tells the relay's log which side sent it
+    signal: init?.signal ?? AbortSignal.timeout(20_000) });
+  return { fetch: f, socket };
+}
+
 /** Open a URL in the user's browser (the system one in the desktop app). */
 export async function openExternal(url: string) {
   if (viaParent && !inShell()) return askParent({ do: 'url', url });

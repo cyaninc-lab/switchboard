@@ -2,7 +2,7 @@
   import * as api from '$lib/api';
   import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell, openExternal, openLocal, appVersion, checkForUpdate, notify,
     soloOf, popOut, takeHandoff, focusWindow, onSoloClosing, onSoloEvents, soloOpened, closeThisWindow, setOnTop, useParentShell, canOpenLocally,
-    isPhoneApp, isDesktopApp, pairLink, scanPairCode, setPhonePush, takeNotificationOpen, setPhoneViewing, clipboardImage, phonePushStatus } from '$lib/shell';
+    isPhoneApp, isDesktopApp, pairLink, scanPairCode, setPhonePush, takeNotificationOpen, setPhoneViewing, clipboardImage, phonePushStatus, desktopTransport } from '$lib/shell';
   import qrcode from 'qrcode-generator';
   import { backdrop } from '$lib/backdrop';
   import { theme, THEMES, applyTheme, fonts, UI_FONTS, MONO_FONTS, CHAT_FONTS, SIZES, applyFonts } from '$lib/themes.svelte';
@@ -284,6 +284,7 @@
   }
   async function takeNotified() { fromNotification = (await takeNotificationOpen().catch(() => null)) ?? fromNotification; openNotified(); }
   setTimeout(syncPush, 1500);
+  if (isDesktopApp()) desktopTransport().then(api.useTransport, (e) => console.warn('desktop transport', e));  // other machines via Rust
   if (isPhoneApp()) {
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') takeNotified(); });
     takeNotified();
@@ -663,6 +664,9 @@
   }
   let liveErr = $state('');
   const LIVE_STATES = ['working', 'waiting', 'ready'];
+  // each machine's live connection: up or not, since when, why it dropped, when it last answered (shown on "can't reach")
+  let conn = $state<Record<string, { up: boolean; since: number; why: string; last: number }>>({});
+  const route = (m: Machine) => (/\/d\/[^/]+\/?$/.test(m.url) ? 'through the relay' : api.isLocal(m) ? 'this computer' : 'directly');
   const lastSaid: Record<string, string> = {};  // what each session said last this turn: a "finished" notification's text
   const entryName = (id: string) => Object.values(tree).flatMap((t) => t.entries).find((x) => x.id === id)?.name ?? 'A session';
   // is that session out of sight? The main window speaks for sessions in its tabs, a popped-out window for its own
@@ -674,7 +678,13 @@
   let termSink: ((data: string) => void) | null = null;
 
   $effect(() => {
-    for (const m of machines) if (!lives.has(m.url)) { lives.set(m.url, new api.Live(m, (e) => onEvent(e, m), () => {})); loadInbox(m); }
+    for (const m of machines) if (!lives.has(m.url)) {
+      lives.set(m.url, new api.Live(m, (e) => onEvent(e, m), (up, why) => {
+        conn[m.url] = { up, since: Date.now(), why: up ? '' : why ?? '', last: up ? Date.now() : conn[m.url]?.last ?? 0 };
+        if (up) refresh();  // back: no waiting for the next poll
+      }));
+      loadInbox(m);
+    }
     for (const [url, l] of lives) if (!machines.some((m) => m.url === url)) { l.close(); lives.delete(url); }
   });
 
@@ -1560,7 +1570,7 @@
               <button class="tiny" title="Disconnect" aria-label="Disconnect {m.name}" onclick={() => disconnect(m)}>×</button>
             </div>
             {#if tree[m.url]?.error}
-              <p class="offnote">{m.name} isn't answering. Is it on, and is this device connected to it (Tailscale)?
+              <p class="offnote">{m.name} isn't answering ({route(m)}{conn[m.url]?.last ? `, last answered ${ago(conn[m.url].last)} ago` : ''}{conn[m.url]?.why ? `, ${conn[m.url].why}` : ''}). {route(m) === 'through the relay' ? 'Is it on, with Switchboard running there?' : 'Is it on, and is this device connected to it (Tailscale)?'}
                 <button class="link" onclick={() => refresh()}>Retry</button></p>
             {/if}
             {#each groups(m) as [g, es] (g)}

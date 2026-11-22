@@ -83,7 +83,7 @@ async def run(store, port, host="127.0.0.1"):
         except Exception as e:
             log.warning("relay tunnel: %s", type(e).__name__)
         await asyncio.sleep(wait)
-        wait = min(wait * 2, 60)
+        wait = min(wait * 2, 10)  # a machine missing for a minute is a long time: retry at most every 10 s
 
 
 async def _serve(ws, session, port, host):
