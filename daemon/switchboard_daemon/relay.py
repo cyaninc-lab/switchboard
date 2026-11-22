@@ -15,10 +15,10 @@ DEVICE = "X-Switchboard-Device"  # which of the account's approved devices is as
 SKIP = {"host", "content-length", "transfer-encoding", "connection", RELAYED.lower(), DEVICE.lower()}
 
 
-async def signin_start(url, name, kind="machine"):
+async def signin_start(url, name, kind="machine", screen=False):
     """Begin a GitHub sign-in at a relay: {signin, user_code, verification_uri, interval}."""
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as s:
-        async with s.post(f"{url.rstrip('/')}/v1/signin", json={"name": name, "kind": kind}) as r:
+        async with s.post(f"{url.rstrip('/')}/v1/signin", json={"name": name, "kind": kind, "screen": screen}) as r:
             d = await r.json(content_type=None)
     if "signin" not in d:
         raise RuntimeError(d.get("message") or d.get("code") or f"HTTP {r.status}")
@@ -42,10 +42,10 @@ async def signin_finish(store, url, d):
     return p["device"]
 
 
-async def signin(store, url, name, show=print):
+async def signin(store, url, name, show=print, screen=False):
     """Sign this machine in to a relay with GitHub (the person enters a code at github.com/login/device). Returns its
     address there, or raises. The machine belongs to that GitHub account: its approved devices reach it."""
-    d = await signin_start(url, name)
+    d = await signin_start(url, name, screen=screen)
     show(f"Open {d['verification_uri']} and enter {d['user_code']}")
     dev = await signin_finish(store, url, d)
     if not dev["approved"]:
