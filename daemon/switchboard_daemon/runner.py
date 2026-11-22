@@ -17,6 +17,7 @@ MAX_IMAGES = 10
 TOOLS = ("mcp__switchboard__sessions", "mcp__switchboard__message_session", "mcp__switchboard__call_user",
          "mcp__switchboard__watch")  # allowed without asking
 AGENT_WATCHES, AGENT_MIN_MINUTES = 10, 5  # an agent's own watches: how many, how often at most (each wake costs a turn)
+AGENT_IDEAS = 3  # watch ideas one session may send the user per day
 CALL_GAP = 180  # seconds between calls from one session: a guardrail against a session ringing over and over
 MODES = {"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}
 EFFORTS = {"low", "medium", "high", "xhigh", "max"}
@@ -167,6 +168,7 @@ class Runner:
         self.elsewhere = lambda: set()  # {session id} a process outside this daemon holds (set by the app)
         self.last_call: dict[str, float] = {}  # entry id -> when it last rang the user
         self.machine = "this machine"  # its name in clients (set by the app): how other machines address its sessions
+        self.ideas: dict[str, list[float]] = {}  # entry id -> when it sent watch ideas (a few a day)
 
     # ---- state ----
     def state(self, entry_id):
@@ -314,14 +316,30 @@ class Runner:
                 return say("\n".join(f'{w["id"]}: "{w["name"]}" ({w["kind"]} {json.dumps(w["config"])}, '
                                       f'{"wakes you" if w["action"] == "wake" else "tells the user"}'
                                       f'{"" if w.get("enabled", True) else ", paused"})' for w in mine))
-            if op == "remove":
+            if op in ("remove", "pause", "resume"):
                 w = next((w for w in mine if w["id"] == str(args.get("id") or "")), None)
                 if not w:
                     return say("No watch of yours with that id (see action list).", True)
-                self.store.remove_watch(w["id"])
-                return say(f'Removed "{w["name"]}".')
+                if op == "remove":
+                    self.store.remove_watch(w["id"])
+                    return say(f'Removed "{w["name"]}".')
+                self.store.update_watch(w["id"], enabled=op == "resume")
+                return say(f'{"Resumed" if op == "resume" else "Paused"} "{w["name"]}".')
+            if op == "suggest":  # nothing fits: tell the user what watch would have, so they can decide whether to build it
+                idea = str(args.get("idea") or "").strip()
+                if not idea:
+                    return say("Describe the watch you'd want in idea: what to watch, why, and the kind/settings you imagine.", True)
+                now = time.time()
+                recent = self.ideas[entry_id] = [t for t in self.ideas.get(entry_id, []) if t > now - 86400]
+                if len(recent) >= AGENT_IDEAS:
+                    return say(f"You've sent {AGENT_IDEAS} watch ideas today; mention this one in the chat instead.", True)
+                recent.append(now)
+                item = self.store.add_inbox(me.get("name") or "A session", "Watch idea: " + idea.splitlines()[0][:80], idea[:2000],
+                                            entry_id=entry_id, from_agent=True)
+                await self.broadcast({"type": "inbox", "item": item})
+                return say("Sent to the user's inbox as a watch idea. Carry on without it for now.")
             if op != "add":
-                return say("action is add, list or remove.", True)
+                return say("action is add, list, pause, resume, remove or suggest.", True)
             if len(mine) >= AGENT_WATCHES:
                 return say(f"You already have {AGENT_WATCHES} watches; remove one first.", True)
             cfg = args.get("config") or {}
@@ -362,19 +380,22 @@ class Runner:
                      "question can wait in the chat. Keep the message short and spoken, without markdown, and warm and upbeat: say hi, "
                      "lead with good news, use exclamation marks where they fit (they lift the voice).", {"message": str})(call),
             sdk.tool("watch", "Your own watches: Switchboard checks something for you while you're idle and wakes you (or only "
-                     "tells the user) when it fires. action: add | list | remove. To add: name, kind and config, plus "
+                     "tells the user) when it fires. action: add | list | pause | resume | remove (by id) | suggest. To add: name, kind and config, plus "
                      "instructions (what to do when woken). Kinds and config: schedule {every_minutes: N} or {daily_at: \"HH:MM\"} "
                      "(fires every time); command {command, every_minutes, fire_on: \"change\"|\"failure\"}; http {url, every_minutes} "
                      "(up <-> down); github {repo: \"owner/name\", events: [issues, pulls, failed_runs], every_minutes}. Any config "
                      "can add active: {from: \"HH:MM\", to: \"HH:MM\", days: [1-7]}; quiet: true makes you answer NOTHING_NEW when "
                      "there's nothing to report (it then never reaches the user). wake: false only tells the user. At most "
                      f"{AGENT_WATCHES} watches, checked at most every {AGENT_MIN_MINUTES} minutes: each wake costs a turn, so "
-                     "only watch what's worth it. The user sees each one you set up and can remove it.",
+                     "only watch what's worth it. The user sees each one you set up and can remove it. If no kind or setting fits what you "
+                     "need, use suggest with idea: what you'd want to watch, why, and the kind/settings you imagine; it goes to the "
+                     "user as a watch idea (a few a day).",
                      {"type": "object", "properties": {
-                         "action": {"type": "string", "enum": ["add", "list", "remove"]},
+                         "action": {"type": "string", "enum": ["add", "list", "pause", "resume", "remove", "suggest"]},
+                         "idea": {"type": "string", "description": "suggest: the watch you'd want, why, and how you imagine it"},
                          "name": {"type": "string"}, "kind": {"type": "string", "enum": ["schedule", "command", "http", "github"]},
                          "config": {"type": "object"}, "instructions": {"type": "string"}, "wake": {"type": "boolean"},
-                         "id": {"type": "string", "description": "the watch to remove"}},
+                         "id": {"type": "string", "description": "the watch to pause, resume or remove"}},
                       "required": ["action"]})(watch),
         ])
 

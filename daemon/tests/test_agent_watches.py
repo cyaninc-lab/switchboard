@@ -35,7 +35,17 @@ def test_agents_watch_tool(tmp_path, monkeypatch):
     listed = text(run(action="list"))
     assert "feed check" in listed and "nightly" in listed and "tube's" not in listed
     assert run(action="remove", id=theirs["id"]).get("is_error")
+    assert run(action="pause", id=theirs["id"]).get("is_error")  # not theirs to pause either
+    assert not run(action="pause", id=w["id"]).get("is_error") and store.watch(w["id"])["enabled"] is False
+    assert "paused" in text(run(action="list"))
+    assert not run(action="resume", id=w["id"]).get("is_error") and store.watch(w["id"])["enabled"] is True
     assert not run(action="remove", id=w["id"]).get("is_error") and all(x["id"] != w["id"] for x in store.watches())
+    # nothing fits: the idea goes to the user's inbox, a few a day
+    assert run(action="suggest").get("is_error")
+    r = run(action="suggest", idea="Watch a Discord channel for new messages\nso I can answer support questions")
+    assert not r.get("is_error") and events[-1]["item"]["title"] == "Watch idea: Watch a Discord channel for new messages"
+    run(action="suggest", idea="two"); run(action="suggest", idea="three")
+    assert "today" in text(run(action="suggest", idea="four"))
     # at most AGENT_WATCHES each
     for i in range(AGENT_WATCHES - 1):
         assert not run(action="add", name=f"w{i}", kind="schedule", config={"every_minutes": 60}).get("is_error")

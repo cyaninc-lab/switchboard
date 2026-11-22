@@ -52,7 +52,8 @@ For "Claude needs me while I'm away from my desk", with a real chat from the sta
 - **Backlog after the phone app:** drop the Tailscale requirement (options: a Caddy reverse proxy with TLS, a relay, or TLS in the daemon).
 
 ## Agents' own watches
-Sessions get a `watch` tool (runner.py): add / list / remove watches tied to themselves (wake them, or only tell the user).
+Sessions get a `watch` tool (runner.py): add / list / pause / resume / remove watches tied to themselves (wake them, or only
+tell the user), and suggest: when no kind fits, the watch they wanted goes to the inbox as a "Watch idea" (3 a day each).
 At most 10 per session, checked at most every 5 minutes (each wake costs a turn); each new one posts to the user's inbox,
 and they appear in the Watches panel like any other. Validation is shared with the API (`watches.problem`).
 
