@@ -277,6 +277,8 @@ export type LiveEvent =
   | { type: 'inbox_removed'; id: number }
   | { type: 'settings' }
   | { type: 'relay' }
+  | { type: 'ack'; ref: string }
+  | { type: 'pong' }
   | { type: 'terminal_output'; entry: string; data: string }
   | { type: 'error'; entry?: string; code: string; message: string };
 
@@ -285,6 +287,11 @@ export const MODES = ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypa
 export class Live {
   private ws: WebSocket | null = null;
   private closed = false;
+  // messages sent but not yet acknowledged (daemons that ack): sent again after a reconnect, so a connection that died
+  // unnoticed loses nothing (the daemon takes each ref once)
+  private unacked = new Map<string, object>();
+  private lastHeard = 0;
+  private beat: ReturnType<typeof setInterval> | null = null;
   constructor(private m: Machine, private onEvent: (e: LiveEvent) => void, private onStatus: (up: boolean) => void) {
     this.open();
   }
@@ -293,11 +300,26 @@ export class Live {
     this.ws = ws;
     ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token: this.m.token }));
     ws.onmessage = (ev) => {
+      this.lastHeard = Date.now();
       const e = JSON.parse(ev.data) as LiveEvent;
-      if (e.type === 'hello') this.onStatus(true);
+      if (e.type === 'hello') {
+        this.onStatus(true);
+        for (const o of this.unacked.values()) ws.send(JSON.stringify(o));  // what may not have arrived before
+        // heartbeat (daemons that answer it): a connection that died without closing (a network blip) is noticed in
+        // seconds, not when the system gives up on it minutes later
+        if (this.beat) clearInterval(this.beat);
+        if ((e as any).ping) this.beat = setInterval(() => {
+          if (ws.readyState !== WebSocket.OPEN) return;
+          if (Date.now() - this.lastHeard > 40_000) { ws.close(); return; }
+          ws.send(JSON.stringify({ type: 'ping' }));
+        }, 15_000);
+      }
+      if (e.type === 'ack') { this.unacked.delete(e.ref); return; }
+      if (e.type === 'pong') return;
       this.onEvent(e);
     };
     ws.onclose = () => {
+      if (this.beat) { clearInterval(this.beat); this.beat = null; }
       this.onStatus(false);
       if (!this.closed) setTimeout(() => this.open(), 2000); // reconnect: the daemon may restart
     };
@@ -306,7 +328,12 @@ export class Live {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(o));
     else throw new Error('Not connected to ' + this.m.name);
   }
-  send(entry: string, text: string, images: Image[] = [], now = false) { this.sendJson({ type: 'send', entry, text, images, ...(now ? { now } : {}) }); }
+  /** A message: kept until the daemon acknowledges it, and sent (again) as soon as there's a connection. */
+  send(entry: string, text: string, images: Image[] = [], now = false) {
+    const ref = uid(), o = { type: 'send', entry, text, images, ref, ...(now ? { now } : {}) };
+    this.unacked.set(ref, o);
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(o));  // else it goes on the reconnect
+  }
   interrupt(entry: string) { this.sendJson({ type: 'interrupt', entry }); }
   stop(entry: string) { this.sendJson({ type: 'stop', entry }); }
   stopTask(entry: string, task: string) { this.sendJson({ type: 'stop_task', entry, task_id: task }); }

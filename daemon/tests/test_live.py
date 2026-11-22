@@ -1,5 +1,5 @@
 """Live sessions over the WebSocket, with the demo module standing in for the SDK (no Claude calls)."""
-import asyncio, os, sys, time
+import asyncio, json, os, sys, time
 from aiohttp.test_utils import TestClient, TestServer
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -850,5 +850,24 @@ def test_a_question_asked_before_a_client_connects_reaches_it(tmp_path, monkeypa
         await later.send_json({"type": "auth", "token": token})
         await later.receive_json()
         assert client.app[appmod.RUNNER].open_asks() == []  # answered: nothing to send again
+        await client.close()
+    asyncio.run(t())
+
+
+def test_messages_are_acknowledged_once_and_never_doubled(tmp_path, monkeypatch):
+    """A client whose connection died unnoticed resends what wasn't acknowledged; the daemon acks every copy but sends
+    it to Claude once. Heartbeats get a pong."""
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        await ws.send_json({"type": "ping"})
+        await until(ws, lambda m: m["type"] == "pong")
+        for _ in range(2):  # the same message twice (a resend after reconnecting)
+            await ws.send_json({"type": "send", "entry": e["id"], "text": "only once please", "ref": "r-1"})
+            await until(ws, lambda m: m["type"] == "ack" and m["ref"] == "r-1")
+        _, seen = await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
+        await asyncio.sleep(0.5)
+        r = await client.get(f"/v1/entries/{e['id']}/messages", headers=h)
+        said = [m for m in (await r.json())["messages"] if "only once please" in json.dumps(m) and m["type"] == "user"]
+        assert len(said) == 1
         await client.close()
     asyncio.run(t())

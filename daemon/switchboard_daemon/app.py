@@ -28,7 +28,8 @@ TTYS = web.AppKey("ttys", Terminals)
 NET = web.AppKey("net", Network)
 WATCHES, WATCH_TASK = web.AppKey("watches", Watches), web.AppKey("watch_task", asyncio.Task)
 PUSH_STATE = web.AppKey("push_state", dict)  # entry id -> last state, to notice a turn finishing
-DESK = web.AppKey("desk", object)  # is the user in a desktop window: phone notifications pause
+DESK = web.AppKey("desk", object)
+SENT_REFS = web.AppKey("sent_refs", dict)  # refs of messages already taken (insertion-ordered, the last 500)  # is the user in a desktop window: phone notifications pause
 CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
 
 
@@ -738,7 +739,7 @@ async def ws_handler(request):
         return ws
     request.app[SOCKETS].add(ws)
     log.info("client connected: %s", client)
-    await ws.send_json({"type": "hello", "machine": request.app[NAME]})
+    await ws.send_json({"type": "hello", "machine": request.app[NAME], "ping": True})  # ping: this daemon answers heartbeats
     for ask in runner.open_asks():  # asked before this client connected
         await ws.send_json(ask)
     try:
@@ -768,9 +769,21 @@ async def ws_handler(request):
                 elif t == "terminal_close":
                     await request.app[TTYS].close(eid)
                 elif t == "send":
-                    if entry["session_id"] in await _off(open_in_terminal) - runner.held_sessions():
-                        raise RuntimeError("open_in_terminal")
-                    await (runner.send_now if m.get("now") else runner.send)(entry, m.get("text", ""), m.get("images"))
+                    # a message carries a ref: acknowledged once taken, so a client whose connection died unnoticed sends it
+                    # again after reconnecting; a ref seen before is acknowledged but not sent twice
+                    ref, seen = m.get("ref"), request.app[SENT_REFS]
+                    if not (ref and ref in seen):
+                        if entry["session_id"] in await _off(open_in_terminal) - runner.held_sessions():
+                            raise RuntimeError("open_in_terminal")
+                        await (runner.send_now if m.get("now") else runner.send)(entry, m.get("text", ""), m.get("images"))
+                        if ref:
+                            seen[ref] = None
+                            while len(seen) > 500:
+                                seen.pop(next(iter(seen)))
+                    if ref:
+                        await ws.send_json({"type": "ack", "ref": ref})
+                elif t == "ping":  # the client's heartbeat: a connection that died unnoticed shows up within seconds
+                    await ws.send_json({"type": "pong"})
                 elif t == "interrupt":
                     await runner.interrupt(eid)
                 elif t == "stop":
@@ -865,7 +878,8 @@ def make_app(store: Store, name=None):
     app[SOCKETS] = set()
     app[PUSH_STATE] = {}
     app[RELAY] = {}
-    app[DESK] = push.Desk(store, lambda st, n: push.send(st, n))  # late-bound: tests stand in for push.send
+    app[DESK] = push.Desk(store, lambda st, n: push.send(st, n))
+    app[SENT_REFS] = {}  # late-bound: tests stand in for push.send
     app[RUNNER] = Runner(store, sdk, lambda ev: _broadcast(app, ev))
     app[RUNNER].machine = app[NAME]
     app[TTYS] = Terminals(lambda ev: _broadcast(app, ev))
