@@ -53,3 +53,26 @@ def test_report_runs_out_and_setting_turns_it_off(tmp_path):
     d.report("ws1", True)
     st.set_setting(push.PAUSE, "0")
     assert d.filter(DONE) == DONE
+
+
+def test_notices_go_to_the_relay_when_signed_in(tmp_path):
+    """A machine signed in to a relay sends its phone notices there (the account's phones listen), with its relay
+    address so a notification's buttons reach it."""
+    from aiohttp import web
+    from aiohttp.test_utils import TestServer
+    from switchboard_daemon import relay
+    async def t():
+        got = []
+        async def post(request):
+            got.append((request.headers["Authorization"], await request.json())); return web.json_response({"id": "1"})
+        app = web.Application(); app.router.add_post("/v1/push", post)
+        srv = TestServer(app); await srv.start_server()
+        st = Store(str(tmp_path / "s.db"))
+        await push.send(st, {"kind": "question", "title": "x"})
+        assert got == []  # not signed in: nothing to the relay
+        url = str(srv.make_url("")).rstrip("/")
+        st.set_setting(relay.URL, url); st.set_setting(relay.ID, "m1"); st.set_setting(relay.SECRET, "s3cret")
+        await push.send(st, {"kind": "question", "title": "x"})
+        assert got == [("Bearer s3cret", {"kind": "question", "title": "x", "machine": f"{url}/d/m1"})]
+        await srv.close()
+    asyncio.run(t())
