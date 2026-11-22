@@ -1,6 +1,7 @@
 package org.cyaninc.switchboard
 
-// Phone notifications without Google: listens to the user's ntfy topic (set up by the web UI through push.json) and
+// Phone notifications without Google: listens to the user's account on their Switchboard relay (the web UI hands it
+// the relay and this phone's sign-in through push.json) and
 // shows what the machines' daemons publish there: a session needs you (Allow / Deny, or a reply), a session finished,
 // a watch fired. Android requires a visible notification for a service that stays connected; it sits in a silent channel.
 import android.app.*
@@ -22,8 +23,7 @@ object Push {
     // written by the web UI (lib.rs push_config)
     fun config(ctx: Context): JSONObject? = File(ctx.dataDir, "push.json").takeIf { it.exists() }?.let { JSONObject(it.readText()) }
     fun start(ctx: Context) {
-        val c = config(ctx)
-        if (c?.optString("server").isNullOrEmpty() && c?.optString("relay").isNullOrEmpty()) return
+        if (config(ctx)?.optString("relay").isNullOrEmpty()) return
         ctx.startForegroundService(Intent(ctx, PushService::class.java))
     }
     fun channels(ctx: Context) {
@@ -69,7 +69,7 @@ class PushService : Service() {
         if (Build.VERSION.SDK_INT >= 34) startForeground(1, n, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING)
         else startForeground(1, n)
         // no interrupt() to pick up a new config: a pending interrupt made the next notice's foreground check throw, and
-        // that notice was dropped. listen() re-reads push.json on every line instead (ntfy sends a keepalive every 45s).
+        // that notice was dropped. listen() re-reads push.json on every line instead (the relay checks in every 4 min).
         if (worker?.isAlive != true) worker = thread(name = "push") { listen() }
         if (!watching) {  // Wi-Fi <-> mobile and the like: reconnect now, not after the stream's 5-minute timeout
             watching = true
@@ -93,24 +93,23 @@ class PushService : Service() {
         var wait = 2000L
         while (running) {
             val cfg = Push.config(this)
-            val server = cfg?.optString("server").orEmpty(); val topic = cfg?.optString("topic").orEmpty()
-            // signed in to an account: the relay's stream (one per account, the phone's own sign-in); else an ntfy topic
+            // the account's stream on the relay (one per phone, its own sign-in)
             val relay = cfg?.optString("relay").orEmpty(); val secret = cfg?.optString("secret").orEmpty()
-            if (relay.isEmpty() && (server.isEmpty() || topic.isEmpty())) { stopSelf(); return }
-            val lastKey = if (relay.isNotEmpty()) "last_relay" else "last"
+            if (relay.isEmpty() || secret.isEmpty()) { stopSelf(); return }
+            val lastKey = "last_relay"
             try {
-                val since = prefs.getString(lastKey, null) ?: (if (relay.isNotEmpty()) "" else "all")  // a new sign-in: no replay
-                val c = URL(if (relay.isNotEmpty()) "${relay.trimEnd('/')}/v1/push/json?since=$since" else "${server.trimEnd('/')}/$topic/json?since=$since").openConnection() as HttpURLConnection
-                if (relay.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $secret")
-                // the relay checks in every 4 min (fewer wake-ups), ntfy every 45 s; a silent stream past this is dead
-                c.connectTimeout = 15000; c.readTimeout = if (relay.isNotEmpty()) 300000 else 90000
+                val since = prefs.getString(lastKey, null) ?: ""  // a new sign-in: no replay of the past day
+                val c = URL("${relay.trimEnd('/')}/v1/push/json?since=$since").openConnection() as HttpURLConnection
+                c.setRequestProperty("Authorization", "Bearer $secret")
+                // the relay checks in every 4 min (few wake-ups); a stream silent for longer has died: reconnect
+                c.connectTimeout = 15000; c.readTimeout = 300000
                 current = c
                 c.inputStream.bufferedReader().useLines { lines ->
                     wait = 2000L
                     for (line in lines) {
                         if (!running) break
                         val now = Push.config(this@PushService)
-                        if (now?.optString("server") != server || now.optString("topic") != topic || now.optString("relay") != relay) break  // moved: reconnect
+                        if (now?.optString("relay") != relay || now.optString("secret") != secret) break  // signed in again: reconnect
                         val ev = JSONObject(line)
                         if (ev.optString("event") != "message") continue
                         prefs.edit().putString(lastKey, ev.getString("id")).apply()

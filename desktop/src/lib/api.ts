@@ -119,9 +119,9 @@ export type DaemonSettings = { idle_close_minutes: number; project_order?: strin
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export const settings = (m: Machine) => call<DaemonSettings>(m, '/v1/settings');
 // phone notifications: the ntfy server (set on one machine is enough) and the phones subscribed to this daemon
-export type PushInfo = { server: string; subscribers: number; pause_at_desk?: boolean };
+export type PushInfo = { voice?: string; listen?: string; pause_at_desk?: boolean; at_desk?: boolean };
 export const push = (m: Machine) => call<PushInfo>(m, '/v1/push');
-export const setPush = (m: Machine, b: { server?: string; subscribe?: string; machine_url?: string; unsubscribe?: string; pause_at_desk?: boolean }) =>
+export const setPush = (m: Machine, b: { voice?: string; listen?: string; pause_at_desk?: boolean }) =>
   call<PushInfo>(m, '/v1/push', { method: 'PUT', body: JSON.stringify(b) });
 export const setSettings = (m: Machine, s: Partial<DaemonSettings>) => call<DaemonSettings>(m, '/v1/settings', { method: 'PUT', body: JSON.stringify(s) });
 export const setNetwork = (m: Machine, on: boolean) => call<Network>(m, '/v1/network', { method: 'PUT', body: JSON.stringify({ listen_tailscale: on }) });
