@@ -1,5 +1,5 @@
-"""Phone notifications: the daemon posts to each subscribed phone topic (a fake ntfy here), and a phone can answer
-or reply over plain HTTP."""
+"""Phone notifications: the daemon posts to its account's relay (a stand-in here), and a phone can answer or reply
+over plain HTTP."""
 import asyncio, json, os, sys
 from aiohttp import web
 from aiohttp.test_utils import TestServer
@@ -12,18 +12,18 @@ def test_push_permission_answer_finish_and_reply(tmp_path, monkeypatch):
     async def t():
         got = asyncio.Queue()
 
-        async def topic(request):  # what ntfy would receive
+        async def posted(request):  # what the relay would receive
             await got.put(json.loads(await request.read()))
             return web.json_response({"id": "x"})
-        ntfy = web.Application(); ntfy.router.add_post("/{topic}", topic)
-        fake = TestServer(ntfy); await fake.start_server()
+        relay_app = web.Application(); relay_app.router.add_post("/v1/push", posted)
+        fake = TestServer(relay_app); await fake.start_server()
 
         client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
-        bad = await client.put("/v1/push", headers=h, json={"subscribe": str(fake.make_url("/sb-1"))})  # no machine_url
-        assert bad.status == 400
-        r = await client.put("/v1/push", headers=h, json={"server": "http://yagoo:2586/", "subscribe": str(fake.make_url("/sb-1")),
-                                                          "machine_url": "http://fantome:7878/"})
-        assert await r.json() == {"server": "http://yagoo:2586", "subscribers": 1, "voice": "", "listen": "", "pause_at_desk": True, "at_desk": False}
+        from switchboard_daemon import relay  # signed in to an account: notices go to its relay
+        relay_url = str(fake.make_url("")).rstrip("/")
+        store.set_setting(relay.URL, relay_url); store.set_setting(relay.ID, "m1"); store.set_setting(relay.SECRET, "s")
+        r = await client.get("/v1/push", headers=h)
+        assert await r.json() == {"voice": "", "listen": "", "pause_at_desk": True, "at_desk": False}
         r = await client.put("/v1/push", headers=h, json={"voice": "http://fantome:8100/", "listen": "http://fantome:8102"})
         assert (await r.json())["voice"] == "http://fantome:8100" and (await r.json())["listen"] == "http://fantome:8102"
         assert (await client.put("/v1/push", headers=h, json={"voice": "ftp://x"})).status == 400
@@ -34,7 +34,7 @@ def test_push_permission_answer_finish_and_reply(tmp_path, monkeypatch):
         note = await asyncio.wait_for(got.get(), 5)
         while note["kind"] != "tool":
             note = await asyncio.wait_for(got.get(), 5)
-        assert note["machine"] == "http://fantome:7878" and note["entry"] == e["id"] and note["request_id"] == req["request_id"]
+        assert note["machine"] == f"{relay_url}/d/m1" and note["entry"] == e["id"] and note["request_id"] == req["request_id"]
         assert note["title"].endswith("needs you") and note["body"].startswith("Allow Bash")
 
         # Allow from the notification (plain HTTP); the phone hears it's resolved
@@ -65,9 +65,7 @@ def test_push_permission_answer_finish_and_reply(tmp_path, monkeypatch):
         await ws.send_json({"type": "send", "entry": e["id"], "text": "call me"})  # again straight away: the guardrail says no
         await until(ws, lambda m: m["type"] == "message" and "tool_result" in json.dumps(m) and "minutes ago" in json.dumps(m))
 
-        # unsubscribed: nothing more is posted; and no token, no answering
-        await client.put("/v1/push", headers=h, json={"unsubscribe": str(fake.make_url("/sb-1"))})
-        assert (await (await client.get("/v1/push", headers=h)).json())["subscribers"] == 0
+        # no token, no answering
         assert (await client.post(f"/v1/entries/{e['id']}/send", json={"text": "x"})).status == 401
         await client.close(); await fake.close()
     asyncio.run(t())

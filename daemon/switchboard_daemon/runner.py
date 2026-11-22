@@ -289,9 +289,9 @@ class Runner:
             text = str(args.get("message", "")).strip()
             if not text:
                 return say("Say what you're calling about.", True)
-            from . import push
-            if not push.subscribers(self.store):
-                return say("The user has no phone set up for calls (Switchboard's phone app with notifications). Tell them in the chat instead.", True)
+            from . import relay
+            if not relay.address(self.store):
+                return say("The user has no phone set up for calls (this machine isn't signed in to their account, so their phone can't ring). Tell them in the chat instead.", True)
             wait = CALL_GAP - (time.time() - self.last_call.get(entry_id, 0))
             if wait > 0:
                 return say(f"You called less than {CALL_GAP // 60} minutes ago; try again in {int(wait)} seconds, or write in the chat.", True)

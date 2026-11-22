@@ -479,22 +479,18 @@ async def set_settings(request):
 
 
 async def get_push(request):
+    """The phone call services (voice, listening) and "pause while I'm in Switchboard on a computer". Notifications
+    themselves go through the account's relay: nothing to set here."""
     st = request.app[STORE]
-    return web.json_response({"server": st.setting(push.SERVER, ""), "subscribers": len(push.subscribers(st)),
-                              "voice": st.setting(push.VOICE, ""), "listen": st.setting(push.LISTEN, ""),
+    return web.json_response({"voice": st.setting(push.VOICE, ""), "listen": st.setting(push.LISTEN, ""),
                               "pause_at_desk": st.setting(push.PAUSE, "1") != "0", "at_desk": request.app[DESK].present()})
 
 
 async def set_push(request):
-    """{server}: where phones listen (needed on one machine only); {subscribe: topic url, machine_url: the address
-    that phone reaches this daemon at} / {unsubscribe: topic url}."""
+    """{voice, listen}: where a call gets its voice and is understood; {pause_at_desk}."""
     body, st = await request.json(), request.app[STORE]
     def ok_url(u):
         return isinstance(u, str) and u.startswith(("http://", "https://")) and len(u) < 500
-    if "server" in body:
-        if body["server"] and not ok_url(body["server"]):
-            raise web.HTTPBadRequest(text=json.dumps({"code": "bad_push_server"}), content_type="application/json")
-        st.set_setting(push.SERVER, (body["server"] or "").rstrip("/"))
     for k, key in (("voice", push.VOICE), ("listen", push.LISTEN)):  # calls: where the phone gets a voice and is understood
         if k in body:
             if body[k] and not ok_url(body[k]):
@@ -502,18 +498,6 @@ async def set_push(request):
             st.set_setting(key, (body[k] or "").rstrip("/"))
     if "pause_at_desk" in body:  # no phone notifications while the user is in a desktop window (on by default)
         st.set_setting(push.PAUSE, "1" if body["pause_at_desk"] else "0")
-    if "subscribe" in body or "unsubscribe" in body:
-        u = body.get("subscribe") or body.get("unsubscribe")
-        if not ok_url(u):
-            raise web.HTTPBadRequest(text=json.dumps({"code": "bad_push_topic"}), content_type="application/json")
-        subs = push.subscribers(st)
-        if "subscribe" in body:
-            if not ok_url(body.get("machine_url")):
-                raise web.HTTPBadRequest(text=json.dumps({"code": "bad_machine_url"}), content_type="application/json")
-            subs[u] = body["machine_url"].rstrip("/")
-        else:
-            subs.pop(u, None)
-        push.set_subscribers(st, subs)
     return await get_push(request)
 
 
@@ -826,7 +810,7 @@ async def ws_handler(request):
 
 async def _broadcast(app, event):
     note = push.notice(app[STORE], event, app[PUSH_STATE])
-    if note and (note := app[DESK].filter(note)):  # phones hear about it through ntfy, in the background (a slow push server mustn't hold the daemon)
+    if note and (note := app[DESK].filter(note)):  # phones hear about it through the relay, in the background (a slow push server mustn't hold the daemon)
         asyncio.get_running_loop().create_task(push.send(app[STORE], note))
     for ws in list(app[SOCKETS]):
         try:

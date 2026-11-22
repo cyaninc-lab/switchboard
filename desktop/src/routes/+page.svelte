@@ -243,43 +243,21 @@
     finally { linking = false; }
   }
 
-  // ---- phone notifications ----
-  let pushServer = $state('');
+  // ---- phone notifications: through your account's relay (the phone signs in: Settings → Account) ----
   let pushOn = $state(false);
-  const PUSH_PREFS = 'switchboard.push.prefs', PUSH_TOPIC = 'switchboard.push.topic';
+  const PUSH_PREFS = 'switchboard.push.prefs';
   let pushPrefs = $state<{ finished: boolean }>((() => {
     try { return { finished: JSON.parse(localStorage.getItem(PUSH_PREFS) ?? '{}').finished ?? true }; } catch { return { finished: true }; }
   })());
-  const pushTopic = () => {
-    let t = ''; try { t = localStorage.getItem(PUSH_TOPIC) ?? ''; } catch {}
-    if (!t) { t = 'sb-' + api.uid().replace(/-/g, ''); try { localStorage.setItem(PUSH_TOPIC, t); } catch {} }  // unguessable: it's the only lock
-    return t;
-  };
-  // the server from whichever machine has one; in the phone app, subscribe this phone on every machine and hand the
-  // listener its config. Runs at start, after pairing, and when a setting changes.
-  let pushCfg: { server: string; topic: string; relay?: string; secret?: string; machines: Machine[] } | null = null;  // what the listener has, bar the switches
+  // what the phone's listener has (PushService.kt): the relay, this phone's sign-in, the machines its buttons answer
+  let pushCfg: { relay: string; secret: string; machines: Machine[] } | null = null;
   let pauseAtDesk = $state(true);  // the daemons' setting: no phone notifications while you're in a desktop window
   async function syncPush() {
-    if (isPhoneApp() && acctLocal && acct) {  // signed in: notifications come through the account's relay, nothing to set up
-      pushCfg = { server: '', topic: '', relay: acctLocal.relay, secret: acctLocal.secret, machines: machines.map((m) => $state.snapshot(m)) };
-      await setPhonePush({ ...pushCfg, ...pushPrefs }).then(() => (pushOn = true), (e) => say(`Notifications: ${(e as Error).message ?? e}`));
-      return;
-    }
     const infos = await Promise.all(machines.map((m) => api.push(m).catch(() => null)));
-    pushServer = infos.find((i) => i?.server)?.server ?? pushServer;
     pauseAtDesk = !infos.some((i) => i?.pause_at_desk === false);
-    if (!isPhoneApp() || !pushServer) return;
-    const topic = pushTopic(), url = `${pushServer.replace(/\/$/, '')}/${topic}`;
-    const ok = await Promise.all(machines.map((m, i) => infos[i] ? api.setPush(m, { subscribe: url, machine_url: m.url }).then(() => m, () => null) : null));
-    pushCfg = { server: pushServer, topic, machines: ok.filter((m): m is Machine => !!m).map((m) => $state.snapshot(m)) };
-    await setPhonePush({ ...pushCfg, ...pushPrefs })
-      .then(() => (pushOn = true), (e) => say(`Notifications: ${(e as Error).message ?? e}`));
-  }
-  async function savePushServer() {
-    const s = pushServer.trim().replace(/\/$/, '');
-    if (s && !/^https?:\/\//.test(s)) return say('The notification server address starts with http:// or https://');
-    await Promise.all(machines.map((m) => api.setPush(m, { server: s }).catch(() => null)));
-    await syncPush();
+    if (!isPhoneApp() || !acctLocal || !acct) return;  // a signed-in, approved phone listens on its account's relay
+    pushCfg = { relay: acctLocal.relay, secret: acctLocal.secret, machines: machines.map((m) => $state.snapshot(m)) };
+    await setPhonePush({ ...pushCfg, ...pushPrefs }).then(() => (pushOn = true), (e) => say(`Notifications: ${(e as Error).message ?? e}`));
   }
   async function savePauseAtDesk() {
     await Promise.all(machines.map((m) => api.setPush(m, { pause_at_desk: pauseAtDesk }).catch(() => null)));
@@ -1347,7 +1325,7 @@
     try {
       const m = await api.pair(cUrl.trim(), cCode.trim(), 'Switchboard desktop');
       machines = [...machines.filter((x) => x.url !== m.url), m];
-      syncPush();  // a new machine: subscribe this phone there too
+      syncPush();
       api.saveMachines(machines);
       dialog = null; cCode = '';
       refresh();
@@ -2157,18 +2135,13 @@
         <div class="actions" style="justify-content: flex-start"><button type="button" class="btn ghost" disabled={linking || machines.length < 2} onclick={linkMachines}>{linking ? 'Linking…' : 'Let sessions on my machines message each other'}</button></div>
         {#if linkMsg}<p class="muted small" role="status">{linkMsg}</p>{/if}
       {:else if setTab === 'notifications'}
-        {#if acct}
-          <p class="muted small">Your phones get notifications through your account (Settings → Account): nothing to set up.</p>
-        {:else}
-          {@render hint('The phone app gets notifications through an ntfy server you run.', 'Setting it on one machine is enough: the phone subscribes on all of them. Signed in to an account (Settings → Account), notifications come through it instead.')}
-          <label>Notification server<input placeholder="http://my-server:2586" bind:value={pushServer} onchange={savePushServer} inputmode="url" autocapitalize="off" /></label>
-        {/if}
+        <p class="muted small">{acct ? 'Your phones get notifications through your account: nothing to set up.' : 'Sign in on each device (Settings → Account) and your phones get notifications through your account.'}</p>
         <label class="toggle"><input type="checkbox" bind:checked={pauseAtDesk} onchange={savePauseAtDesk} />
           <span><b>Pause while I'm in Switchboard on a computer</b><br />{@render hint('Your phone stays quiet while you watch.', "While a Switchboard window on a computer is in front and you've used it in the last 3 minutes. A question still unanswered when you leave goes to the phone then.")}</span></label>
         {#if isPhoneApp()}
           <label class="toggle"><input type="checkbox" bind:checked={pushPrefs.finished} onchange={savePushPrefs} />
             <span><b>Tell me when a session finishes</b></span></label>
-          <p class="muted small" aria-live="polite">{acct || pushServer ? (pushOn ? 'This phone gets notifications.' : 'Setting up…') : 'Sign in (Settings → Account) or add a server to get notifications.'}</p>
+          <p class="muted small" aria-live="polite">{acct ? (pushOn ? 'This phone gets notifications.' : 'Setting up…') : 'Sign in (Settings → Account) to get notifications.'}</p>
           {@render hint('The lock screen follows your phone.', "Notifications → hide sensitive content: hidden, it says only which session needs you.")}
         {/if}
       {:else}

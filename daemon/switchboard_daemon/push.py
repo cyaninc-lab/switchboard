@@ -1,9 +1,7 @@
-"""Phone notifications: the daemon publishes to an ntfy server; the Switchboard phone app listens on its own topic.
-
-Setting `push_server` (e.g. http://yagoo:2586) only has to be on one machine: the phone app reads it from any machine
-it is paired with and subscribes its topic on all of them (`push_subscribers`). A message carries what a notification
-shows (session name, what it needs) and the ids the app needs to act on it; the app decides what the lock screen shows.
-"""
+"""Phone notifications: the daemon posts a notice to its account's relay, which passes it to the account's signed-in
+phones (one stream per phone; see the relay). A notice carries what a notification shows (session name, what it needs)
+and the ids the app needs to act on it, plus this machine's relay address for the buttons; the app decides what the
+lock screen shows. Not signed in to a relay: no phone notifications."""
 import asyncio
 import time
 import json
@@ -11,18 +9,8 @@ import logging
 
 import aiohttp
 
-SERVER, SUBSCRIBERS = "push_server", "push_subscribers"
 VOICE, LISTEN = "voice_server", "listen_server"  # calls: a /say?text= → audio service, an OpenAI-style transcription service
 log = logging.getLogger(__name__)
-
-
-def subscribers(store):
-    """A phone's topic URL -> the address that phone reaches this daemon at (a notification names it, to act on)."""
-    return json.loads(store.setting(SUBSCRIBERS, "{}"))
-
-
-def set_subscribers(store, subs):
-    store.set_setting(SUBSCRIBERS, json.dumps(subs))
 
 
 def notice(store, ev, last_state):
@@ -64,33 +52,19 @@ def notice(store, ev, last_state):
 
 
 async def send(store, note):
-    """POST the notice to every subscribed phone topic, and to the account's phones through the relay when this machine
-    is signed in to one; never raises (a phone being away mustn't break the daemon)."""
+    """POST the notice to this machine's relay (its account's phones listen there); never raises (a phone being away
+    mustn't break the daemon). ponytail: no retry; the relay keeps a day for phones that were away."""
     from . import relay
-    if relay.address(store):
-        try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as s:
-                async with s.post(store.setting(relay.URL, "") + "/v1/push", json={**note, "machine": relay.address(store)},
-                                  headers={"Authorization": f"Bearer {store.setting(relay.SECRET, '')}"}) as r:
-                    if r.status >= 300:
-                        log.warning("push through the relay failed: HTTP %s", r.status)
-        except Exception as e:
-            log.warning("push through the relay failed: %s", type(e).__name__)
-    subs = subscribers(store)
-    if not subs:
+    if not relay.address(store):
         return
-
-    async def one(s, u, machine):
-        async with s.post(u, data=json.dumps({**note, "machine": machine}).encode()) as r:
-            if r.status >= 300:
-                log.warning("push to a phone failed: HTTP %s", r.status)
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as s:
-            for r in await asyncio.gather(*(one(s, u, m) for u, m in subs.items()), return_exceptions=True):
-                if isinstance(r, Exception):
-                    log.warning("push to a phone failed: %s", type(r).__name__)
-    except Exception as e:  # ponytail: no retry; ntfy caches for the phone, a lost post loses one notification
-        log.warning("push failed: %s", type(e).__name__)
+            async with s.post(store.setting(relay.URL, "") + "/v1/push", json={**note, "machine": relay.address(store)},
+                              headers={"Authorization": f"Bearer {store.setting(relay.SECRET, '')}"}) as r:
+                if r.status >= 300:
+                    log.warning("push through the relay failed: HTTP %s", r.status)
+    except Exception as e:
+        log.warning("push through the relay failed: %s", type(e).__name__)
 
 
 PAUSE = "push_pause_at_desk"  # setting: "1" (default) / "0"
