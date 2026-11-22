@@ -55,6 +55,12 @@ class PushService : Service() {
     @Volatile private var running = true
     private var worker: Thread? = null
     @Volatile private var current: HttpURLConnection? = null  // the open stream: dropped on a network change to reconnect at once
+    private val wake = Object()  // a network coming back also ends a wait between attempts
+
+    /** For Settings → Notifications: connected (since when) or reconnecting (and why). */
+    private fun status(state: String, detail: String = "") {
+        try { File(dataDir, "push-status.json").writeText(JSONObject().put("state", state).put("since", System.currentTimeMillis()).put("detail", detail).toString()) } catch (_: Exception) {}
+    }
     private var watching = false
     private var updater: Thread? = null
 
@@ -74,7 +80,10 @@ class PushService : Service() {
         if (!watching) {  // Wi-Fi <-> mobile and the like: reconnect now, not after the stream's 5-minute timeout
             watching = true
             getSystemService(android.net.ConnectivityManager::class.java).registerDefaultNetworkCallback(object : android.net.ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: android.net.Network) { current?.disconnect() }
+                override fun onAvailable(network: android.net.Network) {
+                    android.util.Log.i("PushService", "network available: reconnecting")
+                    current?.disconnect(); synchronized(wake) { wake.notifyAll() }
+                }
             })
         }
         if (updater?.isAlive != true) updater = thread(name = "update") {  // a newer app release: download it, say it's ready
@@ -104,8 +113,10 @@ class PushService : Service() {
                 // the relay checks in every 4 min (few wake-ups); a stream silent for longer has died: reconnect
                 c.connectTimeout = 15000; c.readTimeout = 300000
                 current = c
+                val input = c.inputStream  // connects
                 android.util.Log.i("PushService", "listening on $relay")
-                c.inputStream.bufferedReader().useLines { lines ->
+                status("connected")
+                input.bufferedReader().useLines { lines ->
                     wait = 2000L
                     for (line in lines) {
                         if (!running) break
@@ -119,9 +130,10 @@ class PushService : Service() {
                 }
             } catch (_: InterruptedException) {
             } catch (e: Exception) {
-                android.util.Log.w("PushService", "notification stream: ${e.javaClass.simpleName}: ${e.message}")
-                try { Thread.sleep(wait) } catch (_: InterruptedException) {}
-                wait = minOf(wait * 2, 60000L)
+                android.util.Log.w("PushService", "notification stream: ${e.javaClass.simpleName}: ${e.message}; again in ${wait / 1000}s")
+                status("reconnecting", "${e.javaClass.simpleName}: ${e.message ?: ""}".take(200))
+                try { synchronized(wake) { wake.wait(wait) } } catch (_: InterruptedException) {}  // or as soon as a network appears
+                wait = minOf(wait * 2, 30000L)
             }
         }
     }
