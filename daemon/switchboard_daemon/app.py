@@ -18,6 +18,7 @@ from .watches import Watches, KINDS, ACTIONS
 from .runner import MODES, EFFORTS, IDLE_SETTING, IDLE_CHOICES
 from . import logs
 from . import push
+from . import relay as relaymod
 from .logs import log
 
 STORE, NAME = web.AppKey("store", Store), web.AppKey("name", str)
@@ -371,7 +372,7 @@ async def read_inbox(request):
 
 def _local_only(request):
     """Settings that change who can reach this daemon, and pairing codes, only from the machine itself."""
-    if request.remote not in ("127.0.0.1", "::1"):
+    if request.remote not in ("127.0.0.1", "::1") or request.headers.get(relaymod.RELAYED):  # through a relay isn't "here"
         raise web.HTTPForbidden(text=json.dumps({"code": "only_from_this_machine"}), content_type="application/json")
 
 
