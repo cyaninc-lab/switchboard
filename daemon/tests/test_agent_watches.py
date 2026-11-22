@@ -50,3 +50,40 @@ def test_agents_watch_tool(tmp_path, monkeypatch):
     for i in range(AGENT_WATCHES - 1):
         assert not run(action="add", name=f"w{i}", kind="schedule", config={"every_minutes": 60}).get("is_error")
     assert "already have" in text(run(action="add", name="one too many", kind="schedule", config={"every_minutes": 60}))
+
+
+def test_unread_messages_follow_claude_codes_queue(tmp_path, monkeypatch):
+    """The daemon mirrors Claude Code's queue from the transcript: queued messages stay unread (a clock in the app) until
+    read mid-turn (remove) or taken as the next turn (dequeue); an interrupt (popAll) gives them back."""
+    import json, time
+    from types import SimpleNamespace
+    from switchboard_daemon.runner import Live
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    d = tmp_path / "projects" / "-p"; d.mkdir(parents=True)
+    f = d / "s1.jsonl"; f.write_text('{"type":"user"}\n')
+    store = Store(str(tmp_path / "s.db"))
+    events = []
+    async def broadcast(ev): events.append(ev)
+    runner = Runner(store, sdk, broadcast)
+    lv = Live("e1", client=None)
+    runner.live["e1"] = lv
+    def add(*ops):
+        with open(f, "a") as h:
+            for op in ops: h.write(json.dumps({"type": "queue-operation", **op}) + "\n")
+    async def t():
+        task = asyncio.create_task(runner._watch_queue(lv, "s1"))
+        await asyncio.sleep(0.9)  # it starts from the end of the file
+        add({"operation": "enqueue", "content": "one"}, {"operation": "enqueue", "content": "two"}, {"operation": "enqueue", "content": "three"})
+        await asyncio.sleep(1)
+        assert runner.unread("e1") == ["one", "two", "three"] and events[-1]["items"] == ["one", "two", "three"]
+        add({"operation": "remove", "content": "two", "reason": "absorbed_mid_turn"})  # read between steps
+        await asyncio.sleep(1)
+        assert runner.unread("e1") == ["one", "three"]
+        add({"operation": "dequeue"})  # taken as the next turn
+        await asyncio.sleep(1)
+        assert runner.unread("e1") == ["three"]
+        add({"operation": "popAll", "content": "three"})  # interrupted: back to the user
+        await asyncio.sleep(1)
+        assert runner.unread("e1") == [] and events[-1]["dropped"] == ["three"]
+        runner.live.pop("e1"); task.cancel()
+    asyncio.run(t())

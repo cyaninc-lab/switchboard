@@ -680,7 +680,8 @@ async def messages(request):
     except OSError:
         stamp = None
     cache, key = request.app[HISTORY], (e["session_id"], limit)
-    if stamp and (hit := cache.get(key)) and hit[0] == stamp:
+    unread = request.app[RUNNER].unread(e["id"])
+    if stamp and (hit := cache.get(key)) and hit[0] == stamp and not unread:
         return web.Response(body=hit[1], content_type="application/json")
     # the most recent `limit` messages: the SDK's offset counts from the start, which showed long sessions only their
     # beginning (it parses the whole file either way, so reading everything costs nothing extra)
@@ -690,8 +691,8 @@ async def messages(request):
     blocks = lambda m: (m.get("message") or {}).get("content") if isinstance(m, dict) and isinstance(m.get("message"), dict) else None
     edits = {b.get("id") for m in shown for b in (blocks(m) if isinstance(blocks(m), list) else []) if isinstance(b, dict) and b.get("type") == "tool_use"}
     patches = await _off(patchmod.for_session, e["session_id"], edits) if edits else {}
-    body = json.dumps({"messages": shown, "total": len(msgs), "patches": patches}, default=str).encode()
-    if stamp:
+    body = json.dumps({"messages": shown, "total": len(msgs), "patches": patches, "unread": unread}, default=str).encode()
+    if stamp and not unread:
         cache.pop(key, None); cache[key] = (stamp, body)
         while len(cache) > 32:
             cache.pop(next(iter(cache)))

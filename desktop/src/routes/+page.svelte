@@ -520,6 +520,8 @@
   // messages sent while Claude works wait at the bottom (as in Claude Code) and join the chat when the daemon sends them
   // ponytail: mirrors only this window's queue; another device queueing at the same time can make the counts disagree
   let pendingQ = $state<Record<string, HistoryMessage[]>>({});
+  // per session: what the daemon last said is unread (a message missing from the next list was read, if it was there)
+  const unreadSeen: Record<string, Set<string>> = {};
   const msgText = (m: HistoryMessage) => (Array.isArray(m.message.content) ? m.message.content : []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n');
   function giveBack(entryId: string, texts: string[]) {  // queued text that won't be sent goes back in the box
     const t = texts.filter((x) => x.trim()).join('\n');
@@ -719,8 +721,29 @@
       if (was && !LIVE_STATES.includes(was) && LIVE_STATES.includes(e.state)) refresh();  // which subagents run is the daemon's call
       if (e.state !== 'working' && e.state !== 'waiting') {
         streaming[e.entry] = ''; thinkingLive[e.entry] = ''; queued[e.entry] = 0;
-        if (pendingQ[e.entry]?.length) { giveBack(e.entry, pendingQ[e.entry].map(msgText)); pendingQ[e.entry] = []; }  // the session ended with them unsent
+        // the session ended with them unsent (daemons that mirror the queue say so themselves: 'unread' dropped; with
+        // them, a turn ending isn't the end: what's queued becomes the next turn)
+        if (!unreadSeen[e.entry] && pendingQ[e.entry]?.length) { giveBack(e.entry, pendingQ[e.entry].map(msgText)); pendingQ[e.entry] = []; }
       }
+    } else if (e.type === 'unread') {
+      // Claude Code's queue as the daemon mirrors it: what's in it stays at the bottom with a clock; what left it was
+      // read and joins the chat; dropped (an interrupt, the session stopping) goes back in the message box
+      const seen = unreadSeen[e.entry] ?? new Set<string>(), q = pendingQ[e.entry] ?? [];
+      const left = [...e.items], read: HistoryMessage[] = [], keep: HistoryMessage[] = [];
+      for (const msg of q) {
+        const i = left.indexOf(msgText(msg));
+        if (i >= 0) { left.splice(i, 1); keep.push(msg); }
+        else if (seen.has(msgText(msg)) && !e.dropped.includes(msgText(msg))) read.push(msg);
+        else if (!e.dropped.includes(msgText(msg))) keep.push(msg);  // sent just now: not in the queue yet
+      }
+      for (const t of left) keep.push({ type: 'user', uuid: api.uid(), message: { role: 'user', content: t } });  // from another device, or before a restart
+      pendingQ[e.entry] = keep;
+      unreadSeen[e.entry] = new Set(e.items);
+      if (read.length) {
+        if (selected?.entry.id === e.entry && !selected.sub) messages = [...messages, ...read];
+        else if (m && histCache.has(m.url + '|' + e.entry)) histCache.get(m.url + '|' + e.entry)!.push(...read);
+      }
+      if (e.dropped.length) giveBack(e.entry, e.dropped);
     } else if (e.type === 'delta') {
       if (e.kind === 'thinking') thinkingLive[e.entry] = (thinkingLive[e.entry] ?? '') + e.text;
       else streaming[e.entry] = (streaming[e.entry] ?? '') + e.text;
@@ -972,9 +995,20 @@
     try { hist = await api.history(machine, entry.id); } catch {}
     if (mine !== openSeq) return;  // the user already opened something else
     if (hist) {
+      const un = (hist as HistoryMessage[] & { unread?: string[] }).unread ?? [];
+      if (un.length || unreadSeen[entry.id]) {
+        const local = pendingQ[entry.id] ?? [];
+        const left = [...un];
+        const keep = local.filter((msg) => { const i = left.indexOf(msgText(msg)); if (i >= 0) { left.splice(i, 1); return true; } return !unreadSeen[entry.id]?.has(msgText(msg)); });
+        pendingQ[entry.id] = [...keep, ...left.map((t) => ({ type: 'user' as const, uuid: api.uid(), message: { role: 'user', content: t } }))];
+        unreadSeen[entry.id] = new Set(un);
+      }
       const have = new Set(hist.map((m) => m.uuid));
+      // a message read mid-turn joined the chat here with an id of ours; the transcript has it under its own
+      const said = (m: HistoryMessage) => (typeof m.message?.content === 'string' ? m.message.content : msgText(m));
+      const recent = new Set(hist.slice(-60).filter((m) => m.type === 'user').map(said));
       const since = cached ? messages.slice(cached.length) : messages;  // sent or streamed in while it loaded
-      messages = [...hist, ...since.filter((m) => !have.has(m.uuid))];
+      messages = [...hist, ...since.filter((m) => !have.has(m.uuid) && !(m.type === 'user' && recent.has(said(m))))];
     }
     loadingHistory = false;
     if (!cached) restoreScroll(t);
@@ -1788,7 +1822,7 @@
         {#if liveErr}<div class="liveerr" role="alert">{liveErr}</div>{/if}
         {#if pendingQ[selected.entry.id]?.length}
           <div class="pendingq mono" role="list" aria-label="Queued messages">
-            {#each pendingQ[selected.entry.id] as m (m.uuid)}<div class="you" role="listitem"><span class="prompt">❯ </span>{msgText(m)}</div>{/each}
+            {#each pendingQ[selected.entry.id] as m (m.uuid)}<div class="you" role="listitem"><span class="prompt">❯ </span>{msgText(m)}<span class="clock" title="Waiting for Claude to read it" aria-label="not read yet">🕒</span></div>{/each}
           </div>
         {/if}
         {#if queued[selected.entry.id]}<div class="queued muted small" aria-live="polite">{queued[selected.entry.id]} queued: sends when Claude finishes (Esc puts {queued[selected.entry.id] === 1 ? 'it' : 'them'} back here)</div>{/if}
@@ -2589,6 +2623,7 @@
     .settabs { flex-direction: row; overflow-x: auto; align-items: center; flex-shrink: 0; }
     .settabs button { white-space: nowrap; }
   }
+  .pendingq .clock { margin-left: 6px; font-size: 0.85em; opacity: 0.8; }
   .readimg { align-self: flex-start; padding: 0; margin: 2px 0 6px 18px; border: 1px solid var(--s1); border-radius: 8px; background: none; cursor: zoom-in; line-height: 0; max-width: calc(100% - 18px); }
   .readimg img { max-height: 160px; max-width: 240px; object-fit: contain; border-radius: 8px; }
   .readimg:global(.big) { cursor: zoom-out; }  /* toggled on click */

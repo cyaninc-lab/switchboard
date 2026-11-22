@@ -157,9 +157,9 @@ export const commands = (m: Machine) => call<{ commands: Command[] }>(m, '/v1/co
 export const subagentHistory = (m: Machine, id: string, agent: string, limit = 400) =>
   call<{ messages: HistoryMessage[] }>(m, `/v1/entries/${id}/subagents/${encodeURIComponent(agent)}/messages?limit=${limit}`).then((d) => d.messages);
 export const history = (m: Machine, id: string, limit = 400) =>
-  call<{ messages: HistoryMessage[]; patches?: Record<string, Hunk[]> }>(m, `/v1/entries/${id}/messages?limit=${limit}`).then((d) => {
+  call<{ messages: HistoryMessage[]; patches?: Record<string, Hunk[]>; unread?: string[] }>(m, `/v1/entries/${id}/messages?limit=${limit}`).then((d) => {
     if (d.patches && Object.keys(d.patches).length) d.messages.push({ type: 'user', uuid: 'patches', message: { content: [] }, patches: d.patches });  // carried like live ones
-    return d.messages;
+    return Object.assign(d.messages, { unread: d.unread ?? [] });  // unread: sent while it worked, not read by Claude yet
   });
 /** An edit's hunks as diff lines with line numbers (the new file's for kept and added lines, the old one's for removed). */
 export function hunkLines(hunks: Hunk[]): DiffLine[] {
@@ -291,6 +291,7 @@ export type LiveEvent =
   | { type: 'settings' }
   | { type: 'relay' }
   | { type: 'ack'; ref: string }
+  | { type: 'unread'; entry: string; items: string[]; dropped: string[] }
   | { type: 'pong' }
   | { type: 'terminal_output'; entry: string; data: string }
   | { type: 'error'; entry?: string; code: string; message: string };

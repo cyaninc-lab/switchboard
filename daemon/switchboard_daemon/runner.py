@@ -139,6 +139,8 @@ class Live:
     interrupted: bool = False  # this turn was interrupted on purpose: Claude Code then ends it as an error with no message
     last_active: float = dataclasses.field(default_factory=time.time)
     tasks: dict = dataclasses.field(default_factory=dict)  # background tasks (commands, agents) by id: shown, stoppable; running ones keep it open
+    unread: list = dataclasses.field(default_factory=list)  # messages in Claude Code's queue, not yet read (mirrored from its transcript)
+    qwatch: asyncio.Task = None
 
 
 @dataclasses.dataclass
@@ -182,6 +184,62 @@ class Runner:
         phone drops its connection in the background) after one was asked gets it too, or the session sat waiting
         on a question nobody could see."""
         return [a for lv in self.live.values() for a in lv.asks.values()]
+
+    def unread(self, entry_id):
+        """Messages waiting in this session's queue, not yet read by Claude (what a client that opens it later shows)."""
+        lv = self.live.get(entry_id)
+        return list(lv.unread) if lv else []
+
+    async def _watch_queue(self, lv, session_id):
+        """Mirror Claude Code's message queue from its transcript: enqueue adds, remove (read mid-turn) and dequeue (taken
+        as the next turn) take one off, popAll empties it. Clients show what's still unread, with a clock, at the bottom."""
+        from . import patches
+        path, pos = None, None
+        def text(c):
+            if isinstance(c, list):
+                return " ".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text").strip() or "(image)"
+            return str(c or "")
+        while self.live.get(lv.entry_id) is lv:
+            await asyncio.sleep(0.7)
+            path = path or patches._transcript(session_id)
+            if not path:
+                continue
+            try:
+                size = os.path.getsize(path)
+                if pos is None or size < pos:
+                    pos = size  # from now on: what's queued before the session opened isn't ours to show
+                    continue
+                if size == pos:
+                    continue
+                with open(path, "rb") as f:
+                    f.seek(pos)
+                    chunk = f.read(size - pos)
+                end = chunk.rfind(b"\n") + 1  # whole lines only; the rest next time
+                pos += end
+                before, dropped = list(lv.unread), []
+                for line in chunk[:end].splitlines():
+                    if b'"queue-operation"' not in line:
+                        continue
+                    try:
+                        d = json.loads(line)
+                    except ValueError:
+                        continue
+                    op, t = d.get("operation"), text(d.get("content"))
+                    if op == "enqueue":
+                        lv.unread.append(t)
+                    elif op == "dequeue" and lv.unread:
+                        lv.unread.pop(0)
+                    elif op == "remove":
+                        if t in lv.unread:
+                            lv.unread.remove(t)
+                        elif lv.unread:
+                            lv.unread.pop(0)
+                    elif op == "popAll":
+                        dropped += lv.unread; lv.unread = []
+                if lv.unread != before or dropped:
+                    await self.broadcast({"type": "unread", "entry": lv.entry_id, "items": list(lv.unread), "dropped": dropped})
+            except OSError:
+                continue
 
     def held_sessions(self):
         return {self.store.entry(e)["session_id"] for e in self.live if self.store.entry(e)}
@@ -230,6 +288,7 @@ class Runner:
         log.info("session %s live (entry %s, model %s, account %s)", entry["session_id"], entry["id"], entry.get("model") or "default", entry.get("account") or "machine")
         lv = holder["lv"] = self.live[entry["id"]] = Live(entry["id"], client)
         lv.reader = asyncio.get_running_loop().create_task(self._read(lv))
+        lv.qwatch = asyncio.get_running_loop().create_task(self._watch_queue(lv, entry["session_id"]))
         return lv
 
     # ---- messaging between tree sessions: Claude Code's own SendMessage only reaches running ones ----
@@ -412,8 +471,11 @@ class Runner:
         if lv.working and not origin and not lv.queue:
             # like Claude Code: the CLI reads a message sent mid-turn after its current step (a tool call finishing),
             # or as the next turn if this one has no step left. Clients move it into the chat now.
-            await self._query(lv, text, images)
-            await self.broadcast({"type": "queued", "entry": entry["id"], "count": 0, "sent": 1})
+            await self._query(lv, text, images)  # clients keep it at the bottom, unread, until the queue says it was read
+            from . import patches
+            if not patches._transcript(entry["session_id"]):  # no transcript to watch (the demo): read as soon as handed over
+                await self.broadcast({"type": "unread", "entry": entry["id"], "items": [text], "dropped": []})
+                await self.broadcast({"type": "unread", "entry": entry["id"], "items": [], "dropped": []})
             return
         if lv.working:  # a watch's or another session's message waits for its own turn: its reply is that turn's text
             lv.queue.append((entry, text, images, origin))
@@ -688,6 +750,11 @@ class Runner:
                 fut.set_result({"allow": False, "message": "Session stopped", "remember": None, "answers": None, "response": None})
         if lv.reader and not lv.reader.done():
             lv.reader.cancel()
+        if lv.qwatch and not lv.qwatch.done():
+            lv.qwatch.cancel()
+        if lv.unread:  # still unread when the session closed: back to the user's message box
+            dropped, lv.unread = lv.unread, []
+            await self.broadcast({"type": "unread", "entry": entry_id, "items": [], "dropped": dropped})
         try:
             await lv.client.disconnect()
         except Exception:
