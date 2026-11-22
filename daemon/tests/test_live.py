@@ -203,9 +203,9 @@ def test_message_while_working_goes_straight_in(tmp_path, monkeypatch):
         await ws.send_json({"type": "send", "entry": eid, "text": "first"})
         await until(ws, lambda m: m["type"] == "state" and m["state"] == "working")
         await ws.send_json({"type": "send", "entry": eid, "text": "second"})
-        q, seen = await until(ws, lambda m: m["type"] == "queued")
-        assert q["count"] == 0 and q["sent"] == 1
+        q, seen = await until(ws, lambda m: m["type"] == "unread" and m["items"] == ["second"])  # waiting to be read
         assert not any("Done: first" in str(m) for m in seen)  # before the first turn ended
+        await until(ws, lambda m: m["type"] == "unread" and m["items"] == [])  # read
         _, seen = await until(ws, lambda m: m["type"] == "message" and "Done: second" in str(m))
         await until(ws, lambda m: m["type"] == "state" and m["state"] == "ready")
         await client.close()
@@ -516,7 +516,7 @@ def test_message_while_waiting_on_a_prompt(tmp_path, monkeypatch):
         await ws.send_json({"type": "send", "entry": e["id"], "text": "please run the checks"})
         req, _ = await until(ws, lambda m: m["type"] == "permission_request")
         await ws.send_json({"type": "send", "entry": e["id"], "text": "next"})
-        await until(ws, lambda m: m["type"] == "queued" and m["count"] == 0 and m.get("sent") == 1)
+        await until(ws, lambda m: m["type"] == "unread" and m["items"] == ["next"])
         await ws.send_json({"type": "permission_reply", "request_id": req["request_id"], "allow": True})
         await until(ws, lambda m: m["type"] == "message" and "Done: next" in str(m))
         await client.close()
