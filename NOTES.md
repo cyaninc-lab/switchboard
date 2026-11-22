@@ -1,4 +1,3 @@
-## Switchboard 0.1.34
+## Switchboard 0.1.35
 
-- **Phone notifications come through your account:** sign in on the phone (Settings → Account) and approve it, and notifications just work, anywhere and through any VPN. No notification server to run or set up any more (ntfy is gone). The phone checks in only every few minutes, so it uses less battery than before; notifications still arrive at once.
-- The account refreshes when you open Settings, and a device waiting for approval shows within seconds.
+- **Phone notifications recover faster** after the connection drops (Wi-Fi changes, the phone's power saving): it reconnects as soon as a network is there, and retries at most 30 seconds apart. Settings → Notifications shows whether it's connected.
