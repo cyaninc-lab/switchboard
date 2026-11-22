@@ -30,7 +30,8 @@ NET = web.AppKey("net", Network)
 WATCHES, WATCH_TASK = web.AppKey("watches", Watches), web.AppKey("watch_task", asyncio.Task)
 PUSH_STATE = web.AppKey("push_state", dict)  # entry id -> last state, to notice a turn finishing
 DESK = web.AppKey("desk", object)
-SENT_REFS = web.AppKey("sent_refs", dict)  # refs of messages already taken (insertion-ordered, the last 500)  # is the user in a desktop window: phone notifications pause
+SENT_REFS = web.AppKey("sent_refs", dict)
+HISTORY = web.AppKey("history", dict)  # (session id, limit) -> (transcript mtime+size, the answer): kept until it changes  # refs of messages already taken (insertion-ordered, the last 500)  # is the user in a desktop window: phone notifications pause
 CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
 
 
@@ -670,6 +671,17 @@ async def messages(request):
     limit = max(1, int(request.query.get("limit", 200)))
     if e.get("cwd") and await _off(sdk.get_session_info, e["session_id"]) is None:
         return web.json_response({"messages": [], "total": 0})  # new, nothing said yet
+    # the answer is kept until the transcript changes: reading a long session's file (100+ MB) took a second or two on
+    # every visit. ponytail: the last 32 answers, in memory; a running session's file changes, so it's read again
+    path = patchmod._transcript(e["session_id"])
+    try:
+        st = os.stat(path) if path else None
+        stamp = (st.st_mtime_ns, st.st_size) if st else None
+    except OSError:
+        stamp = None
+    cache, key = request.app[HISTORY], (e["session_id"], limit)
+    if stamp and (hit := cache.get(key)) and hit[0] == stamp:
+        return web.Response(body=hit[1], content_type="application/json")
     # the most recent `limit` messages: the SDK's offset counts from the start, which showed long sessions only their
     # beginning (it parses the whole file either way, so reading everything costs nothing extra)
     msgs = [_plain(m) for m in (await _off(sdk.get_session_messages, e["session_id"]))]
@@ -678,7 +690,12 @@ async def messages(request):
     blocks = lambda m: (m.get("message") or {}).get("content") if isinstance(m, dict) and isinstance(m.get("message"), dict) else None
     edits = {b.get("id") for m in shown for b in (blocks(m) if isinstance(blocks(m), list) else []) if isinstance(b, dict) and b.get("type") == "tool_use"}
     patches = await _off(patchmod.for_session, e["session_id"], edits) if edits else {}
-    return web.json_response({"messages": shown, "total": len(msgs), "patches": patches}, dumps=lambda o: json.dumps(o, default=str))
+    body = json.dumps({"messages": shown, "total": len(msgs), "patches": patches}, default=str).encode()
+    if stamp:
+        cache.pop(key, None); cache[key] = (stamp, body)
+        while len(cache) > 32:
+            cache.pop(next(iter(cache)))
+    return web.Response(body=body, content_type="application/json")
 
 
 async def subagent_messages(request):
@@ -851,7 +868,8 @@ def make_app(store: Store, name=None):
     app[PUSH_STATE] = {}
     app[RELAY] = {}
     app[DESK] = push.Desk(store, lambda st, n: push.send(st, n))
-    app[SENT_REFS] = {}  # late-bound: tests stand in for push.send
+    app[SENT_REFS] = {}
+    app[HISTORY] = {}  # late-bound: tests stand in for push.send
     app[RUNNER] = Runner(store, sdk, lambda ev: _broadcast(app, ev))
     app[RUNNER].machine = app[NAME]
     app[TTYS] = Terminals(lambda ev: _broadcast(app, ev))

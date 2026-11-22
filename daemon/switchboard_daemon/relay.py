@@ -74,7 +74,7 @@ async def run(store, port, host="127.0.0.1"):
         ws_url = url.replace("https://", "wss://").replace("http://", "ws://") + f"/v1/tunnel/{mid}"
         try:
             async with aiohttp.ClientSession() as s, s.ws_connect(ws_url, headers={"Authorization": f"Bearer {secret}"},
-                                                                  heartbeat=25, max_msg_size=0) as ws:
+                                                                  heartbeat=25, max_msg_size=0, compress=15) as ws:  # history is text: ~6x smaller
                 log.info("relay tunnel up: %s", address(store))
                 wait = 2
                 await _serve(ws, s, port, host)

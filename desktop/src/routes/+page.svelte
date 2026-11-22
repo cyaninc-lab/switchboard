@@ -92,6 +92,14 @@
   let tasksFor = $state<{ machine: Machine; entry: Entry } | null>(null);
   const tasksEntry = $derived(tasksFor ? tree[tasksFor.machine.url]?.entries.find((x) => x.id === tasksFor!.entry.id) ?? tasksFor.entry : null);
   let messages = $state<HistoryMessage[]>([]);
+  // the sessions seen lately (machine|entry -> their history), kept current from live events: going back is instant.
+  // ponytail: the last 8, in memory; a restart starts empty
+  const histCache = new Map<string, HistoryMessage[]>();
+  function remember(key: string, msgs: HistoryMessage[]) {
+    histCache.delete(key); histCache.set(key, msgs);
+    while (histCache.size > 8) histCache.delete(histCache.keys().next().value!);
+  }
+  $effect(() => { if (selected && !selected.sub && !loadingHistory) remember(selected.machine.url + '|' + selected.entry.id, $state.snapshot(messages) as HistoryMessage[]); });
   let loadingHistory = $state(false);
   let openSeq = 0;
   let filter = $state('');
@@ -718,6 +726,7 @@
       else streaming[e.entry] = (streaming[e.entry] ?? '') + e.text;
     } else if (e.type === 'message') {
       if (selected?.entry.id === e.entry && !selected.sub) messages = [...messages, e.message];
+      else if (m && histCache.has(m.url + '|' + e.entry)) histCache.get(m.url + '|' + e.entry)!.push(e.message);  // a session seen lately stays current
       if (e.message.type === 'assistant') { const said = msgText(e.message).trim(); if (said) lastSaid[e.entry] = said; streaming[e.entry] = ''; thinkingLive[e.entry] = ''; if ((selected?.entry.id !== e.entry || selected.sub) && !inWindow[e.entry]) unread[e.entry] = true; }
     } else if (e.type === 'permission_request') {
       const again = (prompts[e.entry] ?? []).some((p) => p.request_id === e.request_id);  // sent again on reconnecting
@@ -753,6 +762,7 @@
     } else if (e.type === 'tasks') {
       setEntry(e.entry, { tasks: e.tasks });
     } else if (e.type === 'session_reset') {  // /clear: the entry now holds a fresh conversation
+      if (m) histCache.delete(m.url + '|' + e.entry);
       if (selected?.entry.id === e.entry && !selected.sub) messages = [{ type: 'assistant', uuid: api.uid(), message: { content: [{ type: 'text', text: '— Conversation cleared —' }] } }];
       refresh();
     } else if (e.type === 'notice') {
@@ -952,15 +962,22 @@
     if (!cmdList[machine.url]) loadCommands(machine);
     loadModels(machine);
     loadAccounts(machine);
-    loadingHistory = true;
-    messages = [];
+    const key = machine.url + '|' + entry.id, cached = histCache.get(key);
+    // a session seen lately shows at once (kept up to date from the live events), and is refreshed quietly behind it
+    loadingHistory = !cached;
+    messages = cached ? [...cached] : [];
+    if (cached) restoreScroll(t);
     const mine = ++openSeq;
-    let hist: HistoryMessage[] = [];
+    let hist: HistoryMessage[] | null = null;
     try { hist = await api.history(machine, entry.id); } catch {}
     if (mine !== openSeq) return;  // the user already opened something else
-    messages = [...hist, ...messages];  // keep anything sent or streamed in while the history was loading
+    if (hist) {
+      const have = new Set(hist.map((m) => m.uuid));
+      const since = cached ? messages.slice(cached.length) : messages;  // sent or streamed in while it loaded
+      messages = [...hist, ...since.filter((m) => !have.has(m.uuid))];
+    }
     loadingHistory = false;
-    restoreScroll(t);
+    if (!cached) restoreScroll(t);
   }
 
   // ---- tabs: sessions (and subagent views) open side by side; clicking in the tree opens a preview tab that the next
