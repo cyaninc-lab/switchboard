@@ -24,6 +24,41 @@ def _minutes(cfg, default=15):
 NOTHING = "NOTHING_NEW"
 
 
+def problem(body, store, modes, partial=False):
+    """What's wrong with a watch definition (all of it on create; what's present on update), or None."""
+    if not partial or "name" in body:
+        if not str(body.get("name", "")).strip():
+            return ("name_required")
+    if not partial or "kind" in body or "config" in body:
+        kind, cfg = body.get("kind"), body.get("config") or {}
+        if kind not in KINDS:
+            return ("bad_kind")
+        if kind == "schedule" and not (cfg.get("every_minutes") or cfg.get("daily_at")):
+            return ("schedule_needs_every_minutes_or_daily_at")
+        if cfg.get("daily_at"):
+            hh, _, mm = str(cfg["daily_at"]).partition(":")
+            if not (hh.isdigit() and mm.isdigit() and int(hh) < 24 and int(mm) < 60):
+                return ("daily_at_must_be_HH:MM")
+        if cfg.get("active"):
+            a = cfg["active"]
+            ok = lambda v: v is None or (len(str(v)) == 5 and str(v)[2] == ":" and str(v)[:2].isdigit() and str(v)[3:].isdigit() and int(str(v)[:2]) < 25 and int(str(v)[3:]) < 60)
+            if not isinstance(a, dict) or not ok(a.get("from")) or not ok(a.get("to")) or not set(a.get("days") or []) <= set(range(1, 8)):
+                return ("active_hours_must_be_HH:MM_and_days_1_to_7")
+        if kind == "command" and not str(cfg.get("command", "")).strip():
+            return ("command_required")
+        if kind == "http" and not str(cfg.get("url", "")).startswith(("http://", "https://")):
+            return ("url_must_be_http")
+        if kind == "github" and str(cfg.get("repo", "")).count("/") != 1:
+            return ("repo_must_be_owner/name")
+    if "action" in body and body["action"] not in ACTIONS:
+        return ("bad_action")
+    if body.get("action") == "wake" and not (body.get("entry_id") and store.entry(body["entry_id"])):
+        return ("wake_needs_an_entry")
+    if body.get("mode") and body["mode"] not in modes:
+        return ("bad_mode")
+    return None
+
+
 def active_now(cfg, now):
     """Inside the watch's active hours and days (always, when it has none). A window can cross midnight (22:00-06:00)."""
     a = cfg.get("active")
