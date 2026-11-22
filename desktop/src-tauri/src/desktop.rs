@@ -117,6 +117,8 @@ struct ServiceStatus {
 }
 
 fn data_dir() -> PathBuf {
+    #[cfg(windows)]
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") { return PathBuf::from(local).join("switchboard"); }
     let base = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/share"));
     base.join("switchboard")
@@ -141,8 +143,13 @@ fn which(cmd: &str) -> Option<PathBuf> {
 #[tauri::command]
 fn service_status(state: tauri::State<Embedded>) -> ServiceStatus {
     let embedded = state.0.lock().unwrap().is_some();
+    #[cfg(windows)]
+    {
+        let installed = win::task_exists();
+        return ServiceStatus { supported: true, installed, active: installed && daemon_alive() && !embedded, embedded };
+    }
     if !cfg!(target_os = "linux") {
-        // ponytail: launchd (macOS) and a log-on task (Windows) come next; Linux/systemd first
+        // ponytail: launchd (macOS) comes next
         return ServiceStatus { supported: false, installed: false, active: false, embedded };
     }
     ServiceStatus {
@@ -243,7 +250,14 @@ mod tests {
 /// stop the app's own daemon, start the service. Same data dir, so the tree and tokens carry over.
 #[tauri::command]
 fn service_install(state: tauri::State<Embedded>) -> Result<(), String> {
-    if !cfg!(target_os = "linux") { return Err("Background service is Linux-only for now".into()); }
+    #[cfg(windows)]
+    {
+        win::install()?;
+        stop_embedded(&state);
+        win::run_task()?;
+        return wait_alive();
+    }
+    if !cfg!(target_os = "linux") { return Err("Background service is Linux and Windows only for now".into()); }
     let bin_dir = data_dir().join("bin");
     std::fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;
     let bin = bin_dir.join("switchboard-daemon");
@@ -270,6 +284,8 @@ fn service_install(state: tauri::State<Embedded>) -> Result<(), String> {
 /// Stop and remove the service, then go back to running the app's own daemon.
 #[tauri::command]
 fn service_uninstall(state: tauri::State<Embedded>) -> Result<(), String> {
+    #[cfg(windows)]
+    win::uninstall();  // ends the background process; its daemon exits with it (--exit-with)
     if unit_path().exists() {
         let _ = systemctl(&["disable", "--now", "switchboard-daemon"]);
         std::fs::remove_file(unit_path()).map_err(|e| e.to_string())?;
@@ -326,6 +342,18 @@ fn stop_embedded(state: &Embedded) {
 /// new one in. It doesn't restart the service: the daemon sees its file change and restarts itself once no session is
 /// busy (a restart here cut sessions off mid-reply). SWITCHBOARD_NO_SERVICE_REFRESH: test builds leave it alone.
 fn refresh_service() {
+    #[cfg(windows)]
+    {
+        // a running .exe can't be replaced on Windows: the new daemon waits beside it as .new.exe; the daemon exits once
+        // no session is busy and the background process swaps it in (win::supervise)
+        if cfg!(debug_assertions) || !win::task_exists() || std::env::var_os("SWITCHBOARD_NO_SERVICE_REFRESH").is_some() { return; }
+        let bin = win::daemon_bin();
+        if !same_contents(&sidecar(), &bin) {  // copied under another name first: the daemon must never see half a file
+            let tmp = win::pending_bin().with_extension("part");
+            let _ = std::fs::copy(sidecar(), &tmp).and_then(|_| std::fs::rename(&tmp, win::pending_bin()));
+        }
+        return;
+    }
     if !cfg!(target_os = "linux") || cfg!(debug_assertions) || !unit_path().exists()
         || std::env::var_os("SWITCHBOARD_NO_SERVICE_REFRESH").is_some() { return; }
     let bin = data_dir().join("bin").join("switchboard-daemon");
@@ -359,12 +387,17 @@ fn start_embedded(state: &Embedded) {
 }
 
 pub fn run() {
+    if std::env::args().any(|a| a == "--background") {  // the log-on task (Windows): no window, just keep the daemon running
+        #[cfg(windows)]
+        win::supervise();
+        return;
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_clipboard_manager::init())  // pasting images: WebKitGTK's paste event doesn't carry them
         // other machines (the relay) through Rust, not the web engine: it kept dead connections after a network change
         .plugin(tauri_plugin_http::init())
-        .plugin(tauri_plugin_websocket::init())  // pasting images: WebKitGTK's paste event doesn't carry them
+        .plugin(tauri_plugin_websocket::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -389,4 +422,92 @@ pub fn run() {
                 stop_embedded(&app.state::<Embedded>());
             }
         });
+}
+
+
+/// The background service on Windows: a Scheduled Task that runs at log-on (no admin rights, nothing to install),
+/// starting this app with --background: no window, it only keeps the daemon running, restarting it when it stops (a
+/// crash, or an update: then it first swaps in the new daemon the app left beside the running one).
+#[cfg(windows)]
+mod win {
+    use super::*;
+    use std::os::windows::process::CommandExt;
+    const TASK: &str = "Switchboard daemon";
+    const NO_WINDOW: u32 = 0x0800_0000;
+
+    pub fn daemon_bin() -> PathBuf { data_dir().join("bin").join("switchboard-daemon.exe") }
+    pub fn pending_bin() -> PathBuf { data_dir().join("bin").join("switchboard-daemon.new.exe") }
+
+    fn schtasks(args: &[&str]) -> Result<String, String> {
+        let out = Command::new("schtasks").args(args).creation_flags(NO_WINDOW).output().map_err(|e| e.to_string())?;
+        if out.status.success() { Ok(String::from_utf8_lossy(&out.stdout).into()) }
+        else { Err(String::from_utf8_lossy(&out.stderr).trim().into()) }
+    }
+
+    pub fn task_exists() -> bool { schtasks(&["/Query", "/TN", TASK]).is_ok() }
+
+    pub fn install() -> Result<(), String> {
+        let bin = daemon_bin();
+        std::fs::create_dir_all(bin.parent().unwrap()).map_err(|e| e.to_string())?;
+        std::fs::copy(sidecar(), &bin).map_err(|e| format!("copy daemon: {e}"))?;
+        let app = std::env::current_exe().map_err(|e| e.to_string())?;
+        let user = format!("{}\\{}", std::env::var("USERDOMAIN").unwrap_or_default(), std::env::var("USERNAME").unwrap_or_default());
+        let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+        // at log-on, as this user, no time limit, on battery too, restarted if it fails
+        let xml = format!(r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>Keeps Switchboard's Claude agents running when the app is closed.</Description></RegistrationInfo>
+  <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>{user}</UserId></LogonTrigger></Triggers>
+  <Principals><Principal id="Author"><UserId>{user}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <RestartOnFailure><Interval>PT1M</Interval><Count>999</Count></RestartOnFailure>
+    <Hidden>true</Hidden>
+  </Settings>
+  <Actions Context="Author"><Exec><Command>{app}</Command><Arguments>--background</Arguments></Exec></Actions>
+</Task>"#, user = esc(&user), app = esc(&app.display().to_string()));
+        let file = std::env::temp_dir().join("switchboard-task.xml");
+        let mut bytes = vec![0xFF, 0xFE];  // UTF-16LE with a BOM: what schtasks reads reliably
+        for u in xml.encode_utf16() { bytes.extend_from_slice(&u.to_le_bytes()); }
+        std::fs::write(&file, bytes).map_err(|e| e.to_string())?;
+        let r = schtasks(&["/Create", "/TN", TASK, "/XML", &file.display().to_string(), "/F"]);
+        let _ = std::fs::remove_file(&file);
+        r.map(|_| ())
+    }
+
+    pub fn run_task() -> Result<(), String> { schtasks(&["/Run", "/TN", TASK]).map(|_| ()) }
+
+    pub fn uninstall() {
+        let _ = schtasks(&["/End", "/TN", TASK]);
+        let _ = schtasks(&["/Delete", "/TN", TASK, "/F"]);
+    }
+
+    /// The log-on task's process: keep the daemon running (it exits with us: --exit-with).
+    pub fn supervise() {
+        let me = std::process::id().to_string();
+        let mut quick_exits = 0u32;
+        loop {
+            if pending_bin().exists() && std::fs::rename(pending_bin(), daemon_bin()).is_err() {
+                std::thread::sleep(Duration::from_secs(2));  // the old one is still going away: try again
+                continue;
+            }
+            let started = Instant::now();
+            let mut cmd = Command::new(daemon_bin());
+            let child = clean(&mut cmd)
+                .args(["serve", "--port", &PORT.to_string(), "--exit-with", &me])
+                .env("SWITCHBOARD_SUPERVISED", "1")  // it watches for a new daemon beside it and exits (when idle) to take it
+                .stdout(Stdio::null()).stderr(Stdio::null())
+                .spawn();
+            match child {
+                Ok(mut c) => { let _ = c.wait(); }
+                Err(_) => {}
+            }
+            quick_exits = if started.elapsed() < Duration::from_secs(30) { quick_exits + 1 } else { 0 };
+            // ponytail: a daemon that keeps failing at once is retried every minute, not in a tight loop
+            std::thread::sleep(Duration::from_secs(if quick_exits > 3 { 60 } else { 2 }));
+        }
+    }
 }

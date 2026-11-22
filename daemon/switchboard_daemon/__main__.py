@@ -95,11 +95,14 @@ def main():
         app = make_app(store, a.name or ("demo" if a.demo else None))
         if a.exit_with:
             app.on_startup.append(lambda _app: _watch(a.exit_with))
-        if getattr(sys, "frozen", False) and not a.exit_with:  # the background service: restart itself into a replaced file
+        supervised = bool(os.environ.get("SWITCHBOARD_SUPERVISED"))  # Windows: the log-on task's process runs it
+        if getattr(sys, "frozen", False) and (not a.exit_with or supervised):  # the background service: restart into a new daemon
             from . import update as upd
             from .app import RUNNER
+            # Linux: the file is replaced in place; Windows can't replace a running .exe, so the new one waits beside it
+            new = sys.executable[:-4] + ".new.exe" if os.name == "nt" and sys.executable.endswith(".exe") else None
             async def watch_file(app):
-                app["file_task"] = asyncio.get_running_loop().create_task(upd.restart_when_replaced(app[RUNNER]))
+                app["file_task"] = asyncio.get_running_loop().create_task(upd.restart_when_replaced(app[RUNNER], path=new))
             app.on_startup.append(watch_file)
         if a.auto_update and not getattr(sys, "frozen", False):  # the bundled daemon is the desktop app's to update
             from . import update
