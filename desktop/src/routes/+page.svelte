@@ -2,7 +2,7 @@
   import * as api from '$lib/api';
   import { pairLocal, serviceStatus, serviceInstall, serviceUninstall, inShell, openExternal, openLocal, appVersion, checkForUpdate, notify,
     soloOf, popOut, takeHandoff, focusWindow, onSoloClosing, onSoloEvents, soloOpened, closeThisWindow, setOnTop, useParentShell, canOpenLocally,
-    isPhoneApp, isDesktopApp, pairLink, scanPairCode, setPhonePush, takeNotificationOpen, setPhoneViewing, clipboardImage } from '$lib/shell';
+    isPhoneApp, isDesktopApp, pairLink, scanPairCode, setPhonePush, takeNotificationOpen, setPhoneViewing, clipboardImage, phonePushStatus } from '$lib/shell';
   import qrcode from 'qrcode-generator';
   import { backdrop } from '$lib/backdrop';
   import { theme, THEMES, applyTheme, fonts, UI_FONTS, MONO_FONTS, CHAT_FONTS, SIZES, applyFonts } from '$lib/themes.svelte';
@@ -259,6 +259,13 @@
     pushCfg = { relay: acctLocal.relay, secret: acctLocal.secret, machines: machines.map((m) => $state.snapshot(m)) };
     await setPhonePush({ ...pushCfg, ...pushPrefs }).then(() => (pushOn = true), (e) => say(`Notifications: ${(e as Error).message ?? e}`));
   }
+  // the phone's listener: connected or reconnecting (shown in Settings → Notifications while it's open)
+  let pushState = $state<{ state: 'connected' | 'reconnecting'; since: number; detail: string } | null>(null);
+  $effect(() => {
+    if (!isPhoneApp() || dialog !== 'settings' || setTab !== 'notifications') return;
+    const read = () => phonePushStatus().then((x) => (pushState = x)).catch(() => {});
+    read(); const t = setInterval(read, 5000); return () => clearInterval(t);
+  });
   async function savePauseAtDesk() {
     await Promise.all(machines.map((m) => api.setPush(m, { pause_at_desk: pauseAtDesk }).catch(() => null)));
   }
@@ -2141,7 +2148,10 @@
         {#if isPhoneApp()}
           <label class="toggle"><input type="checkbox" bind:checked={pushPrefs.finished} onchange={savePushPrefs} />
             <span><b>Tell me when a session finishes</b></span></label>
-          <p class="muted small" aria-live="polite">{acct ? (pushOn ? 'This phone gets notifications.' : 'Setting up…') : 'Sign in (Settings → Account) to get notifications.'}</p>
+          <p class="muted small" aria-live="polite">{!acct ? 'Sign in (Settings → Account) to get notifications.'
+            : !pushState ? (pushOn ? 'Starting…' : 'Setting up…')
+            : pushState.state === 'connected' ? `Connected since ${new Date(pushState.since).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}: notifications arrive at once.`
+            : `Reconnecting… (${pushState.detail || 'no connection'})`}</p>
           {@render hint('The lock screen follows your phone.', "Notifications → hide sensitive content: hidden, it says only which session needs you.")}
         {/if}
       {:else}

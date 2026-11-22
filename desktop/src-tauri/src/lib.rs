@@ -12,7 +12,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_barcode_scanner::init())  // scanning a machine's pairing QR code
-        .invoke_handler(tauri::generate_handler![phone::push_config, phone::push_take_open, phone::push_viewing])
+        .invoke_handler(tauri::generate_handler![phone::push_config, phone::push_take_open, phone::push_viewing, phone::push_status])
         .run(tauri::generate_context!())
         .expect("error while running the phone app");
 }
@@ -46,6 +46,12 @@ mod phone {
             }
             None => { let _ = std::fs::remove_file(p); Ok(()) }
         }
+    }
+
+    /// The notification listener's state (PushService.kt writes it): {"state": "connected" | "reconnecting", "since", "detail"}.
+    #[tauri::command]
+    pub fn push_status(app: tauri::AppHandle) -> Option<String> {
+        std::fs::read_to_string(file(&app, "push-status.json").ok()?).ok()
     }
 
     /// The session a tapped notification named, once (MainActivity.kt leaves it in open.json).

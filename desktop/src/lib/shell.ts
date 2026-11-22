@@ -210,6 +210,12 @@ export async function setPhoneViewing(machineUrl: string | null, entry?: string)
   const { invoke } = await import('@tauri-apps/api/core');
   await invoke('push_viewing', { view: machineUrl && entry ? `${machineUrl.replace(/\/$/, '')}|${entry}` : null });
 }
+/** The phone app: is its notification listener connected to the account's relay? */
+export async function phonePushStatus(): Promise<{ state: 'connected' | 'reconnecting'; since: number; detail: string } | null> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  const s = await invoke<string | null>('push_status');
+  return s ? JSON.parse(s) : null;
+}
 /** The session a tapped notification named (once), or null. */
 export async function takeNotificationOpen(): Promise<{ machine: string; entry: string } | null> {
   const { invoke } = await import('@tauri-apps/api/core');
