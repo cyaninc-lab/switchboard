@@ -30,6 +30,7 @@ test('defaults for new sessions in Settings; the footer says what "default" is',
   await expect(model.locator('option[value="default"]')).toHaveText('Default · Opus 5.5');
 
   await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('dialog', { name: 'Settings' }).getByRole('tab', { name: 'Sessions' }).click();
   const row = page.getByRole('dialog', { name: 'Settings' }).getByRole('group', { name: 'New sessions on demo' });
   // each change is saved by the daemon: wait for that, or the next session can start before it lands
   const saved = () => page.waitForResponse((r) => r.url().endsWith('/v1/settings') && r.request().method() === 'PUT');
@@ -48,6 +49,7 @@ test('defaults for new sessions in Settings; the footer says what "default" is',
 
   // put the shared demo daemon back
   await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('dialog', { name: 'Settings' }).getByRole('tab', { name: 'Sessions' }).click();
   await row.getByRole('combobox', { name: 'Mode', exact: true }).selectOption('');
   await row.getByRole('combobox', { name: 'Model', exact: true }).selectOption('');
   await expect(row.getByRole('combobox', { name: 'Model', exact: true })).toHaveValue('');

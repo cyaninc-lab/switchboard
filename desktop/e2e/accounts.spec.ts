@@ -12,6 +12,7 @@ test('accounts: add one, use it for a session, remove it', async ({ page }) => {
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
 
   await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('dialog', { name: 'Settings' }).getByRole('tab', { name: 'Sessions' }).click();
   const form = page.getByRole('form', { name: 'Add an account' });
   await form.getByRole('button', { name: 'Add account' }).click();
   await expect(form.getByText('Give it a name and paste a token')).toBeVisible();
@@ -36,6 +37,7 @@ test('accounts: add one, use it for a session, remove it', async ({ page }) => {
   await expect(log).toContainText('Done: who am i (token account)');
 
   await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('dialog', { name: 'Settings' }).getByRole('tab', { name: 'Sessions' }).click();
   await list.getByRole('button', { name: 'Remove account work' }).click();
   await expect(list).not.toContainText('work');
   await page.getByRole('button', { name: 'Close', exact: true }).click();

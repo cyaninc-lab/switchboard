@@ -95,7 +95,7 @@
   let loadingHistory = $state(false);
   let openSeq = 0;
   let filter = $state('');
-  let dialog = $state<'connect' | 'add' | 'settings' | 'report' | 'watches' | 'delete' | 'removed' | null>(null);
+  let dialog = $state<'connect' | 'add' | 'settings' | 'pair' | 'report' | 'watches' | 'delete' | 'removed' | null>(null);
 
   // inbox: per machine, merged newest first
   let inboxBy = $state<Record<string, api.InboxItem[]>>({});
@@ -213,7 +213,6 @@
   let net = $state<api.Network | null>(null);
   let netBusy = $state(false);
   let netError = $state('');
-  let code = $state<{ code: string; until: number } | null>(null);
   let now = $state(Date.now());
   const localMachine = $derived(machines.find((m) => api.isLocal(m)) ?? null);
   async function loadNet() { if (localMachine) try { net = await api.network(localMachine); } catch (e) { netError = (e as Error).message; } }
@@ -305,12 +304,21 @@
     });
   }
   const qrSvg = (text: string) => { const q = qrcode(0, 'M'); q.addData(text); q.make(); return q.createSvgTag({ cellSize: 4, margin: 2, scalable: true }); };
-  async function newCode() {
-    if (!localMachine) return;
-    try { const c = await api.pairCode(localMachine); code = { code: c.code, until: Date.now() + c.expires_in * 1000 }; }
-    catch (e) { netError = (e as Error).message; }
+  // pairing another device with a machine (its chip in the top bar): a one-time code and a QR for the phone app
+  let pairFor = $state<{ machine: Machine; code?: string; until: number; error?: string } | null>(null);
+  // where other devices reach it: this computer over Tailscale (when that's on); another machine at the address we use
+  const pairAddress = (m: Machine) => (m.url === localMachine?.url ? (net?.listen_tailscale && net.active.length ? net.url ?? `http://${net.active[0]}` : null) : m.url);
+  async function pairWith(m: Machine) {
+    pairFor = { machine: m, until: 0 }; dialog = 'pair';
+    if (m.url === localMachine?.url) await loadNet();
+    if (!pairAddress(m)) return;
+    try { const c = await api.pairCode(m); pairFor = { machine: m, code: c.code, until: Date.now() + c.expires_in * 1000 }; }
+    catch (e) { pairFor = { machine: m, until: 0, error: (e as Error).message }; }
   }
-  $effect(() => { if (!code) return; const t = setInterval(() => (now = Date.now()), 1000); return () => clearInterval(t); });
+  $effect(() => { if (!pairFor?.code) return; const t = setInterval(() => (now = Date.now()), 1000); return () => clearInterval(t); });
+  // Settings: one section at a time
+  const SET_TABS = [['appearance', 'Appearance'], ['sessions', 'Sessions'], ['machines', 'Machines'], ['notifications', 'Notifications'], ['about', 'About']] as const;
+  let setTab = $state<(typeof SET_TABS)[number][0]>('appearance');
   // daemon-wide settings, per machine (null: that daemon is too old to have them)
   let dset = $state<Record<string, api.DaemonSettings | null>>({});
   const IDLE = [[0, 'Never'], [10, 'After 10 minutes'], [30, 'After 30 minutes'], [60, 'After 1 hour'], [240, 'After 4 hours']] as const;
@@ -325,7 +333,7 @@
     try { dset[m.url] = await api.setSettings(m, { idle_close_minutes: minutes }); } catch (e) { say(`Couldn't change ${m.name}: ${(e as Error).message}`); }
   }
   async function openSettings() {
-    loadNet(); loadDaemonSettings(); loadGh(); code = null;
+    loadNet(); loadDaemonSettings(); loadGh();
     dialog = 'settings'; svcError = '';
     accMachine = accMachine ?? machines[0] ?? null;
     if (accMachine) loadAccounts(accMachine);
@@ -1433,9 +1441,9 @@
     <div class="chips">
       {#each machines as m (m.url)}
         <!-- online only once the daemon has actually answered; until then "connecting" (it may still be starting) -->
-        <span class="chip" title={m.url}><span class="dot" class:on={tree[m.url] && !tree[m.url].error} class:off={!!tree[m.url]?.error}></span>{m.name}
+        <button type="button" class="chip" title="{m.url}: click to pair another device with {m.name}" onclick={() => pairWith(m)}><span class="dot" class:on={tree[m.url] && !tree[m.url].error} class:off={!!tree[m.url]?.error}></span>{m.name}
           <span class="muted">{!tree[m.url] ? 'connecting…' : tree[m.url].error ? 'offline' : 'online'}</span>
-          {#if verNote(m)}{@const n = verNote(m)!}<span class="vertag" title={n.why} aria-label={n.why}>{n.tag}</span>{/if}</span>
+          {#if verNote(m)}{@const n = verNote(m)!}<span class="vertag" title={n.why} aria-label={n.why}>{n.tag}</span>{/if}</button>
       {/each}
       <button class="chip dashed" onclick={() => (dialog = 'connect')}>+ Connect a machine</button>
       <button class="chip icon" class:hot={unreadCount > 0} aria-label="Inbox ({unreadCount} unread)" title="Inbox" onclick={() => (showInbox = !showInbox)}>
@@ -1928,10 +1936,23 @@
   </div>
 {/if}
 
+<!-- a setting's explanation: one short line; the longer one on hover (title) or a tap -->
+{#snippet hint(short: string, long: string)}
+  <span class="hint muted small" title={long} role="button" tabindex="0" onclick={(e) => (e.currentTarget as HTMLElement).classList.toggle('open')}
+    onkeydown={(e) => { if (e.key === 'Enter') (e.currentTarget as HTMLElement).classList.toggle('open'); }}>{short} <span class="more">{long}</span></span>
+{/snippet}
 {#if dialog === 'settings'}
   <div class="backdrop" role="presentation" {...backdrop(() => (dialog = null))}>
-    <div class="dialog" role="dialog" aria-label="Settings">
+    <div class="dialog settings" role="dialog" aria-label="Settings">
       <h2>Settings</h2>
+      <div class="setgrid">
+        <div class="settabs" role="tablist" aria-label="Settings sections">
+          {#each SET_TABS as [k, label] (k)}
+            <button type="button" role="tab" aria-selected={setTab === k} class:on={setTab === k} onclick={() => (setTab = k)}>{label}</button>
+          {/each}
+        </div>
+        <div class="setpanel" role="tabpanel" aria-label={SET_TABS.find(([k]) => k === setTab)?.[1]}>
+      {#if setTab === 'appearance'}
       <label>Theme<select value={theme.name} onchange={(e) => applyTheme((e.currentTarget as HTMLSelectElement).value)}>
         {#each Object.entries(THEMES) as [k, t]}<option value={k}>{t.label}</option>{/each}</select></label>
       <div class="grid2">
@@ -1944,135 +1965,130 @@
         <label>Code font<select value={fonts.mono} onchange={(e) => applyFonts({ mono: (e.currentTarget as HTMLSelectElement).value })}>
           {#each Object.entries(MONO_FONTS) as [k, f]}<option value={k}>{f.label}</option>{/each}</select></label>
       </div>
-      {#if !inShell()}
-        <p class="muted">Settings for this machine are available in the desktop app.</p>
-      {:else if svc && !svc.supported}
-        <p class="muted">Keeping agents running in the background is Linux-only for now.</p>
-      {:else if svc}
-        <label class="toggle">
-          <input type="checkbox" checked={svc.installed} disabled={svcBusy} onchange={toggleService} />
-          <span><b>Keep agents running when Switchboard is closed</b><br />
-            <span class="muted small">Runs this machine's daemon as a background service (systemd user service) instead of inside the app.</span></span>
-        </label>
-        <p class="muted small" aria-live="polite">
-          {svcBusy ? 'Switching…' : svc.installed ? (svc.active ? 'Background service: running' : 'Background service: installed but not running') : svc.embedded ? "Daemon: running inside the app" : 'Daemon: running elsewhere on this machine'}
-        </p>
-      {/if}
-      {#if svcError}<p class="error">{svcError}</p>{/if}
 
-      <h3 class="sub">Sessions across machines</h3>
-      <p class="muted small">Lets a session message sessions on your other machines (they show as <code>name@machine</code>), as it can on its own machine. Each machine gets its own revocable key for the others. Link again after adding a machine.</p>
-      <div class="actions" style="justify-content: flex-start"><button type="button" class="btn ghost" disabled={linking || machines.length < 2} onclick={linkMachines}>{linking ? 'Linking…' : 'Let sessions on my machines message each other'}</button></div>
-      {#if linkMsg}<p class="muted small" role="status">{linkMsg}</p>{/if}
-
-      <h3 class="sub">Phone notifications</h3>
-      <p class="muted small">The Switchboard phone app gets notifications through an <a href="https://ntfy.sh" target="_blank" rel="noreferrer">ntfy</a> server you run (on one machine is enough).</p>
-      <label>Notification server<input placeholder="http://my-server:2586" bind:value={pushServer} onchange={savePushServer} inputmode="url" autocapitalize="off" /></label>
-      <label class="toggle"><input type="checkbox" bind:checked={pauseAtDesk} onchange={savePauseAtDesk} />
-        <span><b>Pause while I'm in Switchboard on a computer</b><br /><span class="muted small">While a Switchboard window on a computer is in front and you've used it in the last 3 minutes, the phone stays quiet: you see replies come in. A question still unanswered when you leave goes to the phone then.</span></span></label>
-      {#if isPhoneApp()}
-        <label class="toggle"><input type="checkbox" bind:checked={pushPrefs.finished} onchange={savePushPrefs} />
-          <span><b>Tell me when a session finishes</b></span></label>
-        <p class="muted small" aria-live="polite">{pushServer ? (pushOn ? 'This phone gets notifications.' : 'Setting up…') : 'Add a server above to get notifications.'}</p>
-        <p class="muted small">What the lock screen shows follows your phone's setting (Notifications → hide sensitive content): hidden, it says only which session needs you.</p>
-      {/if}
-
-      <h3 class="sub">New sessions</h3>
-      <p class="muted small">What sessions start with when you add or create them from now on (sessions already in the list keep theirs).</p>
-      {#each machines as m (m.url)}
-        {@const ns = dset[m.url]?.new_session ?? {}}
-        {#if dset[m.url] === null}<p class="muted small">{m.name}: needs a newer Switchboard there.</p>
-        {:else}
-          <div class="defaults" role="group" aria-label="New sessions on {m.name}">
-            <span class="dname">{m.name}</span>
-            <label>Mode<select aria-label="Mode" value={ns.mode ?? ''} onchange={(e) => setDefault(m, 'mode', (e.currentTarget as HTMLSelectElement).value)}>
-              <option value="">Claude Code's ({dset[m.url]?.claude_default_mode ?? 'default'})</option>{#each api.MODES as md}<option value={md}>{md}</option>{/each}</select></label>
-            <label>Model<select aria-label="Model" value={ns.model ?? ''} onchange={(e) => setDefault(m, 'model', (e.currentTarget as HTMLSelectElement).value)}>
-              <option value="">Claude Code's default</option>{#each (modelList[m.url] ?? []).filter((x) => x.value !== 'default') as md (md.value)}<option value={md.value}>{md.displayName}</option>{/each}</select></label>
-            <label>Effort<select aria-label="Effort" value={ns.effort ?? ''} onchange={(e) => setDefault(m, 'effort', (e.currentTarget as HTMLSelectElement).value)}>
-              <option value="">the model's default</option>{#each api.EFFORTS as ef}<option value={ef}>{ef}</option>{/each}</select></label>
-            <label>Account<select aria-label="Account" value={ns.account ?? ''} onchange={(e) => setDefault(m, 'account', (e.currentTarget as HTMLSelectElement).value)}>
-              <option value="">machine login</option>{#each acctList[m.url] ?? [] as a (a.name)}<option value={a.name}>{a.name}</option>{/each}</select></label>
-          </div>
+      {:else if setTab === 'sessions'}
+        {#if machines.length}
+          {#if machines.length > 1}<div class="pills" role="group" aria-label="Machine">
+            {#each machines as m (m.url)}<button type="button" class="pill" class:on={accMachine?.url === m.url} onclick={() => { accMachine = m; loadAccounts(m); }}>{m.name}</button>{/each}
+          </div>{/if}
+          {#if accMachine}{@const m = accMachine}{@const ns = dset[m.url]?.new_session ?? {}}
+            <h3 class="sub">New sessions</h3>
+            {@render hint('What sessions on ' + m.name + ' start with.', 'Applies to sessions you add or create from now on; sessions already in the list keep theirs.')}
+            {#if dset[m.url] === null}<p class="muted small">{m.name}: needs a newer Switchboard there.</p>
+            {:else}
+              <div class="defaults" role="group" aria-label="New sessions on {m.name}">
+                <label>Mode<select aria-label="Mode" value={ns.mode ?? ''} onchange={(e) => setDefault(m, 'mode', (e.currentTarget as HTMLSelectElement).value)}>
+                  <option value="">Claude Code's ({dset[m.url]?.claude_default_mode ?? 'default'})</option>{#each api.MODES as md}<option value={md}>{md}</option>{/each}</select></label>
+                <label>Model<select aria-label="Model" value={ns.model ?? ''} onchange={(e) => setDefault(m, 'model', (e.currentTarget as HTMLSelectElement).value)}>
+                  <option value="">Claude Code's default</option>{#each (modelList[m.url] ?? []).filter((x) => x.value !== 'default') as md (md.value)}<option value={md.value}>{md.displayName}</option>{/each}</select></label>
+                <label>Effort<select aria-label="Effort" value={ns.effort ?? ''} onchange={(e) => setDefault(m, 'effort', (e.currentTarget as HTMLSelectElement).value)}>
+                  <option value="">the model's default</option>{#each api.EFFORTS as ef}<option value={ef}>{ef}</option>{/each}</select></label>
+                <label>Account<select aria-label="Account" value={ns.account ?? ''} onchange={(e) => setDefault(m, 'account', (e.currentTarget as HTMLSelectElement).value)}>
+                  <option value="">machine login</option>{#each acctList[m.url] ?? [] as a (a.name)}<option value={a.name}>{a.name}</option>{/each}</select></label>
+              </div>
+            {/if}
+            <h3 class="sub">Idle sessions</h3>
+            <label>Close idle sessions on {m.name}
+              {#if dset[m.url] === null}<span class="muted small">Needs a newer Switchboard on {m.name}.</span>
+              {:else}<select value={dset[m.url]?.idle_close_minutes ?? 0} disabled={!dset[m.url]}
+                onchange={(e) => setIdle(m, +(e.currentTarget as HTMLSelectElement).value)}>
+                {#each IDLE as [v, label]}<option value={v}>{label}</option>{/each}</select>{/if}</label>
+            {@render hint('Frees memory; the next message resumes it.', 'A closed session resumes with its history on your next message, which re-reads it (costly on a long session), and forgets "Allow for this session" answers. Sessions that are working, waiting on you or running a task are never closed.')}
+            <h3 class="sub">Accounts</h3>
+            <ul class="acclist" aria-label="Accounts on {m.name}">
+              <li><span>machine login</span><span class="muted small">whoever Claude Code is signed in as on {m.name}</span></li>
+              {#each acctList[m.url] ?? [] as a (a.name)}
+                <li><span>{a.name}</span><span class="muted small">{a.kind === 'api_key' ? 'API key' : 'setup-token'}</span>
+                  <button type="button" class="tiny" aria-label="Remove account {a.name}" onclick={() => removeAccount(a.name)}>Remove</button></li>
+              {/each}
+            </ul>
+            <form class="accform" onsubmit={addAccount} aria-label="Add an account">
+              <label>Name<input bind:value={accName} placeholder="e.g. work" /></label>
+              <label>Token <span class="muted small">(run <code>claude setup-token</code> signed in to that account)</span>
+                <input type="password" bind:value={accToken} autocomplete="off" placeholder="sk-ant-oat…" /></label>
+              <label class="inline"><input type="checkbox" checked={accKind === 'api_key'} onchange={(e) => (accKind = (e.target as HTMLInputElement).checked ? 'api_key' : 'oauth')} /> It's an Anthropic API key</label>
+              {#if accError}<p class="error">{accError}</p>{/if}
+              <div class="actions"><button class="btn primary">Add account</button></div>
+            </form>
+          {/if}
+        {:else}<p class="muted">Connect a machine first.</p>{/if}
+      {:else if setTab === 'machines'}
+        <h3 class="sub">This computer</h3>
+        {#if !inShell()}
+          <p class="muted small">These are set in the desktop app on the machine itself.</p>
+        {:else if svc && !svc.supported}
+          <p class="muted small">Keeping agents running in the background is Linux-only for now.</p>
+        {:else if svc}
+          <label class="toggle">
+            <input type="checkbox" checked={svc.installed} disabled={svcBusy} onchange={toggleService} />
+            <span><b>Keep agents running when Switchboard is closed</b><br />
+              {@render hint(svcBusy ? 'Switching…' : svc.installed ? (svc.active ? 'Background service: running' : 'Background service: installed but not running') : svc.embedded ? 'Daemon: running inside the app' : 'Daemon: running elsewhere on this machine', "Runs this machine's daemon as a background service (systemd user service) instead of inside the app.")}</span>
+          </label>
         {/if}
-      {/each}
-
-      <h3 class="sub">Idle sessions</h3>
-      <p class="muted small">Close a live session after it has been quiet for a while, to free memory. It resumes with its history on your next message, but forgets any "Allow for this session" answers. Sessions that are working, waiting on you or running a background command stay open.</p>
-      {#each machines as m (m.url)}
-        <label>Close idle sessions on {m.name}
-          {#if dset[m.url] === null}<span class="muted small">Needs a newer Switchboard on {m.name}.</span>
-          {:else}<select value={dset[m.url]?.idle_close_minutes ?? 0} disabled={!dset[m.url]}
-            onchange={(e) => setIdle(m, +(e.currentTarget as HTMLSelectElement).value)}>
-            {#each IDLE as [v, label]}<option value={v}>{label}</option>{/each}</select>{/if}</label>
-      {/each}
-
-      <h3 class="sub">Other devices</h3>
-      {#if !localMachine}
-        <p class="muted small">Available for the machine this app runs on.</p>
-      {:else if net}
-        <label class="toggle">
-          <input type="checkbox" checked={net.listen_tailscale} disabled={netBusy || (!net.tailscale && !net.listen_tailscale)} onchange={toggleNet} />
-          <span><b>Reachable from my other devices over Tailscale</b><br />
-            <span class="muted small">{net.tailscale ? `This machine is ${net.tailscale.dns ?? net.tailscale.ips[0]} on your tailnet. Only your Tailscale devices can reach it, and each still has to be paired.` : "Tailscale isn't running on this machine."}</span></span>
-        </label>
-        {#if net.listen_tailscale && net.active.length}
-          <p class="small" aria-live="polite">Reachable at <code>{net.url ?? `http://${net.active[0]}`}</code>{net.url ? ` (or http://${net.active[0]})` : ''}</p>
-          <div class="actions" style="justify-content: flex-start"><button type="button" class="btn ghost" onclick={newCode}>Pair another device</button></div>
-          {#if code && code.until > now}
-            <div class="paircode" role="status">
-              <div>On the other device, open Switchboard → <b>+ Connect a machine</b>:</div>
-              <div>Address <code>{net.url ?? `http://${net.active[0]}`}</code> · code <b class="mono big">{code.code}</b></div>
-              <div class="muted small">Valid for {Math.max(0, Math.round((code.until - now) / 1000 / 60))} more min, once.</div>
-              <div class="pairqr" aria-label="Pairing QR code for the phone app">{@html qrSvg(pairLink(net.url ?? `http://${net.active[0]}`, code.code))}</div>
-              <div class="muted small">Or scan this with the Switchboard phone app.</div>
-            </div>
-          {:else if code}<p class="muted small">That code expired. <button class="link" onclick={newCode}>New code</button></p>{/if}
+        {#if svcError}<p class="error">{svcError}</p>{/if}
+        {#if localMachine && net}
+          <label class="toggle">
+            <input type="checkbox" checked={net.listen_tailscale} disabled={netBusy || (!net.tailscale && !net.listen_tailscale)} onchange={toggleNet} />
+            <span><b>Reachable from my other devices over Tailscale</b><br />
+              {@render hint(net.listen_tailscale && net.active.length ? `At ${net.url ?? `http://${net.active[0]}`}` : net.tailscale ? 'Only your Tailscale devices, each paired.' : "Tailscale isn't running here.",
+                net.tailscale ? `This machine is ${net.tailscale.dns ?? net.tailscale.ips[0]} on your tailnet. Only your Tailscale devices can reach it, and each still has to be paired: click the machine in the top bar → Pair another device.` : 'Start Tailscale on this machine to reach it from your phone or other computers.')}</span>
+          </label>
+          {#if net.error}<p class="error">{net.error}</p>{/if}
         {/if}
-        {#if net.error}<p class="error">{net.error}</p>{/if}
-      {/if}
-      {#if netError}<p class="error">{netError === 'only_from_this_machine' ? 'This can only be changed on that machine itself.' : netError}</p>{/if}
-
-      {#if gh?.signed_in && localMachine}
-        <h3 class="sub">Bug reports</h3>
-        <p class="muted small">Signed in to GitHub as <b>{gh.login}</b>, to send bug reports from the app (it can only open issues on Switchboard's repository).
-          <button class="link" onclick={async () => { gh = await api.githubSignOut(localMachine!).catch(() => gh); }}>Sign out</button></p>
-      {/if}
-      <h3 class="sub">Updates</h3>
-      <p class="muted small">Switchboard {version || '…'}. Updates come from github.com/cyaninc-lab/switchboard and are checked for a valid signature before installing.</p>
-      <div class="actions" style="justify-content: flex-start"><button type="button" class="btn ghost" onclick={() => checkUpdates(true)}>Check for updates</button></div>
-      {#if updMsg}<p class="muted small" role="status">{updMsg}</p>{/if}
-
-      <h3 class="sub">Accounts</h3>
-      {#if machines.length}
-        <div class="pills">
-          {#each machines as m (m.url)}
-            <button type="button" class="pill" class:on={accMachine?.url === m.url} onclick={() => { accMachine = m; loadAccounts(m); }}>{m.name}</button>
-          {/each}
-        </div>
-        <ul class="acclist" aria-label="Accounts on {accMachine?.name}">
-          <li><span>machine login</span><span class="muted small">whoever Claude Code is signed in as on {accMachine?.name}</span></li>
-          {#each accMachine ? acctList[accMachine.url] ?? [] : [] as a (a.name)}
-            <li><span>{a.name}</span><span class="muted small">{a.kind === 'api_key' ? 'API key' : 'setup-token'}</span>
-              <button type="button" class="tiny" aria-label="Remove account {a.name}" onclick={() => removeAccount(a.name)}>Remove</button></li>
-          {/each}
-        </ul>
-        <form class="accform" onsubmit={addAccount} aria-label="Add an account">
-          <label>Name<input bind:value={accName} placeholder="e.g. work" /></label>
-          <label>Token <span class="muted small">(run <code>claude setup-token</code> signed in to that account)</span>
-            <input type="password" bind:value={accToken} autocomplete="off" placeholder="sk-ant-oat…" /></label>
-          <label class="inline"><input type="checkbox" checked={accKind === 'api_key'} onchange={(e) => (accKind = (e.target as HTMLInputElement).checked ? 'api_key' : 'oauth')} /> It's an Anthropic API key</label>
-          {#if accError}<p class="error">{accError}</p>{/if}
-          <div class="actions"><button class="btn primary">Add account</button></div>
-        </form>
+        {#if netError}<p class="error">{netError === 'only_from_this_machine' ? 'This can only be changed on that machine itself.' : netError}</p>{/if}
+        <h3 class="sub">Sessions across machines</h3>
+        {@render hint('Sessions can message sessions on your other machines.', 'They show as name@machine. Each machine gets its own revocable key for the others. Link again after adding a machine.')}
+        <div class="actions" style="justify-content: flex-start"><button type="button" class="btn ghost" disabled={linking || machines.length < 2} onclick={linkMachines}>{linking ? 'Linking…' : 'Let sessions on my machines message each other'}</button></div>
+        {#if linkMsg}<p class="muted small" role="status">{linkMsg}</p>{/if}
+      {:else if setTab === 'notifications'}
+        {@render hint('The phone app gets notifications through an ntfy server you run.', 'Setting it on one machine is enough: the phone subscribes on all of them.')}
+        <label>Notification server<input placeholder="http://my-server:2586" bind:value={pushServer} onchange={savePushServer} inputmode="url" autocapitalize="off" /></label>
+        <label class="toggle"><input type="checkbox" bind:checked={pauseAtDesk} onchange={savePauseAtDesk} />
+          <span><b>Pause while I'm in Switchboard on a computer</b><br />{@render hint('Your phone stays quiet while you watch.', "While a Switchboard window on a computer is in front and you've used it in the last 3 minutes. A question still unanswered when you leave goes to the phone then.")}</span></label>
+        {#if isPhoneApp()}
+          <label class="toggle"><input type="checkbox" bind:checked={pushPrefs.finished} onchange={savePushPrefs} />
+            <span><b>Tell me when a session finishes</b></span></label>
+          <p class="muted small" aria-live="polite">{pushServer ? (pushOn ? 'This phone gets notifications.' : 'Setting up…') : 'Add a server above to get notifications.'}</p>
+          {@render hint('The lock screen follows your phone.', "Notifications → hide sensitive content: hidden, it says only which session needs you.")}
+        {/if}
       {:else}
-        <p class="muted">Connect a machine first.</p>
+        <p>Switchboard {version || '…'}</p>
+        {@render hint('Updates come from GitHub and are signature-checked.', 'From github.com/cyaninc-lab/switchboard; every update is checked for a valid signature before it installs.')}
+        <div class="actions" style="justify-content: flex-start"><button type="button" class="btn ghost" onclick={() => checkUpdates(true)}>Check for updates</button></div>
+        {#if updMsg}<p class="muted small" role="status">{updMsg}</p>{/if}
+        {#if gh?.signed_in && localMachine}
+          <h3 class="sub">Bug reports</h3>
+          <p class="muted small">Signed in to GitHub as <b>{gh.login}</b> (it can only open issues on Switchboard's repository).
+            <button class="link" onclick={async () => { gh = await api.githubSignOut(localMachine!).catch(() => gh); }}>Sign out</button></p>
+        {/if}
       {/if}
+        </div>
+      </div>
       <div class="actions"><button class="btn ghost" onclick={() => (dialog = null)}>Close</button></div>
     </div>
   </div>
 {/if}
-
+{#if dialog === 'pair' && pairFor}
+  {@const addr = pairAddress(pairFor.machine)}
+  <div class="backdrop" role="presentation" {...backdrop(() => (dialog = null))}>
+    <div class="dialog" role="dialog" aria-label="Pair another device">
+      <h2>Pair a device with {pairFor.machine.name}</h2>
+      {#if !addr}
+        <p class="muted">Other devices can't reach {pairFor.machine.name} yet: turn on Settings → Machines → <b>Reachable from my other devices over Tailscale</b>.</p>
+      {:else if pairFor.code && pairFor.until > now}
+        <div class="paircode" role="status">
+          <div>On the other device, open Switchboard → <b>+ Connect a machine</b>:</div>
+          <div>Address <code>{addr}</code> · code <b class="mono big">{pairFor.code}</b></div>
+          <div class="muted small">Valid for {Math.max(0, Math.round((pairFor.until - now) / 1000 / 60))} more min, once.</div>
+          <div class="pairqr" aria-label="Pairing QR code for the phone app">{@html qrSvg(pairLink(addr, pairFor.code))}</div>
+          <div class="muted small">Or scan this with the Switchboard phone app.</div>
+        </div>
+      {:else if pairFor.code}<p class="muted small">That code expired. <button class="link" onclick={() => pairWith(pairFor!.machine)}>New code</button></p>
+      {:else if pairFor.error}<p class="error">{pairFor.error}</p>{/if}
+      <div class="actions"><button class="btn ghost" onclick={() => (dialog = null)}>Close</button></div>
+    </div>
+  </div>
+{/if}
 {#if dialog === 'add'}
   <div class="backdrop" role="presentation" {...backdrop(() => (dialog = null))}>
     <form class="dialog wide" aria-label="Add to Switchboard" onsubmit={(e) => (aTab === 'new' ? createNew(e) : add(e))}>
@@ -2259,7 +2275,6 @@
   .ctxmenu button:hover:not(:disabled) { background: var(--s0); }
   .ctxmenu button:disabled { color: var(--o1); }
   .defaults { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin-bottom: 12px; }
-  .defaults .dname { grid-column: 1 / -1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
   .defaults label { font-size: 12px; }
   .tasksheet { max-width: 560px; }
   .sheethead { display: flex; align-items: center; } .sheethead h2 { margin: 0; }
@@ -2430,6 +2445,22 @@
   .allow { background: var(--green); color: var(--crust); border: 0; border-radius: 8px; padding: 8px 16px; font-weight: 600; }
   .deny { background: none; color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 45%, transparent); border-radius: 8px; padding: 8px 16px; }
   /* its own shape: in the chat's column it was stretched to the full width while its height was capped (squashed) */
+  /* one size for every section (no jumping between tabs); only the section scrolls */
+  .dialog.settings { width: min(720px, 100%); height: min(620px, 90vh); display: flex; flex-direction: column; }
+  .setgrid { display: grid; grid-template-columns: 150px 1fr; gap: 18px; flex: 1; min-height: 0; }
+  .settabs { display: flex; flex-direction: column; gap: 2px; align-items: stretch; align-self: start; }
+  .settabs button { text-align: left; padding: 7px 10px; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; font: inherit; }
+  .settabs button.on { background: var(--s1); color: var(--text); }
+  .setpanel { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; overflow-y: auto; padding-right: 4px; }
+  .setpanel .sub:first-child { margin-top: 0; }
+  .hint { display: block; cursor: help; }
+  .hint .more { display: none; }
+  .hint:global(.open) .more { display: inline; }
+  @media (max-width: 640px) {
+    .setgrid { grid-template-columns: 1fr; grid-template-rows: auto 1fr; gap: 12px; }
+    .settabs { flex-direction: row; overflow-x: auto; align-items: center; flex-shrink: 0; }
+    .settabs button { white-space: nowrap; }
+  }
   .readimg { align-self: flex-start; padding: 0; margin: 2px 0 6px 18px; border: 1px solid var(--s1); border-radius: 8px; background: none; cursor: zoom-in; line-height: 0; max-width: calc(100% - 18px); }
   .readimg img { max-height: 160px; max-width: 240px; object-fit: contain; border-radius: 8px; }
   .readimg:global(.big) { cursor: zoom-out; }  /* toggled on click */
