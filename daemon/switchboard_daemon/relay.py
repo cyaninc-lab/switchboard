@@ -11,18 +11,33 @@ import aiohttp
 log = logging.getLogger("switchboard.relay")
 URL, ID, SECRET = "relay_url", "relay_id", "relay_secret"  # daemon settings (the secret lives with the other tokens)
 RELAYED = "X-Switchboard-Relayed"
-SKIP = {"host", "content-length", "transfer-encoding", "connection", RELAYED.lower()}
+DEVICE = "X-Switchboard-Device"  # which of the account's approved devices is asking (the relay checked it)
+SKIP = {"host", "content-length", "transfer-encoding", "connection", RELAYED.lower(), DEVICE.lower()}
 
 
-async def join(store, url, join_key, name):
-    """Register this machine with a relay (needs the relay's join key); returns its address there."""
+async def signin(store, url, name, show=print):
+    """Sign this machine in to a relay with GitHub (the person enters a code at github.com/login/device). Returns its
+    address there, or raises. The machine belongs to that GitHub account: its approved devices reach it."""
     url = url.rstrip("/")
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as s:
-        async with s.post(f"{url}/v1/machines", json={"name": name}, headers={"Authorization": f"Bearer {join_key}"}) as r:
-            if r.status != 200:
-                raise RuntimeError((await r.json(content_type=None) or {}).get("code") or f"HTTP {r.status}")
-            d = await r.json()
-    store.set_setting(URL, url); store.set_setting(ID, d["id"]); store.set_setting(SECRET, d["secret"])
+        async with s.post(f"{url}/v1/signin", json={"name": name, "kind": "machine"}) as r:
+            d = await r.json(content_type=None)
+        if "signin" not in d:
+            raise RuntimeError(d.get("message") or d.get("code") or f"HTTP {r.status}")
+        show(f"Open {d['verification_uri']} and enter {d['user_code']}")
+        while True:
+            await asyncio.sleep(d.get("interval", 5))
+            async with s.post(f"{url}/v1/signin/{d['signin']}") as r:
+                p = await r.json(content_type=None)
+            if p.get("status") == "waiting":
+                continue
+            if p.get("status") != "signed_in":
+                raise RuntimeError(p.get("error") or p.get("status"))
+            break
+    dev = p["device"]
+    store.set_setting(URL, url); store.set_setting(ID, dev["id"]); store.set_setting(SECRET, p["secret"])
+    if not dev["approved"]:
+        show("Approve this machine on one of your other devices (Settings → Account) before it can be reached.")
     return address(store)
 
 
@@ -65,6 +80,7 @@ async def _serve(ws, session, port, host):
     async def request(m):
         h = {k: v for k, v in (m.get("h") or {}).items() if k.lower() not in SKIP}
         h[RELAYED] = "1"
+        h[DEVICE] = json.dumps(m.get("dev") or {})
         try:
             async with session.request(m["m"], local + m["p"], headers=h, data=base64.b64decode(m.get("b") or "")) as r:
                 body = await r.read()
@@ -78,7 +94,7 @@ async def _serve(ws, session, port, host):
         """An app's WebSocket: messages queue from the start (the first, its login, can come before this end is open)."""
         s = m["s"]
         try:
-            async with session.ws_connect(local.replace("http", "ws") + m["p"], headers={RELAYED: "1"}, max_msg_size=0) as c:
+            async with session.ws_connect(local.replace("http", "ws") + m["p"], headers={RELAYED: "1", DEVICE: json.dumps(m.get("dev") or {})}, max_msg_size=0) as c:
                 async def outbound():
                     while (d := await q.get()) is not None:
                         await c.send_str(d)

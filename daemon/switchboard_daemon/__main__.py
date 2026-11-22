@@ -65,9 +65,9 @@ def main():
     s.add_argument("--exit-with", type=int, metavar="PID", help="exit when this process ends (the desktop app passes its own pid)")
     s.add_argument("--demo", action="store_true", help="serve canned demo sessions instead of this machine's (UI tests, screenshots)")
     s.add_argument("--auto-update", action="store_true", help="install new releases by itself, then exit for the service manager to restart it (pip installs only)")
-    rl = sub.add_parser("relay", help="reach this machine from anywhere through a Switchboard relay (join key read from stdin)")
-    rl.add_argument("action", choices=["join", "show", "leave"])
-    rl.add_argument("url", nargs="?", help="the relay, e.g. https://relay.example.org (join)")
+    rl = sub.add_parser("relay", help="reach this machine from anywhere through a Switchboard relay (signs in with GitHub)")
+    rl.add_argument("action", choices=["signin", "show", "leave"])
+    rl.add_argument("url", nargs="?", help="the relay, e.g. https://api.cyaninc.org/relay (signin)")
     sub.add_parser("update", help="install the latest release now if it's newer (pip installs only; restart the service after)")
     sub.add_parser("pair", help="print a one-time pairing code (10 minutes, single use)")
     sub.add_parser("clients", help="list paired clients")
@@ -121,11 +121,10 @@ def main():
                 store.set_setting(k, "")
             print("Left the relay (restart the daemon)")
         elif not a.url:
-            p.error("relay join needs the relay's address")
+            p.error("relay signin needs the relay's address")
         else:
-            import getpass
-            key = sys.stdin.readline().strip() if not sys.stdin.isatty() else getpass.getpass("Relay join key: ")
-            print(f"Joined. This machine's address: {asyncio.run(relay.join(store, a.url, key, __import__('socket').gethostname()))}")
+            import socket
+            print(f"Signed in. This machine's address: {asyncio.run(relay.signin(store, a.url, socket.gethostname()))}")
             print("Restart the daemon to open the tunnel.")
     elif a.cmd == "update":
         from . import update, __version__
