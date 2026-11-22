@@ -13,14 +13,17 @@ class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
-    remember(intent)
+    if (savedInstanceState == null) remember(intent)  // restored (or relaunched by Android): not a new tap
   }
 
   override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); remember(intent) }
 
   // a tapped notification names a session: leave it for the web UI to open (lib.rs push_take_open)
   private fun remember(intent: Intent?) {
-    intent?.getStringExtra(Updater.EXTRA)?.let { pendingUpdate = it; installUpdate() }  // "Update ready" was tapped
+    intent?.getStringExtra(Updater.EXTRA)?.let {  // "Update ready" was tapped: act on it once, never again on a relaunch
+      intent.removeExtra(Updater.EXTRA); setIntent(intent)
+      pendingUpdate = it; installUpdate()
+    }
     val entry = intent?.getStringExtra("entry") ?: return
     File(dataDir, "open.json").writeText(JSONObject().put("machine", intent.getStringExtra("machine")).put("entry", entry).toString())
   }
