@@ -1,5 +1,5 @@
 """HTTP API v1 (phase 1: pairing, machine, sessions, tree entries, history). See docs/protocol.md."""
-import asyncio, dataclasses, glob, itertools, json, os, platform, socket, uuid
+import asyncio, dataclasses, glob, itertools, json, os, platform, socket, time, uuid
 from pathlib import Path
 import aiohttp
 from aiohttp import web
@@ -125,18 +125,26 @@ async def auth(request, handler):
     return await handler(request)
 
 
+PAIR_FAILS: list[float] = []  # recent wrong codes: short codes reachable through a relay mustn't be guessable
+
+
 async def pair(request):
     body = await request.json()
-    token = request.app[STORE].redeem(body.get("code"), body.get("client_name"))
+    now = time.time()
+    PAIR_FAILS[:] = [t for t in PAIR_FAILS if t > now - 600]
+    if len(PAIR_FAILS) >= 10:  # 10 wrong codes in 10 minutes: no pairing at all for a while
+        raise web.HTTPTooManyRequests(text=json.dumps({"code": "too_many_tries"}), content_type="application/json")
+    token = request.app[STORE].redeem(str(body.get("code") or "").upper().replace("-", "").replace(" ", ""), body.get("client_name"))
     log.info("pairing %s: %s", "accepted" if token else "rejected", body.get("client_name"))
     if not token:
+        PAIR_FAILS.append(now)
         raise web.HTTPForbidden(text=json.dumps({"code": "bad_code"}), content_type="application/json")
     return web.json_response({"token": token, "machine": request.app[NAME]})
 
 
 async def machine(request):
     return web.json_response({"name": request.app[NAME], "daemon": __version__, "sdk": sdk.__version__,
-                              "os": platform.system(), "arch": platform.machine()})
+                              "os": platform.system(), "arch": platform.machine(), "relay": relaymod.address(request.app[STORE])})
 
 
 async def sessions(request):
