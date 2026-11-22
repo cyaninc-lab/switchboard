@@ -2128,12 +2128,12 @@
         {#if !inShell()}
           <p class="muted small">These are set in the desktop app on the machine itself.</p>
         {:else if svc && !svc.supported}
-          <p class="muted small">Keeping agents running in the background is Linux-only for now.</p>
+          <p class="muted small">Keeping agents running in the background is Linux and Windows only for now.</p>
         {:else if svc}
           <label class="toggle">
             <input type="checkbox" checked={svc.installed} disabled={svcBusy} onchange={toggleService} />
             <span><b>Keep agents running when Switchboard is closed</b><br />
-              {@render hint(svcBusy ? 'Switching…' : svc.installed ? (svc.active ? 'Background service: running' : 'Background service: installed but not running') : svc.embedded ? 'Daemon: running inside the app' : 'Daemon: running elsewhere on this machine', "Runs this machine's daemon as a background service (systemd user service) instead of inside the app.")}</span>
+              {@render hint(svcBusy ? 'Switching…' : svc.installed ? (svc.active ? 'Background service: running' : 'Background service: installed but not running') : svc.embedded ? 'Daemon: running inside the app' : 'Daemon: running elsewhere on this machine', "Runs this machine's daemon in the background (a systemd user service on Linux, a log-on task on Windows) instead of inside the app, so sessions keep going when the app is closed.")}</span>
           </label>
         {/if}
         {#if svcError}<p class="error">{svcError}</p>{/if}
