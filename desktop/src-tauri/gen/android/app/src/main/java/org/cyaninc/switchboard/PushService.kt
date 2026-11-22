@@ -95,7 +95,7 @@ class PushService : Service() {
             val cfg = Push.config(this)
             // the account's stream on the relay (one per phone, its own sign-in)
             val relay = cfg?.optString("relay").orEmpty(); val secret = cfg?.optString("secret").orEmpty()
-            if (relay.isEmpty() || secret.isEmpty()) { stopSelf(); return }
+            if (relay.isEmpty() || secret.isEmpty()) { android.util.Log.i("PushService", "not signed in to an account: stopping"); stopSelf(); return }
             val lastKey = "last_relay"
             try {
                 val since = prefs.getString(lastKey, null) ?: ""  // a new sign-in: no replay of the past day
@@ -104,6 +104,7 @@ class PushService : Service() {
                 // the relay checks in every 4 min (few wake-ups); a stream silent for longer has died: reconnect
                 c.connectTimeout = 15000; c.readTimeout = 300000
                 current = c
+                android.util.Log.i("PushService", "listening on $relay")
                 c.inputStream.bufferedReader().useLines { lines ->
                     wait = 2000L
                     for (line in lines) {
@@ -117,7 +118,8 @@ class PushService : Service() {
                     }
                 }
             } catch (_: InterruptedException) {
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                android.util.Log.w("PushService", "notification stream: ${e.javaClass.simpleName}: ${e.message}")
                 try { Thread.sleep(wait) } catch (_: InterruptedException) {}
                 wait = minOf(wait * 2, 60000L)
             }
