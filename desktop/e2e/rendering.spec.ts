@@ -39,12 +39,14 @@ test('diffs, to-dos, expandable output and the context/cost meter', async ({ pag
   await input.press('Enter');
   await expect(page.getByRole('contentinfo')).toContainText('ctx 26% · ≈$0.01');
 
-  // thinking (collapsed) and a subagent's work grouped under its Agent step
+  // thinking with text shown as a normal message, and a subagent's work grouped under its Agent step
   await input.fill('think, then use a subagent');
   await input.press('Enter');
   const agent = log.locator('details.agent').filter({ hasText: 'Agent: Search the codebase' });
   await expect(agent).toContainText('3 steps');
-  await expect(log.locator('details.thinking').last()).toContainText('Thinking');
+  await expect(log.locator('.reply.thought').last()).toBeVisible();  // open, not behind a click
+  await expect(log.locator('.reply.thought .md').last()).toHaveCSS('font-style', 'normal');  // like any message
+  await expect(log.locator('.reply.thought').last()).toContainText('Weighing the two options first.');
   await expect(agent.getByText('Found it in server/app.py line 212.')).toBeHidden();  // collapsed until opened
   await agent.locator('summary').click();
   await expect(agent.getByText('Found it in server/app.py line 212.')).toBeVisible();

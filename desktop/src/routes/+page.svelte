@@ -1706,7 +1706,8 @@
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg></button></div>
                 {/if}
               {:else if line.kind === 'thinking'}
-                <details class="thinking"><summary>Thinking</summary><div class="thinktext">{line.text}</div></details>
+                <!-- thinking with text reads like any message (it's a short note on what Claude is doing); empty ones aren't shown -->
+                <div class="reply thought"><span class="bullet">⏺</span><div class="md">{@html md(line.text)}</div></div>
               {:else if line.kind === 'tool' && AGENT_TOOLS.includes(line.name)}
                 {@const kids = byParent[line.id] ?? []}
                 {@const sa = selected?.entry.subagents?.find((x) => x.tool_use_id === line.id)}
@@ -1750,7 +1751,7 @@
           {/snippet}
           {#each mainMsgs as msg (msg.uuid)}{@render lines(msg)}{/each}
           {#if !selected.sub}
-          {#if thinkingLive[selected.entry.id] && !streaming[selected.entry.id]}<div class="thinking live"><span class="muted">Thinking… </span><span class="thinktext">{thinkingLive[selected.entry.id].slice(-240)}</span></div>{/if}
+          {#if thinkingLive[selected.entry.id] && !streaming[selected.entry.id]}<div class="reply thought streaming"><span class="bullet">⏺</span><div class="md">{@html md(thinkingLive[selected.entry.id])}<span class="cursor">▌</span></div></div>{/if}
           <!-- drawn like the finished reply (formatted, same bubble on a phone), so it grows in place instead of jumping -->
           {#if streaming[selected.entry.id]}<div class="reply streaming"><span class="bullet">⏺</span><div class="md">{@html md(streaming[selected.entry.id])}<span class="cursor">▌</span></div></div>{/if}
           {#each prompts[selected.entry.id] ?? [] as p (p.request_id)}
@@ -2489,9 +2490,6 @@
   .md :global(ul), .md :global(ol) { margin: 4px 0 8px; padding-left: 20px; } .prompt { color: var(--mauve); font-weight: 600; } .bullet { color: var(--mauve); }
   .tool { color: var(--sub1); } .result { color: var(--o2); padding-left: 18px; }
   .more { align-self: flex-start; margin-left: 30px; }
-  .thinking { color: var(--o2); font-style: italic; white-space: pre-wrap; } .thinking summary { cursor: pointer; font-style: normal; }
-  .thinking.live .thinktext { opacity: 0.8; }
-  .thinktext { display: block; padding: 4px 0 4px 18px; font-size: 12px; }
   .agent { border-left: 2px solid var(--s1); padding-left: 10px; } .agent summary { cursor: pointer; color: var(--sub1); }
   .agentbody { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; }
   .diff { display: flex; flex-direction: column; border: 1px solid var(--s0); border-radius: 8px; overflow: hidden; }
