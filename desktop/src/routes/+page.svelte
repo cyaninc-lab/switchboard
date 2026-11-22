@@ -391,7 +391,8 @@
     signedOut(); acctInfo = null; await loadAccount();
   }
   setTimeout(loadAccount, 1200);
-  $effect(() => { const t = setInterval(loadAccount, 60_000); return () => clearInterval(t); });
+  // every minute; every 10 s while this device waits for approval or another one waits for yours
+  $effect(() => { const t = setInterval(loadAccount, (acctLocal && !acct) || acctWaiting.length ? 10_000 : 60_000); return () => clearInterval(t); });
   // Settings: one section at a time
   const SET_TABS = [['appearance', 'Appearance'], ['account', 'Account'], ['sessions', 'Sessions'], ['machines', 'Machines'], ['notifications', 'Notifications'], ['about', 'About']] as const;
   let setTab = $state<(typeof SET_TABS)[number][0]>('appearance');
@@ -409,7 +410,7 @@
     try { dset[m.url] = await api.setSettings(m, { idle_close_minutes: minutes }); } catch (e) { say(`Couldn't change ${m.name}: ${(e as Error).message}`); }
   }
   async function openSettings() {
-    loadNet(); loadDaemonSettings(); loadGh();
+    loadNet(); loadDaemonSettings(); loadGh(); loadAccount();
     dialog = 'settings'; svcError = '';
     accMachine = accMachine ?? machines[0] ?? null;
     if (accMachine) loadAccounts(accMachine);
