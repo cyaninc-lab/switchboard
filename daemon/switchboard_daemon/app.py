@@ -608,7 +608,7 @@ async def relay_signin(request):
         raise web.HTTPBadRequest(text=json.dumps({"code": "bad_relay"}), content_type="application/json")
     app, r = request.app, request.app[RELAY]
     try:
-        d = await relaymod.signin_start(url, app[NAME])
+        d = await relaymod.signin_start(url, app[NAME], screen=True)  # from the desktop app: it can approve devices
     except Exception as e:
         raise web.HTTPBadGateway(text=json.dumps({"code": "relay_unavailable", "message": str(e)[:200]}), content_type="application/json")
     r["signin"], r["error"] = {"user_code": d["user_code"], "verification_uri": d["verification_uri"]}, None
