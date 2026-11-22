@@ -1,3 +1,3 @@
-## Switchboard 0.1.35
+## Switchboard 0.1.36
 
-- **Phone notifications recover faster** after the connection drops (Wi-Fi changes, the phone's power saving): it reconnects as soon as a network is there, and retries at most 30 seconds apart. Settings → Notifications shows whether it's connected.
+- **A message you send can't get lost any more:** if the connection died without anyone noticing (a network blip), what you send is kept and sent again as soon as the app reconnects, and the machine takes it only once. The app also notices a dead connection within about 40 seconds now, instead of minutes. Update the machines too (their daemons confirm each message).
