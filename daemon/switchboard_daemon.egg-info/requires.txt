@@ -1,5 +1,8 @@
 claude-agent-sdk>=0.2.182
 aiohttp>=3.9
 
+[:sys_platform == "win32"]
+pywinpty>=2.0
+
 [test]
 pytest
