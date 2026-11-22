@@ -38,10 +38,9 @@ async def _serve(app, host, port):
     print(f"======== Running on http://{host}:{port} ========", flush=True)
     app[NET].attach(runner, port)
     await app[NET].apply()
-    from . import relay
-    from .app import STORE
-    if relay.address(app[STORE]):  # reachable through a relay too (anywhere, any VPN)
-        tunnel = asyncio.get_running_loop().create_task(relay.run(app[STORE], port, host))  # noqa: F841 (kept alive while serving)
+    from .app import RELAY, start_tunnel
+    app[RELAY]["listen"] = (host, port)
+    start_tunnel(app)  # reachable through a relay too, when signed in to one (anywhere, any VPN)
     stop = asyncio.Event()
     try:
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -124,7 +123,7 @@ def main():
             p.error("relay signin needs the relay's address")
         else:
             import socket
-            print(f"Signed in. This machine's address: {asyncio.run(relay.signin(store, a.url, socket.gethostname()))}")
+            print(f"Signed in. This machine's address: {asyncio.run(relay.signin(store, a.url, socket.gethostname(), show=lambda m: print(m, flush=True)))}")
             print("Restart the daemon to open the tunnel.")
     elif a.cmd == "update":
         from . import update, __version__

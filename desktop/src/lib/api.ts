@@ -276,6 +276,7 @@ export type LiveEvent =
   | { type: 'inbox_read'; id: number | null }
   | { type: 'inbox_removed'; id: number }
   | { type: 'settings' }
+  | { type: 'relay' }
   | { type: 'terminal_output'; entry: string; data: string }
   | { type: 'error'; entry?: string; code: string; message: string };
 
@@ -326,3 +327,37 @@ export class Live {
   terminalClose(entry: string) { this.sendJson({ type: 'terminal_close', entry }); }
   close() { this.closed = true; this.ws?.close(); }
 }
+
+// ---- your account on a relay: devices sign in with GitHub; your machines are reachable from anywhere ----
+// A computer with the desktop app signs in through its own daemon (it becomes a machine on the account, and the app
+// uses that credential to reach the others); a phone or a browser signs in itself, as an app.
+export const DEFAULT_RELAY = 'https://api.cyaninc.org/relay';
+export type RelayDevice = { id: string; name: string; kind: 'machine' | 'app'; approved: boolean; login: string; online?: boolean; address?: string; seen?: number | null };
+export type RelayAccount = { account: string; devices: RelayDevice[]; you: string };
+export type RelayInfo = { url: string | null; address: string | null; id: string | null; secret: string | null; signin: { user_code: string; verification_uri: string } | null; error: string | null };
+export type SignIn = { signin: string; user_code: string; verification_uri: string; interval: number };
+// through this computer's daemon
+export const relayInfo = (m: Machine) => call<RelayInfo>(m, '/v1/relay');
+export const relaySignin = (m: Machine, url: string) => call<{ user_code: string; verification_uri: string }>(m, '/v1/relay/signin', { method: 'POST', body: JSON.stringify({ url }) });
+export const relayLeave = (m: Machine) => call<{ ok: boolean }>(m, '/v1/relay', { method: 'DELETE' });
+export const relayDevices = (m: Machine) => call<RelayAccount>(m, '/v1/relay/devices');
+export const relayApprove = (m: Machine, id: string) => call<{ ok: boolean }>(m, `/v1/relay/devices/${encodeURIComponent(id)}/approve`, { method: 'POST' });
+export const relayRemove = (m: Machine, id: string) => call<{ ok: boolean }>(m, `/v1/relay/devices/${encodeURIComponent(id)}`, { method: 'DELETE' });
+// straight to the relay (a phone, a browser)
+async function relayCall<T>(relay: string, path: string, secret?: string, init: RequestInit = {}): Promise<T> {
+  const r = await fetch(relay.replace(/\/$/, '') + path, { ...init, signal: AbortSignal.timeout(20_000),
+    headers: { 'Content-Type': 'application/json', ...(secret ? { Authorization: `Bearer ${secret}` } : {}) } });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.code ?? `HTTP ${r.status}`);
+  return body as T;
+}
+export const accountSigninStart = (relay: string, name: string) => relayCall<SignIn>(relay, '/v1/signin', undefined, { method: 'POST', body: JSON.stringify({ name, kind: 'app' }) });
+export const accountSigninPoll = (relay: string, id: string) => relayCall<{ status: string; device?: RelayDevice; secret?: string; error?: string }>(relay, `/v1/signin/${id}`, undefined, { method: 'POST' });
+export const accountMe = (relay: string, secret: string) => relayCall<RelayDevice>(relay, '/v1/me', secret);
+export const accountDevices = (relay: string, secret: string) => relayCall<RelayAccount>(relay, '/v1/devices', secret);
+export const accountApprove = (relay: string, secret: string, id: string) => relayCall<{ ok: boolean }>(relay, `/v1/devices/${encodeURIComponent(id)}/approve`, secret, { method: 'POST' });
+export const accountRemove = (relay: string, secret: string, id: string) => relayCall<{ ok: boolean }>(relay, `/v1/devices/${encodeURIComponent(id)}`, secret, { method: 'DELETE' });
+/** The account's machines as Switchboard machines (the relay vouches for this device; the secret is its key). */
+export const accountMachines = (relay: string, secret: string, acc: RelayAccount): Machine[] =>
+  acc.devices.filter((d) => d.kind === 'machine' && d.approved && d.id !== acc.you && d.address)
+    .map((d) => ({ url: relay.replace(/\/$/, '') + d.address, token: secret, name: d.name }));

@@ -316,8 +316,84 @@
     catch (e) { pairFor = { machine: m, until: 0, error: (e as Error).message }; }
   }
   $effect(() => { if (!pairFor?.code) return; const t = setInterval(() => (now = Date.now()), 1000); return () => clearInterval(t); });
+  // ---- your account on a relay: sign in with GitHub, approve your devices, your machines appear by themselves ----
+  // The desktop app signs this computer in through its daemon (it becomes a machine on the account) and reaches the
+  // other machines with that credential; a phone or a browser signs itself in (an app device, approved by another).
+  const ACCT_KEY = 'switchboard.account';
+  let acct = $state<api.RelayAccount | null>(null);
+  let acctInfo = $state<api.RelayInfo | null>(null);
+  let acctLocal = $state<{ relay: string; secret: string; id: string } | null>((() => { try { return JSON.parse(localStorage.getItem(ACCT_KEY) || 'null'); } catch { return null; } })());
+  let acctSign = $state<{ user_code: string; verification_uri: string } | null>(null);
+  let acctRelay = $state(api.DEFAULT_RELAY);
+  let acctErr = $state('');
+  const viaDaemon = () => isDesktopApp() && !!localMachine;
+  const acctWaiting = $derived((acct?.devices ?? []).filter((d) => !d.approved && d.id !== acct?.you));
+  async function loadAccount() {
+    try {
+      if (viaDaemon()) {
+        acctInfo = await api.relayInfo(localMachine!);
+        acctSign = acctInfo.signin ?? acctSign;
+        acct = acctInfo.address ? await api.relayDevices(localMachine!).catch(() => null) : null;
+        if (acct && acctInfo.url && acctInfo.secret) syncAccountMachines(acctInfo.url, acctInfo.secret, acct);
+      } else if (acctLocal) {
+        acct = await api.accountDevices(acctLocal.relay, acctLocal.secret).catch((e) => { if ((e as Error).message === 'signed_out') signedOut(); return null; });
+        if (acct) syncAccountMachines(acctLocal.relay, acctLocal.secret, acct);
+      }
+    } catch (e) { acctErr = (e as Error).message; }
+  }
+  // the account's machines in the list (and gone from it once removed from the account)
+  function syncAccountMachines(relay: string, secret: string, a: api.RelayAccount) {
+    const want = api.accountMachines(relay, secret, a), base = relay.replace(/\/$/, '') + '/d/';
+    const next = [...machines.filter((m) => !m.url.startsWith(base) || want.some((w) => w.url === m.url))
+      .map((m) => ({ ...m, ...(want.find((w) => w.url === m.url) ?? {}) })), ...want.filter((w) => !machines.some((m) => m.url === w.url))];
+    if (JSON.stringify(next) !== JSON.stringify(machines)) { machines = next; api.saveMachines(machines); refresh(); syncPush(); }
+  }
+  function signedOut() {
+    const base = (acctLocal?.relay ?? acctInfo?.url ?? '').replace(/\/$/, '') + '/d/';
+    acctLocal = null; acct = null; try { localStorage.removeItem(ACCT_KEY); } catch {}
+    if (base !== '/d/') { machines = machines.filter((m) => !m.url.startsWith(base)); api.saveMachines(machines); refresh(); }
+  }
+  async function accountSignIn() {
+    acctErr = '';
+    try {
+      if (viaDaemon()) {
+        acctSign = await api.relaySignin(localMachine!, acctRelay.trim());
+        openExternal(acctSign.verification_uri);
+        while (acctSign) { await new Promise((r) => setTimeout(r, 3000)); acctInfo = await api.relayInfo(localMachine!); if (!acctInfo.signin) acctSign = null; }
+        if (acctInfo?.error) acctErr = acctInfo.error === 'not_allowed' ? "That GitHub account isn't allowed on this relay" : acctInfo.error;
+      } else {
+        const relay = acctRelay.trim(), si = await api.accountSigninStart(relay, isPhoneApp() ? 'Phone' : 'Browser');
+        acctSign = si; openExternal(si.verification_uri);
+        for (;;) {
+          await new Promise((r) => setTimeout(r, Math.max(1, si.interval) * 1000));
+          const p = await api.accountSigninPoll(relay, si.signin);
+          if (p.status === 'waiting') continue;
+          acctSign = null;
+          if (p.status !== 'signed_in') { acctErr = p.status === 'not_allowed' ? "That GitHub account isn't allowed on this relay" : p.error ?? p.status; return; }
+          acctLocal = { relay, secret: p.secret!, id: p.device!.id };
+          try { localStorage.setItem(ACCT_KEY, JSON.stringify(acctLocal)); } catch {}
+          break;
+        }
+      }
+      await loadAccount();
+    } catch (e) { acctSign = null; acctErr = (e as Error).message; }
+  }
+  async function accountApprove(id: string) {
+    try { await (viaDaemon() ? api.relayApprove(localMachine!, id) : api.accountApprove(acctLocal!.relay, acctLocal!.secret, id)); } catch (e) { acctErr = (e as Error).message; }
+    await loadAccount();
+  }
+  async function accountRemove(id: string) {
+    try { await (viaDaemon() ? api.relayRemove(localMachine!, id) : api.accountRemove(acctLocal!.relay, acctLocal!.secret, id)); } catch (e) { acctErr = (e as Error).message; }
+    await loadAccount();
+  }
+  async function accountSignOut() {
+    try { if (viaDaemon()) await api.relayLeave(localMachine!); else if (acctLocal) await api.accountRemove(acctLocal.relay, acctLocal.secret, acctLocal.id).catch(() => {}); } catch {}
+    signedOut(); acctInfo = null; await loadAccount();
+  }
+  setTimeout(loadAccount, 1200);
+  $effect(() => { const t = setInterval(loadAccount, 60_000); return () => clearInterval(t); });
   // Settings: one section at a time
-  const SET_TABS = [['appearance', 'Appearance'], ['sessions', 'Sessions'], ['machines', 'Machines'], ['notifications', 'Notifications'], ['about', 'About']] as const;
+  const SET_TABS = [['appearance', 'Appearance'], ['account', 'Account'], ['sessions', 'Sessions'], ['machines', 'Machines'], ['notifications', 'Notifications'], ['about', 'About']] as const;
   let setTab = $state<(typeof SET_TABS)[number][0]>('appearance');
   // daemon-wide settings, per machine (null: that daemon is too old to have them)
   let dset = $state<Record<string, api.DaemonSettings | null>>({});
@@ -667,6 +743,8 @@
         if (selected?.entry.id === e.entry && !selected.sub) messages = [...messages, ...q.slice(0, e.sent)];
         pendingQ[e.entry] = q.slice(e.sent);
       } else if (e.dropped) { giveBack(e.entry, q.map(msgText)); pendingQ[e.entry] = []; }
+    } else if (e.type === 'relay') {
+      loadAccount();
     } else if (e.type === 'commands') {
       if (selected) loadCommands(selected.machine);
     } else if (e.type === 'tasks') {
@@ -1445,6 +1523,7 @@
           <span class="muted">{!tree[m.url] ? 'connecting…' : tree[m.url].error ? 'offline' : 'online'}</span>
           {#if verNote(m)}{@const n = verNote(m)!}<span class="vertag" title={n.why} aria-label={n.why}>{n.tag}</span>{/if}</button>
       {/each}
+      {#if acctWaiting.length}<button class="chip hot" onclick={() => { setTab = 'account'; openSettings(); }}>{acctWaiting.length === 1 ? `${acctWaiting[0].name} wants to join` : `${acctWaiting.length} devices want to join`}</button>{/if}
       <button class="chip dashed" onclick={() => (dialog = 'connect')}>+ Connect a machine</button>
       <button class="chip icon" class:hot={unreadCount > 0} aria-label="Inbox ({unreadCount} unread)" title="Inbox" onclick={() => (showInbox = !showInbox)}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2" /><path d="M5.5 5h13L22 12v7H2v-7z" /></svg>
@@ -1966,6 +2045,35 @@
           {#each Object.entries(MONO_FONTS) as [k, f]}<option value={k}>{f.label}</option>{/each}</select></label>
       </div>
 
+      {:else if setTab === 'account'}
+        {#if acct}
+          <p>Signed in as <b>{acct.account}</b>{#if acctInfo?.address}; this computer can be reached from anywhere{/if}.</p>
+          <h3 class="sub">Your devices</h3>
+          <ul class="acclist" aria-label="Your devices">
+            {#each acct.devices as d (d.id)}
+              <li><span>{d.name}{d.id === acct.you ? ' (this one)' : ''}</span>
+                <span class="muted small">{d.kind === 'machine' ? (d.online ? 'machine, online' : 'machine, offline') : 'app'}{d.approved ? '' : ', waiting for your approval'}</span>
+                {#if !d.approved}<button type="button" class="tiny" onclick={() => accountApprove(d.id)}>Approve</button>{/if}
+                {#if d.id !== acct.you}<button type="button" class="tiny" aria-label="Remove {d.name}" onclick={() => accountRemove(d.id)}>Remove</button>{/if}</li>
+            {/each}
+          </ul>
+          <div class="actions" style="justify-content: flex-start"><button type="button" class="btn ghost" onclick={accountSignOut}>Sign out</button></div>
+        {:else if acctSign}
+          <div class="paircode" role="status">
+            <div>Open <a href={acctSign.verification_uri} target="_blank" rel="noreferrer">{acctSign.verification_uri}</a> and enter</div>
+            <div><b class="mono big">{acctSign.user_code}</b></div>
+            <div class="muted small">Waiting for GitHub…</div>
+          </div>
+        {:else if acctLocal || acctInfo?.address}
+          <p>Signed in. <b>Approve this device</b> on one of your others (Settings → Account) to reach your machines.</p>
+          <div class="actions" style="justify-content: flex-start"><button type="button" class="btn ghost" onclick={loadAccount}>Check again</button>
+            <button type="button" class="btn ghost" onclick={accountSignOut}>Sign out</button></div>
+        {:else}
+          {@render hint('Reach your machines from anywhere, through any VPN.', 'Sign in with GitHub on each device. Your first device is trusted; any later one waits until you approve it on a device you already have. Your machines then appear everywhere, and removing a device cuts it off at once.')}
+          <label>Relay<input bind:value={acctRelay} inputmode="url" autocapitalize="off" /></label>
+          <div class="actions" style="justify-content: flex-start"><button type="button" class="btn primary" onclick={accountSignIn}>Sign in with GitHub</button></div>
+        {/if}
+        {#if acctErr}<p class="error">{acctErr}</p>{/if}
       {:else if setTab === 'sessions'}
         {#if machines.length}
           {#if machines.length > 1}<div class="pills" role="group" aria-label="Machine">

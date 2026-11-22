@@ -580,6 +580,75 @@ async def pair_code(request):
     return web.json_response({"code": request.app[STORE].new_pair_code(), "expires_in": 600})
 
 
+# ---- this machine on a relay (Settings → Account in the desktop app; this machine only) ----
+RELAY = web.AppKey("relay", dict)  # {"listen": (host, port), "tunnel": task, "signin": {...}, "error": str}
+
+
+def start_tunnel(app):
+    r = app[RELAY]
+    if r.get("tunnel") and not r["tunnel"].done():
+        r["tunnel"].cancel()
+    if relaymod.address(app[STORE]) and r.get("listen"):
+        r["tunnel"] = asyncio.get_running_loop().create_task(relaymod.run(app[STORE], r["listen"][1], r["listen"][0]))
+
+
+async def get_relay(request):
+    _local_only(request)
+    st, r = request.app[STORE], request.app[RELAY]
+    return web.json_response({"url": st.setting(relaymod.URL, "") or None, "address": relaymod.address(st),
+                              "id": st.setting(relaymod.ID, "") or None, "secret": st.setting(relaymod.SECRET, "") or None,
+                              "signin": r.get("signin"), "error": r.get("error")})
+
+
+async def relay_signin(request):
+    """Sign this machine in to a relay with GitHub: returns the code to enter; finishes in the background."""
+    _local_only(request)
+    url = str((await request.json()).get("url") or "").rstrip("/")
+    if not url.startswith(("https://", "http://")):
+        raise web.HTTPBadRequest(text=json.dumps({"code": "bad_relay"}), content_type="application/json")
+    app, r = request.app, request.app[RELAY]
+    try:
+        d = await relaymod.signin_start(url, app[NAME])
+    except Exception as e:
+        raise web.HTTPBadGateway(text=json.dumps({"code": "relay_unavailable", "message": str(e)[:200]}), content_type="application/json")
+    r["signin"], r["error"] = {"user_code": d["user_code"], "verification_uri": d["verification_uri"]}, None
+
+    async def finish():
+        try:
+            await relaymod.signin_finish(app[STORE], url, d)
+            start_tunnel(app)
+        except Exception as e:
+            r["error"] = str(e)[:200]
+        finally:
+            r["signin"] = None
+            await _broadcast(app, {"type": "relay"})
+    asyncio.get_running_loop().create_task(finish())
+    return web.json_response(r["signin"])
+
+
+async def relay_leave(request):
+    _local_only(request)
+    st, r = request.app[STORE], request.app[RELAY]
+    if relaymod.address(st):
+        await relaymod.account(st, "DELETE", f"/v1/devices/{st.setting(relaymod.ID, '')}")  # off the account too
+    for k in (relaymod.URL, relaymod.ID, relaymod.SECRET):
+        st.set_setting(k, "")
+    if r.get("tunnel"):
+        r["tunnel"].cancel()
+    return web.json_response({"ok": True})
+
+
+async def relay_devices(request):
+    """This machine's account: its devices (GET), approve one (POST …/approve), remove one (DELETE)."""
+    _local_only(request)
+    if not relaymod.address(request.app[STORE]):
+        raise web.HTTPNotFound(text=json.dumps({"code": "not_on_a_relay"}), content_type="application/json")
+    did = request.match_info.get("id")
+    status, body = await relaymod.account(request.app[STORE], request.method,
+                                          f"/v1/devices/{did}/approve" if request.method == "POST" else f"/v1/devices/{did}" if did else "/v1/devices")
+    return web.json_response(body, status=status)
+
+
 async def get_logs(request):
     return web.json_response({"log": logs.tail(int(request.query.get("lines", 300)))})
 
@@ -811,6 +880,7 @@ def make_app(store: Store, name=None):
     app[STORE], app[NAME] = store, name or socket.gethostname()
     app[SOCKETS] = set()
     app[PUSH_STATE] = {}
+    app[RELAY] = {}
     app[DESK] = push.Desk(store, lambda st, n: push.send(st, n))  # late-bound: tests stand in for push.send
     app[RUNNER] = Runner(store, sdk, lambda ev: _broadcast(app, ev))
     app[RUNNER].machine = app[NAME]
@@ -840,6 +910,9 @@ def make_app(store: Store, name=None):
     app.add_routes([
         web.post("/v1/pair", pair), web.get("/v1/machine", machine), web.get("/v1/sessions", sessions),
         web.get("/v1/entries", list_entries), web.post("/v1/entries", add_entry),
+        web.get("/v1/relay", get_relay), web.post("/v1/relay/signin", relay_signin), web.delete("/v1/relay", relay_leave),
+        web.get("/v1/relay/devices", relay_devices), web.post("/v1/relay/devices/{id}/approve", relay_devices),
+        web.delete("/v1/relay/devices/{id}", relay_devices),
         web.get("/v1/entries/removed", removed_entries), web.post("/v1/entries/{id}/restore", restore_entry),
         web.patch("/v1/entries/{id}", update_entry), web.delete("/v1/entries/{id}", remove_entry),
         web.get("/v1/entries/{id}/messages", messages), web.get("/v1/entries/{id}/files", entry_files), web.get("/v1/entries/{id}/subagents/{agent}/messages", subagent_messages), web.get("/v1/ws", ws_handler), web.get("/v1/commands", commands), web.get("/v1/folders", folders), web.get("/v1/models", models), web.get("/v1/logs", get_logs),
