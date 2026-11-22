@@ -48,8 +48,21 @@ export function saveMachines(ms: Machine[]) {
   localStorage.setItem(KEY, JSON.stringify(ms));
 }
 
+// How requests and live connections reach a machine. The default is the browser's own; the desktop app swaps in Rust-side
+// ones for other machines (useTransport): its web engine kept a dead connection after a network change (a VPN switching
+// on, Wi-Fi changing) for minutes, so every request to the relay hung until the app was restarted.
+export type Socket = { readyState: number; onopen: (() => void) | null; onmessage: ((ev: { data: string }) => void) | null;
+  onclose: (() => void) | null; send(d: string): void; close(): void };
+let transport: { fetch: typeof fetch; socket: (url: string) => Socket } = {
+  fetch: (...a) => fetch(...a), socket: (url) => new WebSocket(url) as unknown as Socket,
+};
+const LOCAL = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/;
+export function useTransport(t: typeof transport) { remote = t; }
+let remote: typeof transport | null = null;
+const via = (url: string) => (remote && !LOCAL.test(url) ? remote : transport);  // this computer's daemon: the browser's is fine
+
 async function call<T>(m: Machine, path: string, init: RequestInit = {}): Promise<T> {
-  const r = await fetch(m.url.replace(/\/$/, '') + path, {
+  const r = await via(m.url).fetch(m.url.replace(/\/$/, '') + path, {
     ...init,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${m.token}`, ...(init.headers || {}) },
   });
@@ -285,24 +298,26 @@ export type LiveEvent =
 export const MODES = ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'] as const;
 
 export class Live {
-  private ws: WebSocket | null = null;
+  private ws: Socket | null = null;
   private closed = false;
   // messages sent but not yet acknowledged (daemons that ack): sent again after a reconnect, so a connection that died
   // unnoticed loses nothing (the daemon takes each ref once)
   private unacked = new Map<string, object>();
   private lastHeard = 0;
   private beat: ReturnType<typeof setInterval> | null = null;
-  constructor(private m: Machine, private onEvent: (e: LiveEvent) => void, private onStatus: (up: boolean) => void) {
+  private retry = 2000;  // grows while the machine stays away (to 30 s), back to 2 s once it answers
+  constructor(private m: Machine, private onEvent: (e: LiveEvent) => void, private onStatus: (up: boolean, why?: string) => void) {
     this.open();
   }
   private open() {
-    const ws = new WebSocket(this.m.url.replace(/^http/, 'ws').replace(/\/$/, '') + '/v1/ws');
+    const ws = via(this.m.url).socket(this.m.url.replace(/^http/, 'ws').replace(/\/$/, '') + '/v1/ws');
     this.ws = ws;
     ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token: this.m.token }));
     ws.onmessage = (ev) => {
       this.lastHeard = Date.now();
       const e = JSON.parse(ev.data) as LiveEvent;
       if (e.type === 'hello') {
+        this.retry = 2000;
         this.onStatus(true);
         for (const o of this.unacked.values()) ws.send(JSON.stringify(o));  // what may not have arrived before
         // heartbeat (daemons that answer it): a connection that died without closing (a network blip) is noticed in
@@ -320,8 +335,9 @@ export class Live {
     };
     ws.onclose = () => {
       if (this.beat) { clearInterval(this.beat); this.beat = null; }
-      this.onStatus(false);
-      if (!this.closed) setTimeout(() => this.open(), 2000); // reconnect: the daemon may restart
+      this.onStatus(false, Date.now() - this.lastHeard > 40_000 && this.lastHeard ? 'stopped answering' : 'connection closed');
+      if (!this.closed) setTimeout(() => this.open(), this.retry);  // reconnect: the daemon may restart, the network come back
+      this.retry = Math.min(this.retry * 2, 30_000);
     };
   }
   private sendJson(o: object) {
