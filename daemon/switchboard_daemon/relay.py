@@ -32,7 +32,7 @@ def address(store):
     return f"{url}/d/{mid}" if url and mid else None
 
 
-async def run(store, port):
+async def run(store, port, host="127.0.0.1"):
     """Keep the tunnel open (reconnecting with backoff) and serve what comes through it."""
     wait = 2
     while address(store):
@@ -43,7 +43,7 @@ async def run(store, port):
                                                                   heartbeat=25, max_msg_size=0) as ws:
                 log.info("relay tunnel up: %s", address(store))
                 wait = 2
-                await _serve(ws, s, port)
+                await _serve(ws, s, port, host)
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -52,8 +52,10 @@ async def run(store, port):
         wait = min(wait * 2, 60)
 
 
-async def _serve(ws, session, port):
-    local = f"http://127.0.0.1:{port}"
+async def _serve(ws, session, port, host):
+    # the daemon itself, where it listens (yagoo's listens only on its Tailscale address)
+    h = "127.0.0.1" if host in ("0.0.0.0", "", None) else ("[::1]" if host == "::" else (f"[{host}]" if ":" in host else host))
+    local = f"http://{h}:{port}"
     sockets: dict[int, asyncio.Queue] = {}  # an app's WebSocket: what it sends, in order
     tasks = set()
 

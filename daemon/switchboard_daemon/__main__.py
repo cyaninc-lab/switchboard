@@ -41,7 +41,7 @@ async def _serve(app, host, port):
     from . import relay
     from .app import STORE
     if relay.address(app[STORE]):  # reachable through a relay too (anywhere, any VPN)
-        tunnel = asyncio.get_running_loop().create_task(relay.run(app[STORE], port))  # noqa: F841 (kept alive while serving)
+        tunnel = asyncio.get_running_loop().create_task(relay.run(app[STORE], port, host))  # noqa: F841 (kept alive while serving)
     stop = asyncio.Event()
     try:
         for sig in (signal.SIGINT, signal.SIGTERM):
