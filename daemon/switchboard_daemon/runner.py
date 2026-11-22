@@ -3,7 +3,7 @@
 Events (docs/protocol.md): state, delta, message, permission_request, permission_resolved, error.
 """
 import functools, subprocess
-import asyncio, dataclasses, os, shutil, sys, time, uuid
+import asyncio, dataclasses, json, os, shutil, sys, time, uuid
 from .logs import log, scrub
 from . import patches, peers
 
@@ -14,7 +14,9 @@ IDLE_CHOICES = (0, 10, 30, 60, 240)
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 MAX_IMAGE_B64 = 7_000_000  # ~5 MB of image per attachment
 MAX_IMAGES = 10
-TOOLS = ("mcp__switchboard__sessions", "mcp__switchboard__message_session", "mcp__switchboard__call_user")  # allowed without asking
+TOOLS = ("mcp__switchboard__sessions", "mcp__switchboard__message_session", "mcp__switchboard__call_user",
+         "mcp__switchboard__watch")  # allowed without asking
+AGENT_WATCHES, AGENT_MIN_MINUTES = 10, 5  # an agent's own watches: how many, how often at most (each wake costs a turn)
 CALL_GAP = 180  # seconds between calls from one session: a guardrail against a session ringing over and over
 MODES = {"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}
 EFFORTS = {"low", "medium", "high", "xhigh", "max"}
@@ -300,6 +302,53 @@ class Runner:
             return say("Their phone is ringing. If they answer, what they say arrives as your next message, spoken: answer briefly, warmly and "
                        "conversationally (upbeat, exclamation marks where they fit), no markdown or lists, as it is read aloud. End your turn now. If they decline, carry on in the chat.")
 
+        async def watch(args):
+            """An agent's own watches: add (wakes this session, or only tells the user), list, remove."""
+            from . import watches as wm
+            op = str(args.get("action") or "list")
+            me = self.store.entry(entry_id) or {}
+            mine = [w for w in self.store.watches() if w.get("entry_id") == entry_id]
+            if op == "list":
+                if not mine:
+                    return say("You have no watches. (The user's other watches aren't listed.)")
+                return say("\n".join(f'{w["id"]}: "{w["name"]}" ({w["kind"]} {json.dumps(w["config"])}, '
+                                      f'{"wakes you" if w["action"] == "wake" else "tells the user"}'
+                                      f'{"" if w.get("enabled", True) else ", paused"})' for w in mine))
+            if op == "remove":
+                w = next((w for w in mine if w["id"] == str(args.get("id") or "")), None)
+                if not w:
+                    return say("No watch of yours with that id (see action list).", True)
+                self.store.remove_watch(w["id"])
+                return say(f'Removed "{w["name"]}".')
+            if op != "add":
+                return say("action is add, list or remove.", True)
+            if len(mine) >= AGENT_WATCHES:
+                return say(f"You already have {AGENT_WATCHES} watches; remove one first.", True)
+            cfg = args.get("config") or {}
+            if isinstance(cfg, str):
+                try:
+                    cfg = json.loads(cfg)
+                except ValueError:
+                    return say("config must be a JSON object.", True)
+            if cfg.get("every_minutes") is not None and int(cfg["every_minutes"]) < AGENT_MIN_MINUTES:
+                return say(f"every_minutes is at least {AGENT_MIN_MINUTES} for a watch you set up.", True)
+            if args.get("kind") != "schedule" and not cfg.get("every_minutes"):
+                cfg["every_minutes"] = 15
+            action = "notify" if args.get("wake") is False else "wake"
+            spec = {"name": str(args.get("name") or "").strip(), "kind": args.get("kind"), "config": cfg,
+                    "action": action, "entry_id": entry_id, "instructions": str(args.get("instructions") or "") or None}
+            if problem := wm.problem(spec, self.store, MODES):
+                return say(f"That watch isn't valid: {problem}.", True)
+            w = self.store.add_watch(spec["name"], spec["kind"], cfg, action, entry_id, spec["instructions"], None)
+            # the user sees what agents set up (and can pause or delete it in Watches)
+            item = self.store.add_inbox(me.get("name") or "A session", f'Set up a watch: {spec["name"]}',
+                                        f'{spec["kind"]} {json.dumps(cfg)}: ' + ("wakes it" if action == "wake" else "tells you"),
+                                        watch_id=w["id"], entry_id=entry_id, from_agent=True)
+            await self.broadcast({"type": "inbox", "item": item})
+            return say(f'Watch "{spec["name"]}" set up (id {w["id"]}). '
+                       + ("When it fires you're woken with the instructions you gave and what it found."
+                          if action == "wake" else "When it fires the user gets it in their inbox."))
+
         return sdk.create_sdk_mcp_server("switchboard", tools=[
             sdk.tool("sessions", "List the other Claude sessions in Switchboard, by name, with their state: this machine's, and "
                      "(as name@machine) those on the user's other machines if they linked them. Stopped ones are included: unlike "
@@ -312,6 +361,21 @@ class Runner:
                      "Only for something that really needs them now (blocked, a decision only they can make, something urgent); a normal "
                      "question can wait in the chat. Keep the message short and spoken, without markdown, and warm and upbeat: say hi, "
                      "lead with good news, use exclamation marks where they fit (they lift the voice).", {"message": str})(call),
+            sdk.tool("watch", "Your own watches: Switchboard checks something for you while you're idle and wakes you (or only "
+                     "tells the user) when it fires. action: add | list | remove. To add: name, kind and config, plus "
+                     "instructions (what to do when woken). Kinds and config: schedule {every_minutes: N} or {daily_at: \"HH:MM\"} "
+                     "(fires every time); command {command, every_minutes, fire_on: \"change\"|\"failure\"}; http {url, every_minutes} "
+                     "(up <-> down); github {repo: \"owner/name\", events: [issues, pulls, failed_runs], every_minutes}. Any config "
+                     "can add active: {from: \"HH:MM\", to: \"HH:MM\", days: [1-7]}; quiet: true makes you answer NOTHING_NEW when "
+                     "there's nothing to report (it then never reaches the user). wake: false only tells the user. At most "
+                     f"{AGENT_WATCHES} watches, checked at most every {AGENT_MIN_MINUTES} minutes: each wake costs a turn, so "
+                     "only watch what's worth it. The user sees each one you set up and can remove it.",
+                     {"type": "object", "properties": {
+                         "action": {"type": "string", "enum": ["add", "list", "remove"]},
+                         "name": {"type": "string"}, "kind": {"type": "string", "enum": ["schedule", "command", "http", "github"]},
+                         "config": {"type": "object"}, "instructions": {"type": "string"}, "wake": {"type": "boolean"},
+                         "id": {"type": "string", "description": "the watch to remove"}},
+                      "required": ["action"]})(watch),
         ])
 
     async def send(self, entry, text, images=None, origin=None):
