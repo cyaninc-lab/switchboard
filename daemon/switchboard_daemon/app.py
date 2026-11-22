@@ -115,10 +115,24 @@ async def cors(request, handler):
     return resp
 
 
+def _relay_device(request):
+    """The device asking, when the request came through this machine's relay tunnel (the relay checked it's an approved
+    device of the same account), else None. ponytail: trusts the relay; end-to-end keys replace that."""
+    if not request.headers.get(relaymod.RELAYED) or not relaymod.address(request.app[STORE]):
+        return None
+    try:
+        d = json.loads(request.headers.get(relaymod.DEVICE) or "")
+    except ValueError:
+        return None
+    return d if isinstance(d, dict) and d.get("id") else None
+
+
 @web.middleware
 async def auth(request, handler):
     if request.path in ("/v1/pair", "/v1/ws") or not request.path.startswith("/v1/"):  # /v1/ws authenticates with its first message;
         return await handler(request)  # outside /v1 is the web app's public files
+    if _relay_device(request):  # one of this machine's account's approved devices, through its relay
+        return await handler(request)
     token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
     if not token or not request.app[STORE].client_for(token):
         raise web.HTTPUnauthorized(text=json.dumps({"code": "unauthorized"}), content_type="application/json")
@@ -664,6 +678,8 @@ async def ws_handler(request):
         await ws.close(code=4001, message=b"auth")
         return ws
     client = store.client_for(first.get("token", "")) if first.get("type") == "auth" else None
+    if first.get("type") == "auth" and (dev := _relay_device(request)):
+        client = f"{dev.get('name') or 'device'} (via relay)"
     if not client:
         await ws.close(code=4001, message=b"unauthorized")
         return ws
