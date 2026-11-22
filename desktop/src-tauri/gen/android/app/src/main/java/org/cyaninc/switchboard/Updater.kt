@@ -41,7 +41,9 @@ object Updater {
         val rel = JSONObject(get(LATEST).inputStream.bufferedReader().readText())
         val tag = rel.getString("tag_name").removePrefix("v")
         val mine = ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: return
-        if (!newer(tag, mine)) return
+        if (!newer(tag, mine)) {  // up to date: a "ready" left over from before an update is gone too
+            ctx.getSystemService(NotificationManager::class.java).cancel(NOTE_ID); return
+        }
         val apk = File(ctx.cacheDir, "Switchboard-$tag.apk")
         if (!apk.exists()) {
             val assets = rel.getJSONArray("assets")
@@ -66,6 +68,12 @@ object Updater {
     private fun signers(info: android.content.pm.PackageInfo?) =
         info?.signingInfo?.apkContentsSigners?.map { it.toByteArray().contentHashCode() }?.toSet().orEmpty()
 
+    /** Only ever an upgrade: a stale or repeated request mustn't reinstall (or downgrade) the app. */
+    private fun isNewer(ctx: Context, apk: File): Boolean {
+        val theirs = ctx.packageManager.getPackageArchiveInfo(apk.path, 0)?.longVersionCode ?: return false
+        return theirs > ctx.packageManager.getPackageInfo(ctx.packageName, 0).longVersionCode
+    }
+
     fun sameSigner(ctx: Context, apk: File): Boolean {
         val pm = ctx.packageManager
         val theirs = pm.getPackageArchiveInfo(apk.path, PackageManager.GET_SIGNING_CERTIFICATES)
@@ -75,7 +83,7 @@ object Updater {
 
     /** From the foreground (MainActivity): hand the APK to Android's installer. */
     fun install(act: Activity, apk: File) {
-        if (!apk.exists() || !sameSigner(act, apk)) return
+        if (!apk.exists() || !sameSigner(act, apk) || !isNewer(act, apk)) return
         if (!act.packageManager.canRequestPackageInstalls()) {  // once: allow Switchboard to install updates
             act.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${act.packageName}")))
             return
