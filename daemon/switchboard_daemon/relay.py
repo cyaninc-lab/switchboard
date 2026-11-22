@@ -15,16 +15,20 @@ DEVICE = "X-Switchboard-Device"  # which of the account's approved devices is as
 SKIP = {"host", "content-length", "transfer-encoding", "connection", RELAYED.lower(), DEVICE.lower()}
 
 
-async def signin(store, url, name, show=print):
-    """Sign this machine in to a relay with GitHub (the person enters a code at github.com/login/device). Returns its
-    address there, or raises. The machine belongs to that GitHub account: its approved devices reach it."""
+async def signin_start(url, name, kind="machine"):
+    """Begin a GitHub sign-in at a relay: {signin, user_code, verification_uri, interval}."""
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as s:
+        async with s.post(f"{url.rstrip('/')}/v1/signin", json={"name": name, "kind": kind}) as r:
+            d = await r.json(content_type=None)
+    if "signin" not in d:
+        raise RuntimeError(d.get("message") or d.get("code") or f"HTTP {r.status}")
+    return d
+
+
+async def signin_finish(store, url, d):
+    """Wait for the person to approve on GitHub, then keep this machine's relay credential. Returns its device."""
     url = url.rstrip("/")
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as s:
-        async with s.post(f"{url}/v1/signin", json={"name": name, "kind": "machine"}) as r:
-            d = await r.json(content_type=None)
-        if "signin" not in d:
-            raise RuntimeError(d.get("message") or d.get("code") or f"HTTP {r.status}")
-        show(f"Open {d['verification_uri']} and enter {d['user_code']}")
         while True:
             await asyncio.sleep(d.get("interval", 5))
             async with s.post(f"{url}/v1/signin/{d['signin']}") as r:
@@ -34,11 +38,26 @@ async def signin(store, url, name, show=print):
             if p.get("status") != "signed_in":
                 raise RuntimeError(p.get("error") or p.get("status"))
             break
-    dev = p["device"]
-    store.set_setting(URL, url); store.set_setting(ID, dev["id"]); store.set_setting(SECRET, p["secret"])
+    store.set_setting(URL, url); store.set_setting(ID, p["device"]["id"]); store.set_setting(SECRET, p["secret"])
+    return p["device"]
+
+
+async def signin(store, url, name, show=print):
+    """Sign this machine in to a relay with GitHub (the person enters a code at github.com/login/device). Returns its
+    address there, or raises. The machine belongs to that GitHub account: its approved devices reach it."""
+    d = await signin_start(url, name)
+    show(f"Open {d['verification_uri']} and enter {d['user_code']}")
+    dev = await signin_finish(store, url, d)
     if not dev["approved"]:
         show("Approve this machine on one of your other devices (Settings → Account) before it can be reached.")
     return address(store)
+
+
+async def account(store, method="GET", path="/v1/devices"):
+    """This machine's account at its relay (its devices; approving, removing), with the machine's own credential."""
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as s:
+        async with s.request(method, store.setting(URL, "") + path, headers={"Authorization": f"Bearer {store.setting(SECRET, '')}"}) as r:
+            return r.status, await r.json(content_type=None)
 
 
 def address(store):
