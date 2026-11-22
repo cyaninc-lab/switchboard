@@ -22,7 +22,8 @@ object Push {
     // written by the web UI (lib.rs push_config)
     fun config(ctx: Context): JSONObject? = File(ctx.dataDir, "push.json").takeIf { it.exists() }?.let { JSONObject(it.readText()) }
     fun start(ctx: Context) {
-        if (config(ctx)?.optString("server").isNullOrEmpty()) return
+        val c = config(ctx)
+        if (c?.optString("server").isNullOrEmpty() && c?.optString("relay").isNullOrEmpty()) return
         ctx.startForegroundService(Intent(ctx, PushService::class.java))
     }
     fun channels(ctx: Context) {
@@ -53,6 +54,8 @@ object Push {
 class PushService : Service() {
     @Volatile private var running = true
     private var worker: Thread? = null
+    @Volatile private var current: HttpURLConnection? = null  // the open stream: dropped on a network change to reconnect at once
+    private var watching = false
     private var updater: Thread? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -68,6 +71,12 @@ class PushService : Service() {
         // no interrupt() to pick up a new config: a pending interrupt made the next notice's foreground check throw, and
         // that notice was dropped. listen() re-reads push.json on every line instead (ntfy sends a keepalive every 45s).
         if (worker?.isAlive != true) worker = thread(name = "push") { listen() }
+        if (!watching) {  // Wi-Fi <-> mobile and the like: reconnect now, not after the stream's 5-minute timeout
+            watching = true
+            getSystemService(android.net.ConnectivityManager::class.java).registerDefaultNetworkCallback(object : android.net.ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: android.net.Network) { current?.disconnect() }
+            })
+        }
         if (updater?.isAlive != true) updater = thread(name = "update") {  // a newer app release: download it, say it's ready
             while (running) {
                 try { Updater.check(this) } catch (e: Exception) { android.util.Log.w("Updater", "check failed", e) }
@@ -85,20 +94,26 @@ class PushService : Service() {
         while (running) {
             val cfg = Push.config(this)
             val server = cfg?.optString("server").orEmpty(); val topic = cfg?.optString("topic").orEmpty()
-            if (server.isEmpty() || topic.isEmpty()) { stopSelf(); return }
+            // signed in to an account: the relay's stream (one per account, the phone's own sign-in); else an ntfy topic
+            val relay = cfg?.optString("relay").orEmpty(); val secret = cfg?.optString("secret").orEmpty()
+            if (relay.isEmpty() && (server.isEmpty() || topic.isEmpty())) { stopSelf(); return }
+            val lastKey = if (relay.isNotEmpty()) "last_relay" else "last"
             try {
-                val since = prefs.getString("last", null) ?: "all"
-                val c = URL("${server.trimEnd('/')}/$topic/json?since=$since").openConnection() as HttpURLConnection
-                c.connectTimeout = 15000; c.readTimeout = 90000  // ntfy sends a keepalive every 45s
+                val since = prefs.getString(lastKey, null) ?: (if (relay.isNotEmpty()) "" else "all")  // a new sign-in: no replay
+                val c = URL(if (relay.isNotEmpty()) "${relay.trimEnd('/')}/v1/push/json?since=$since" else "${server.trimEnd('/')}/$topic/json?since=$since").openConnection() as HttpURLConnection
+                if (relay.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $secret")
+                // the relay checks in every 4 min (fewer wake-ups), ntfy every 45 s; a silent stream past this is dead
+                c.connectTimeout = 15000; c.readTimeout = if (relay.isNotEmpty()) 300000 else 90000
+                current = c
                 c.inputStream.bufferedReader().useLines { lines ->
                     wait = 2000L
                     for (line in lines) {
                         if (!running) break
                         val now = Push.config(this@PushService)
-                        if (now?.optString("server") != server || now.optString("topic") != topic) break  // moved: reconnect
+                        if (now?.optString("server") != server || now.optString("topic") != topic || now.optString("relay") != relay) break  // moved: reconnect
                         val ev = JSONObject(line)
                         if (ev.optString("event") != "message") continue
-                        prefs.edit().putString("last", ev.getString("id")).apply()
+                        prefs.edit().putString(lastKey, ev.getString("id")).apply()
                         try { show(JSONObject(ev.getString("message")), now) } catch (e: Exception) { android.util.Log.w("PushService", "notice not shown", e) }
                     }
                 }

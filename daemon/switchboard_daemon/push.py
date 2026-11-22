@@ -64,7 +64,18 @@ def notice(store, ev, last_state):
 
 
 async def send(store, note):
-    """POST the notice to every subscribed phone topic; never raises (a phone being away mustn't break the daemon)."""
+    """POST the notice to every subscribed phone topic, and to the account's phones through the relay when this machine
+    is signed in to one; never raises (a phone being away mustn't break the daemon)."""
+    from . import relay
+    if relay.address(store):
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as s:
+                async with s.post(store.setting(relay.URL, "") + "/v1/push", json={**note, "machine": relay.address(store)},
+                                  headers={"Authorization": f"Bearer {store.setting(relay.SECRET, '')}"}) as r:
+                    if r.status >= 300:
+                        log.warning("push through the relay failed: HTTP %s", r.status)
+        except Exception as e:
+            log.warning("push through the relay failed: %s", type(e).__name__)
     subs = subscribers(store)
     if not subs:
         return

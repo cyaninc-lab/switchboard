@@ -196,7 +196,8 @@ export async function setOnTop(on: boolean) {
 }
 
 // ---- phone notifications (the phone app): PushService.kt listens on ntfy with what push_config hands it ----
-export type PhonePush = { server: string; topic: string; machines: Machine[]; finished: boolean };
+// signed in to an account: relay + secret (notifications through the relay); else an ntfy server + topic
+export type PhonePush = { server: string; topic: string; relay?: string; secret?: string; machines: Machine[]; finished: boolean };
 export async function setPhonePush(cfg: PhonePush) {
   const { invoke } = await import('@tauri-apps/api/core');
   const n = await import('@tauri-apps/plugin-notification');
