@@ -55,7 +55,7 @@ test('tree icons: ring when live, spinner when working, sun when waiting, dot wh
   await expect(st(b)).toHaveClass(/ready/, { timeout: 5000 });
 
   // B replies while A is open -> dot on B; opening B clears it
-  await page.getByRole('contentinfo').getByLabel('Permission mode').selectOption('auto');
+  await page.getByRole('button', { name: 'Model, effort, mode and account' }).click(); await page.getByRole('dialog', { name: 'Session settings' }).getByLabel('Permission mode').selectOption('auto'); await page.getByRole('dialog', { name: 'Session settings' }).getByRole('button', { name: 'Close' }).click();
   await input.fill('start a background job');
   await input.press('Enter');
   await expect(st(b)).toHaveClass(/ready/);

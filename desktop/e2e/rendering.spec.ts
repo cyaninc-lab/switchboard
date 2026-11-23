@@ -54,7 +54,7 @@ test('diffs, to-dos, expandable output and the context/cost meter', async ({ pag
   await page.screenshot({ path: 'e2e/.results/subagent.png' });
 
   // effort: the model offers levels; the next message runs at the chosen one
-  await page.getByRole('contentinfo').getByLabel('Effort').selectOption('low');
+  await page.getByRole('button', { name: 'Model, effort, mode and account' }).click(); await page.getByRole('dialog', { name: 'Session settings' }).getByLabel('Effort').selectOption('low'); await page.getByRole('dialog', { name: 'Session settings' }).getByRole('button', { name: 'Close' }).click();
   await input.fill('what effort');
   await input.press('Enter');
   await expect(log).toContainText('(effort: low)');

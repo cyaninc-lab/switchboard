@@ -23,11 +23,11 @@ test('defaults for new sessions in Settings; the footer says what "default" is',
     await dialog.getByRole('button', { name: 'Create session' }).click();
     await expect(tree.getByRole('button', { name: new RegExp(name) })).toBeVisible();
   };
-  const model = page.getByRole('combobox', { name: 'Model' }), mode = page.getByRole('combobox', { name: 'Permission mode' });
+  const chip = page.getByRole('button', { name: 'Model, effort, mode and account' });  // the status bar: model · effort · mode · account
 
   await addNew('Before defaults');
   // "default" says which model it is
-  await expect(model.locator('option[value="default"]')).toHaveText('Default · Opus 5.5');
+  await expect(chip).toContainText('Opus 5.5 · default · machine login');
 
   await page.getByRole('button', { name: 'Settings' }).click();
   await page.getByRole('dialog', { name: 'Settings' }).getByRole('tab', { name: 'Sessions' }).click();
@@ -41,11 +41,9 @@ test('defaults for new sessions in Settings; the footer says what "default" is',
   await page.mouse.click(5, 5);
 
   await addNew('After defaults');
-  await expect(mode).toHaveValue('plan');
-  await expect(model).toHaveValue('haiku');
+  await expect(chip).toContainText('Haiku 5.5 · plan');
   await tree.getByRole('button', { name: /Before defaults/ }).click();
-  await expect(mode).toHaveValue('default');  // added before: unchanged
-  await expect(model).toHaveValue('default');
+  await expect(chip).toContainText('Opus 5.5 · default');  // added before: unchanged
 
   // put the shared demo daemon back
   await page.getByRole('button', { name: 'Settings' }).click();
@@ -86,5 +84,5 @@ test('right-click a project: a new session in it, and its own defaults', async (
   await expect(dialog.locator('.startswith')).toContainText('haiku');
   await dialog.getByLabel('Name in the tree').fill('Second in project');
   await dialog.getByRole('button', { name: 'Create session' }).click();
-  await expect(page.getByRole('contentinfo').getByLabel('Model')).toHaveValue('haiku');
+  await page.getByRole('button', { name: 'Model, effort, mode and account' }).click(); await expect(page.getByRole('dialog', { name: 'Session settings' }).getByLabel('Model')).toHaveValue('haiku'); await page.getByRole('dialog', { name: 'Session settings' }).getByRole('button', { name: 'Close' }).click();
 });

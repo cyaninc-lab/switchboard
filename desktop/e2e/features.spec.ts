@@ -50,7 +50,7 @@ test('images and slash commands', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 820 });
 
   // model: the picker lists the machine's models; the choice applies to the session
-  await page.getByRole('contentinfo').getByLabel('Model').selectOption('sonnet');
+  await page.getByRole('button', { name: 'Model, effort, mode and account' }).click(); await page.getByRole('dialog', { name: 'Session settings' }).getByLabel('Model').selectOption('sonnet'); await page.getByRole('dialog', { name: 'Session settings' }).getByRole('button', { name: 'Close' }).click();
   await input.fill('which model');
   await input.press('Enter');
   await expect(log).toContainText('Done: which model [sonnet]');
