@@ -864,11 +864,13 @@
     if (!selected) return;
     try { fn(live()!, selected.entry.id); liveErr = ''; } catch (e) { liveErr = (e as Error).message; }
   }
+  let viewImg = $state<string | null>(null);  // a picture in the chat, full size over everything (click or Esc closes)
   function onKey(ev: KeyboardEvent) {
     if (ev.ctrlKey && !dialog && (ev.key === 'Tab' || ev.key === 'PageDown' || ev.key === 'PageUp')) {
       ev.preventDefault(); return cycleTab(ev.key === 'PageUp' || (ev.key === 'Tab' && ev.shiftKey) ? -1 : 1);
     }
     if (ev.ctrlKey && !dialog && ev.key.toLowerCase() === 'w' && (curKey || solo)) { ev.preventDefault(); return solo ? closeThisWindow() : closeTab(curKey!); }
+    if (ev.key === 'Escape' && viewImg) { viewImg = null; return; }
     if (ev.key === 'Escape' && selected?.entry.state === 'working' && !dialog) act((l, id) => l.interrupt(id));
   }
   const summary = (input: any) => input?.command ?? input?.file_path ?? input?.pattern ?? input?.url ?? JSON.stringify(input).slice(0, 200);
@@ -1554,6 +1556,7 @@
 
 <!-- notices float at the bottom, so they show even with no session open (e.g. after deleting one) -->
 {#if toast}<div class="toast small" role="status">{toast}</div>{/if}
+{#if viewImg}<button type="button" class="imgview" aria-label="Close the picture" onclick={() => (viewImg = null)}><img src={viewImg} alt="Full size" /></button>{/if}
 <div class="app" class:phone class:inchat={phone && !!selected}
   class:inbtw={phone && !!selected && !selected.sub && !!btwChats[selected.entry.id] && !btwAside[selected.entry.id]} class:ininbox={phone && !selected && phoneTab === 'inbox'}>
   {#if update && !solo}
@@ -1754,8 +1757,8 @@
           {#snippet lines(msg: HistoryMessage)}
             {#each api.render(msg) as line, li}
               {#if line.kind === 'image'}
-                {#if line.read}<button type="button" class="readimg" title="Click for full size" onclick={(ev) => ev.currentTarget.classList.toggle('big')}><img src={line.text} alt="What Claude read" /></button>
-                {:else}<img class="shot" src={line.text} alt="Attachment" />{/if}
+                {#if line.read}<button type="button" class="readimg" title="Click for full size" onclick={() => (viewImg = line.text)}><img src={line.text} alt="What Claude read" /></button>
+                {:else}<button type="button" class="shotbtn" title="Click for full size" onclick={() => (viewImg = line.text)}><img class="shot" src={line.text} alt="Attachment" /></button>{/if}
               {:else if line.kind === 'mail'}
                 <div class="mail" class:out={line.dir === 'out'} role="note" aria-label="{line.dir === 'out' ? 'To' : 'From'} {line.who}">
                   <div class="mailhead">✉ <b>{line.dir === 'out' ? 'To' : 'From'} {line.who}</b></div>
@@ -2645,8 +2648,9 @@
   .pendingq .you .unqueue:hover { opacity: 1; }
   .readimg { align-self: flex-start; padding: 0; margin: 2px 0 6px 18px; border: 1px solid var(--s1); border-radius: 8px; background: none; cursor: zoom-in; line-height: 0; max-width: calc(100% - 18px); }
   .readimg img { max-height: 160px; max-width: 240px; object-fit: contain; border-radius: 8px; }
-  .readimg:global(.big) { cursor: zoom-out; }  /* toggled on click */
-  .readimg:global(.big) img { max-height: none; max-width: 100%; }
+  .shotbtn { all: unset; cursor: zoom-in; display: contents; }
+  .imgview { all: unset; position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.82); cursor: zoom-out; }
+  .imgview img { max-width: 94vw; max-height: 94vh; object-fit: contain; border-radius: 6px; }
   .shot { align-self: flex-start; width: auto; height: auto; max-width: min(320px, 100%); max-height: 200px; object-fit: contain; border-radius: 8px; border: 1px solid var(--s1); display: block; margin: 4px 0 4px 18px; }
   .cmdmenu { margin: 0 18px; background: var(--mantle); border: 1px solid var(--s1); border-radius: 10px; padding: 4px; display: flex; flex-direction: column; }
   .cmdmenu button { display: grid; grid-template-columns: minmax(140px, auto) 1fr; gap: 12px; text-align: left; background: none; border: 0; color: var(--text); padding: 6px 10px; border-radius: 6px; }
