@@ -443,6 +443,7 @@ async def get_settings(request):
     st = request.app[STORE]
     return web.json_response({"idle_close_minutes": int(st.setting(IDLE_SETTING, "0") or 0),
                               "project_order": json.loads(st.setting(PROJECT_ORDER, "[]")),
+                              "plans": request.app[RUNNER].plans,  # the plan's limits per account, as last seen
                               "new_session": _defaults(st), "project_defaults": json.loads(st.setting(PROJECT_DEFAULTS, "{}") or "{}"),
                               "claude_default_mode": _claude_default_mode()})
 

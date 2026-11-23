@@ -292,6 +292,16 @@ class ClaudeSDKClient:
     async def interrupt(self):
         self.interrupted = True
 
+    @property
+    def _query(self):  # the control requests the daemon sends to the CLI directly
+        return self
+
+    async def _send_control_request(self, req):
+        if req.get("subtype") == "get_usage":  # the plan's limits, as /usage reports them
+            return {"rate_limits": {"five_hour": {"utilization": 34, "resets_at": "2026-01-01T15:00:00+00:00"},
+                                    "seven_day": {"utilization": 12, "resets_at": "2026-01-05T08:00:00+00:00"}}}
+        return {}
+
     async def set_permission_mode(self, mode):
         self.options.permission_mode = mode
 
