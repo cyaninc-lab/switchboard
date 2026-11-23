@@ -44,3 +44,28 @@ test("the footer shows the plan's use after a reply", async ({ page }) => {
   await box.press('Enter');
   await expect(page.getByRole('contentinfo')).toContainText('5h 34% · week 12%');
 });
+
+test("a command's arguments: its hint shows, Tab picks a choice", async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '+ Connect a machine' }).click();
+  await page.getByLabel('Daemon address').fill(`http://127.0.0.1:${DAEMON_PORT}`);
+  await page.getByLabel('One-time code').fill(execFileSync(daemon, ['--data', DATA, 'pair']).toString().trim());
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await page.getByRole('button', { name: '+ Add' }).click();
+  const dialog = page.getByRole('form', { name: 'Add to Switchboard' });
+  await dialog.getByRole('tab', { name: 'New session' }).click();
+  await dialog.getByLabel(/Folder on/).fill('/tmp');
+  await dialog.getByLabel('Name in the tree').fill('Args');
+  await dialog.getByRole('button', { name: 'Create session' }).click();
+  const box = page.getByLabel('Message this session');
+  await box.fill('/code-rev');
+  await box.press('Tab');
+  await expect(box).toHaveValue('/code-review ');
+  const args = page.getByRole('listbox', { name: 'Arguments for /code-review' });
+  await expect(args).toContainText('/code-review [low|medium|high|max] [--fix]');
+  await box.press('ArrowDown');
+  await box.press('Tab');
+  await expect(box).toHaveValue('/code-review medium ');
+  await box.pressSequentially('h');  // the next argument has no choices: just the hint
+  await expect(args.getByRole('option')).toHaveCount(0);
+});

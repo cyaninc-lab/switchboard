@@ -311,7 +311,8 @@ class ClaudeSDKClient:
     async def get_server_info(self):
         return {"models": [{"value": "default", "displayName": "Default (recommended)", "description": "Opus 5.5", "supportsEffort": True, "supportedEffortLevels": ["low", "medium", "high", "max"]},
                            {"value": "sonnet", "displayName": "Sonnet 5.5", "description": "Most efficient for simpler tasks"},
-                           {"value": "haiku", "displayName": "Haiku 5.5", "description": "Fastest"}]}
+                           {"value": "haiku", "displayName": "Haiku 5.5", "description": "Fastest"}],
+                "commands": [{"name": "code-review", "description": "Review the current diff", "argumentHint": "[low|medium|high|max] [--fix]"}]}
 
     async def receive_response(self):
         text = self.prompt

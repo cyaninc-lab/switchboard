@@ -172,6 +172,7 @@ class Runner:
         self.cli_path = os.environ.get("SWITCHBOARD_CLAUDE") or shutil.which("claude")
         self.commands: list[str] = []  # slash commands from the last session start (init message)
         self._models = None
+        self.command_info: dict[str, dict] = {}  # slash command -> {description, argumentHint}, from Claude Code (with the models)
         self.on_turn_end = None  # async (entry_id, reply_text, origin) for turns a watch started
         self.usage: dict[str, dict] = {}  # entry id -> last usage event (survives the session closing)
         self.plans: dict[str, dict] = {}  # account ("" = machine login) -> {five_hour, seven_day: {used %, resets_at}}
@@ -730,6 +731,7 @@ class Runner:
             try:
                 info = await client.get_server_info() or {}
                 self._models = info.get("models") or []
+                self.command_info = {c["name"]: c for c in info.get("commands") or [] if isinstance(c, dict) and c.get("name")}
             finally:
                 await client.disconnect()
         return self._models
