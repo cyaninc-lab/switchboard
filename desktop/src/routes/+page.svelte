@@ -900,7 +900,13 @@
   // ---- /btw: a side question in a panel on the right; the session's history never sees it (daemon: a fork) ----
   let btwChats = $state<Record<string, { items: { who: 'you' | 'claude'; text: string }[]; streaming: string; busy: boolean }>>({});
   let btwDraft = $state('');
-  let btwAside = $state<Record<string, boolean>>({});  // phone: the side chat stepped aside (‹), back via the header
+  let btwAside = $state<Record<string, boolean>>({});
+  // letters between this session and other agents (message_session, or Claude Code's SendMessage): a chat on the right,
+  // one thread per agent; the letters also stay in the chat where they happened
+  const mails = $derived(selected && !selected.sub ? mainMsgs.flatMap((m) => api.render(m)).filter((l): l is Extract<api.Line, { kind: 'mail' }> => l.kind === 'mail') : []);
+  const mailPeers = $derived([...new Set(mails.map((l) => l.who))]);
+  let mailPeer = $state<Record<string, string>>({});  // per session: whose thread is showing
+  let mailHidden = $state<Record<string, boolean>>({});  // phone: the side chat stepped aside (‹), back via the header
   function askBtw(text: string) {
     const s = selected;
     if (!s) return;
@@ -1810,6 +1816,7 @@
             <span class="phonename">{selected.entry.name}</span>
             {#if btwChats[selected.entry.id]}<button class="tiny hstop" onclick={() => (btwAside[selected!.entry.id] = false)} title="Back to the side chat">/btw</button>{/if}{/if}
           <span class="cwd">{selected.machine.name}:{selected.entry.session?.cwd ?? '?'}</span>
+          {#if !phone && mails.length && mailHidden[selected.entry.id]}<button class="tiny" onclick={() => (mailHidden[selected!.entry.id] = false)} title="Show the letters between this session and other agents">✉ Agents</button>{/if}
           {#if selected.entry.session?.git_branch}<span class="branch">⎇ {selected.entry.session.git_branch}</span>{/if}
           <span class="grow"></span>
           <button class="tiny" class:on={termFor === selected.entry.id} onclick={() => { termFor = termFor === selected!.entry.id ? null : selected!.entry.id; if (!termFor) open(selected!.machine, selected!.entry); }}
@@ -2020,6 +2027,24 @@
           <label class="grow"><span class="sr">Side question</span>
             <input bind:value={btwDraft} placeholder={c.items.length ? 'Ask a follow-up…' : 'Ask a side question…'} {@attach focusOnMount} /></label>
         </form>
+      </aside>
+    {:else if selected && !selected.sub && !phone && mails.length && !mailHidden[selected.entry.id]}
+      {@const eid = selected.entry.id}
+      {@const peer = mailPeers.includes(mailPeer[eid]) ? mailPeer[eid] : mailPeers[mailPeers.length - 1]}
+      <aside class="btw agentchat" aria-label="Between agents">
+        <div class="btwhead"><b>✉ Between agents</b><span class="grow"></span>
+          <button class="tiny" aria-label="Hide the agents' chat" title="Hide it (the letters stay in the chat)" onclick={() => (mailHidden[eid] = true)}>×</button></div>
+        {#if mailPeers.length > 1}
+          <div class="pills peers" role="tablist" aria-label="Agents">
+            {#each mailPeers as w (w)}<button type="button" role="tab" class="pill" class:on={w === peer} aria-selected={w === peer} onclick={() => (mailPeer[eid] = w)}>{w}</button>{/each}
+          </div>
+        {/if}
+        <p class="muted small btwnote">{selected.entry.name} and <b>{peer}</b></p>
+        <div class="btwlog" role="log" aria-label="Letters with {peer}">
+          {#each mails.filter((l) => l.who === peer) as l, i (i)}
+            <div class="letter" class:out={l.dir === 'out'}><span class="muted small">{l.dir === 'out' ? selected.entry.name : peer}</span><div class="md">{@html md(l.text)}</div></div>
+          {/each}
+        </div>
       </aside>
     {:else if (phone ? phoneTab === 'inbox' && !selected : showInbox) && machines.length && !solo}
       <InboxView items={inboxItems} onOpen={openFromInbox} onRead={readItem} onDelete={deleteItem} onReadAll={readAll} onClose={() => (showInbox = false)} />
@@ -2779,8 +2804,11 @@
   .pendingq .you .unqueue { margin-left: auto; padding: 0 6px; background: none; border: 0; color: inherit; cursor: pointer; opacity: 0.6; }
   .pendingq .you .unqueue:hover { opacity: 1; }
   .tiny.busy { animation: blink 1s infinite; }  /* a file on its way to the session's machine */
+  .agentchat .peers { padding: 6px 12px 0; flex-wrap: wrap; }
+  .letter { align-self: flex-start; max-width: 88%; border: 1px solid var(--s1); border-left: 3px solid var(--sky); border-radius: 8px; padding: 6px 10px; background: rgba(137, 220, 235, 0.06); }
+  .letter.out { align-self: flex-end; border-left-color: var(--teal); background: rgba(148, 226, 213, 0.05); }
   .argshint { padding: 4px 10px; white-space: pre-wrap; }
-  .plan.high { color: var(--peach); }
+  .plan { white-space: nowrap; } .plan.high { color: var(--peach); }
   .startswith { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin: 2px 0 4px; }
   .readimg { align-self: flex-start; padding: 0; margin: 2px 0 6px 18px; border: 1px solid var(--s1); border-radius: 8px; background: none; cursor: zoom-in; line-height: 0; max-width: calc(100% - 18px); }
   .readimg img { max-height: 160px; max-width: 240px; object-fit: contain; border-radius: 8px; }
