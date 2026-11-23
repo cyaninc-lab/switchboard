@@ -88,7 +88,7 @@
   let machines = $state<Machine[]>(api.loadMachines());
   let tree = $state<Record<string, { entries: Entry[]; error?: string }>>({});
   let selected = $state<{ machine: Machine; entry: Entry; sub?: api.Sub } | null>(null);
-  let sessOpts = $state(false);  // the phone's sheet with the model / effort / mode / account pickers (the status bar has them on a desktop)
+  let sessOpts = $state(false);  // the model / effort / mode / account pickers (the phone: ⋯ menu; the desktop: the status bar's chip)
   // Background tasks list (from the slim bar or ⋯): which session it shows, kept current from the tree
   let tasksFor = $state<{ machine: Machine; entry: Entry } | null>(null);
   const tasksEntry = $derived(tasksFor ? tree[tasksFor.machine.url]?.entries.find((x) => x.id === tasksFor!.entry.id) ?? tasksFor.entry : null);
@@ -1576,7 +1576,6 @@
     const s = (Date.now() - ms) / 1000;
     return s < 3600 ? `${Math.max(1, Math.round(s / 60))}m` : s < 86400 ? `${Math.round(s / 3600)}h` : `${Math.round(s / 86400)}d`;
   };
-  let counts = $derived(Object.values(tree).flatMap((t) => t.entries).reduce((a, e) => ({ ...a, [e.state]: (a[e.state] ?? 0) + 1 }), {} as Record<string, number>));
 </script>
 
 <svelte:window onkeydown={(ev) => { if (ctx && ev.key === 'Escape') ctx = null; else onKey(ev); }} onclick={() => (ctx = null)} onblur={() => (ctx = null)} />
@@ -2059,8 +2058,14 @@
     </nav>
   {/if}
   <footer class="status mono" hidden={!!solo?.embed || phone}>
-    <span>{machines.length} machine{machines.length === 1 ? '' : 's'}</span>
-    {@render pickers()}
+    {#if selected && !selected.sub}
+      <!-- the open session's model · effort · mode · account in one chip; it opens the pickers -->
+      {@const mdl = (modelList[selected.machine.url] ?? []).find((m) => m.value === (selected!.entry.model ?? 'default'))}
+      <button type="button" class="sesschip" aria-label="Model, effort, mode and account" title="Model, effort, permission mode and account for this session"
+        onclick={() => { loadModels(selected!.machine); loadAccounts(selected!.machine); sessOpts = true; }}>
+        {[selected.entry.model ? (mdl?.displayName ?? selected.entry.model) : (mdl?.description ?? 'default model'), selected.entry.effort, selected.entry.mode ?? 'default', selected.entry.account || 'machine login'].filter(Boolean).join(' · ')} ▾
+      </button>
+    {/if}
     <span class="grow"></span>
     {#if selected}{@const pl = dset[selected.machine.url]?.plans?.[selected.entry.account ?? '']}
       {#if pl && (pl.five_hour || pl.seven_day)}
@@ -2077,7 +2082,6 @@
         ctx {u.context_window ? `${Math.round((u.context_used / u.context_window) * 100)}%` : `${Math.round(u.context_used / 1000)}k`} · ≈${u.session_cost.toFixed(2)}
       </span>
     {/if}
-    <span>{counts.working ?? 0} working · {counts.waiting ?? 0} waiting · {counts.ready ?? 0} live · {counts.stopped ?? 0} stopped · {counts.terminal ?? 0} in terminal</span>
   </footer>
 </div>
 
@@ -2103,7 +2107,7 @@
 
 {#if sessOpts && selected}
   <div class="backdrop" role="presentation" {...backdrop(() => (sessOpts = false))}>
-    <div class="dialog sheet sessopts" role="dialog" aria-label="Session settings">
+    <div class="dialog sessopts" class:sheet={phone} role="dialog" aria-label="Session settings">
       <div class="sheethead"><h2>Session settings</h2><span class="grow"></span><button type="button" class="tiny" aria-label="Close" onclick={() => (sessOpts = false)}>×</button></div>
       <p class="muted small">{selected.entry.name}: changes apply from your next message.</p>
       <div class="sessgrid">{@render pickers()}</div>
@@ -2808,6 +2812,8 @@
   .letter { align-self: flex-start; max-width: 88%; border: 1px solid var(--s1); border-left: 3px solid var(--sky); border-radius: 8px; padding: 6px 10px; background: rgba(137, 220, 235, 0.06); }
   .letter.out { align-self: flex-end; border-left-color: var(--teal); background: rgba(148, 226, 213, 0.05); }
   .argshint { padding: 4px 10px; white-space: pre-wrap; }
+  .sesschip { background: none; border: 1px solid var(--s1); border-radius: 6px; color: inherit; padding: 1px 8px; font: inherit; }
+  .sesschip:hover { border-color: var(--mauve); }
   .plan { white-space: nowrap; } .plan.high { color: var(--peach); }
   .startswith { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin: 2px 0 4px; }
   .readimg { align-self: flex-start; padding: 0; margin: 2px 0 6px 18px; border: 1px solid var(--s1); border-radius: 8px; background: none; cursor: zoom-in; line-height: 0; max-width: calc(100% - 18px); }
