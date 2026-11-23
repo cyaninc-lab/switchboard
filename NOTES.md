@@ -1,2 +1,10 @@
-- Queued messages: no more empty rows with a clock at the bottom when a subagent or background task finishes.
-- Changed your mind about a message you sent while Claude was working? Click the ✕ on its row to take it back before Claude reads it.
+- Attach any file: pictures go in as images; other files go to the session's machine and their path goes in your message. Drop files anywhere on the chat.
+- Click a picture to see it full size.
+- Keys like Claude Code: Up in an empty box takes queued messages back to edit (or brings back your last message); Ctrl+Enter with nothing typed sends what's queued now.
+- Your plan's 5-hour and weekly use shows at the bottom, updated after every reply.
+- The bottom bar is tidier: one chip for the session's model, effort, mode and account; click it to change them.
+- Right-click a project: start a new session in it, or set its own defaults.
+- Commands and skills show their arguments as you type, and Tab picks from the choices.
+- Messages between agents show as letters (Claude Code's own SendMessage too), with a chat between the two on the right.
+- Background tasks slide up from the bottom on the desktop too.
+- Popped-out windows lose the "Back to tabs" button (closing the window does that), and there's a gap after ❯ in your messages.
