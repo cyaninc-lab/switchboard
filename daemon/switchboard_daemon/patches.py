@@ -35,6 +35,15 @@ def for_session(session_id, wanted=None):
     return out
 
 
+PEER = "<cross-session-message"
+
+
+def peer_message(d):
+    """A message another Claude session sent this one with Claude Code's own SendMessage (a user line flagged isMeta)."""
+    c = (d.get("message") or {}).get("content") if d.get("type") == "user" and d.get("isMeta") and d.get("uuid") else None
+    return isinstance(c, str) and PEER in c
+
+
 def with_mid_turn(session_id, msgs):
     """Put back the messages the user sent while Claude was working. Claude Code reads those between steps and stores
     them as `queued_command` attachments, which get_session_messages() drops, so history read without this lost them.
@@ -45,13 +54,15 @@ def with_mid_turn(session_id, msgs):
     parent, queued, seen = {}, [], set()
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
-            if '"attachment"' not in line:  # cheap skip: only attachments sit between the messages the SDK returns
+            if '"attachment"' not in line and PEER not in line:  # cheap skip: only these sit between the messages the SDK returns
                 continue
             try:
                 d = json.loads(line)
             except ValueError:
                 continue
-            if d.get("type") != "attachment" or not d.get("uuid"):
+            if peer_message(d) and d["uuid"] not in seen:  # another session's SendMessage: a meta line the SDK skips
+                seen.add(d["uuid"]); queued.append((d["uuid"], d["message"]["content"]))
+            if d.get("type") not in ("attachment", "user") or not d.get("uuid"):
                 continue
             parent[d["uuid"]] = d.get("parentUuid")
             a = d.get("attachment") or {}
