@@ -68,9 +68,9 @@ try {
   await x("//div[@role='log']//*[contains(., 'Done: going along')]", 20000);
   check(true, 'it answers in its window');
   await (await x("//button[normalize-space()='Keep on top']")).click();
-  await step('Keep on top on; a new draft; Back to tabs');
+  await step('Keep on top on; a new draft; close the window (Ctrl+W, as its ✕)');
   await box.sendKeys('coming back');
-  await (await x("//button[normalize-space()='Back to tabs']")).click();
+  await d.actions().keyDown(Key.CONTROL).sendKeys('w').keyUp(Key.CONTROL).perform();
   await d.switchTo().window(main);
   await d.wait(async () => (await d.getAllWindowHandles()).length === 1, 15000);
   check(true, 'the window closed');
@@ -87,7 +87,7 @@ try {
   check((await d.getAllWindowHandles()).length === 2, 'it opened in its own window');
   check(await d.executeScript("return ![...document.querySelectorAll('.tabs .tab')].some((t) => t.textContent.includes('Window one'))"), 'its tab left');
   await d.switchTo().window((await d.getAllWindowHandles()).find((h) => h !== main));
-  await (await x("//button[normalize-space()='Back to tabs']")).click();
+  await d.actions().keyDown(Key.CONTROL).sendKeys('w').keyUp(Key.CONTROL).perform();
   await d.switchTo().window(main);
   await d.wait(async () => (await d.getAllWindowHandles()).length === 1, 15000);
   // letting go inside the window (a cancelled drag) does nothing

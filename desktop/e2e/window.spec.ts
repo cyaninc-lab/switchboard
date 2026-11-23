@@ -35,7 +35,7 @@ test('a popped-out window shows just its session, with the draft handed over', a
   await page.goto(`/?machine=${encodeURIComponent(url)}&solo=${id}`);
   await expect(page.getByLabel('Message this session')).toHaveValue('carried over');
   await expect(page.getByRole('button', { name: 'Keep on top' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Back to tabs' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Back to tabs' })).toHaveCount(0);  // the window's own ✕ does that
   // just the session: no tree, tabs, inbox or title bar
   await expect(tree).toBeHidden();
   await expect(page.getByRole('tablist', { name: 'Open sessions' })).toHaveCount(0);

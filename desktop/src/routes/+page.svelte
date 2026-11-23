@@ -1735,7 +1735,6 @@
           {#if selected.entry.state === 'working' || selected.entry.state === 'waiting'}<button class="tiny hstop" onclick={() => act((l, id) => l.interrupt(id))} title="Stop what Claude is doing (Esc). The session stays open">Stop</button>{/if}
           {#if solo && !solo.embed}
             <button class="tiny" class:on={onTop} aria-pressed={onTop} onclick={() => { onTop = !onTop; setOnTop(onTop).catch(() => {}); }} title="Keep this window above other windows">Keep on top</button>
-            <button class="tiny" onclick={() => closeThisWindow()} title="Close this window; the session goes back to a tab in the main window">Back to tabs</button>
           {:else if !solo}
             {#if isDesktopApp()}<button class="tiny" onclick={popOutCurrent} title="Open this session in its own window">Pop out</button>{/if}
             <button class="tiny" onclick={togglePin}>{selected.entry.pinned ? 'Unpin' : 'Pin'}</button>
