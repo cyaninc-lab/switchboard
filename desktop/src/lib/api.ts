@@ -229,7 +229,7 @@ export function lineDiff(a: string, b: string): DiffLine[] {
   return out;
 }
 export type Image = { media_type: string; data: string };
-export type Command = { name: string; description: string };
+export type Command = { name: string; description: string; hint?: string };  // hint: its arguments, e.g. [low|high] [--fix]
 // Claude Code stores slash commands and their output wrapped in tags; show them as the user typed / saw them.
 function untag(t: string): string {
   const name = t.match(/<command-name>\s*([^<]*?)\s*<\/command-name>/)?.[1];

@@ -915,9 +915,16 @@ def _skill_descriptions():
 
 async def commands(request):
     """Slash commands for the menu: the session's real list once one has started here, else built-ins + the user's skills."""
+    runner = request.app[RUNNER]
+    try:
+        await asyncio.wait_for(runner.models(), 20)  # asked once with the models: Claude Code's descriptions and argument hints
+    except Exception:
+        pass
+    info = runner.command_info
     descs = {**BUILTIN_COMMANDS, **await _off(_skill_descriptions)}
-    names = request.app[RUNNER].commands or sorted(descs)
-    return web.json_response({"commands": [{"name": n, "description": descs.get(n, "")} for n in names],
+    names = list(dict.fromkeys([*runner.commands, *info])) if runner.commands else sorted(set(descs) | set(info))
+    return web.json_response({"commands": [{"name": n, "description": descs.get(n) or (info.get(n) or {}).get("description", ""),
+                                            **({"hint": h} if (h := (info.get(n) or {}).get("argumentHint")) else {})} for n in names],
                               "from_session": bool(request.app[RUNNER].commands)})
 
 

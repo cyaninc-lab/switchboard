@@ -677,7 +677,19 @@
     return [btw, ...(cmdList[selected.machine.url] ?? []).filter((c) => c.name !== 'btw')].filter((c) => c.name.toLowerCase().includes(q))
       .sort((a, b) => Number(!a.name.toLowerCase().startsWith(q)) - Number(!b.name.toLowerCase().startsWith(q))).slice(0, 8);
   });
-  function complete(c: api.Command) { draft = `/${c.name} `; cmdIdx = 0; }
+  function complete(c: api.Command) { draft = `/${c.name} `; cmdIdx = 0; argIdx = 0; }
+  // after a command and a space: its arguments hint, and Tab picks from choices it lists (the argument being typed)
+  let argIdx = $state(0);
+  const cmdArgs = $derived.by(() => {
+    const mt = selected ? /^\/(\S+) ([^\n]*)$/.exec(draft) : null;
+    const c = mt ? (cmdList[selected!.machine.url] ?? []).find((x) => x.name === mt[1]) : null;
+    if (!c?.hint) return null;
+    const typed = mt![2].split(' '), cur = typed[typed.length - 1], n = typed.length - 1;
+    const groups = [...c.hint.matchAll(/\[([^\]]*)\]/g)].map((g) => g[1]);
+    const opts = (groups[n] ?? '').includes('|') ? groups[n].split('|').map((o) => o.trim()).filter((o) => o && !/[<>]/.test(o) && o.startsWith(cur) && o !== cur) : [];
+    return { name: c.name, hint: c.hint, opts };
+  });
+  function pickArg(o: string) { draft = draft.replace(/\S*$/, o + ' '); argIdx = 0; inputEl?.focus(); }
   // multi-line box: Enter sends, Shift+Enter starts a new line, Ctrl+Enter sends now (interrupts), as in Claude Code
   let sendNow = false;
   function enterSends(ev: KeyboardEvent) {
@@ -732,6 +744,11 @@
       if (ev.key === 'ArrowUp') { ev.preventDefault(); atIdx = (atIdx - 1 + atList.length) % atList.length; return; }
       if (ev.key === 'Tab' || ev.key === 'Enter') { ev.preventDefault(); pickAt(atList[atIdx]); return; }
       if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); atQ = null; atList = []; atSeq++; return; }
+    }
+    if (cmdArgs?.opts.length && !menu.length) {
+      if (ev.key === 'Tab') { ev.preventDefault(); return pickArg(cmdArgs.opts[Math.min(argIdx, cmdArgs.opts.length - 1)]); }
+      if (ev.key === 'ArrowDown') { ev.preventDefault(); argIdx = (argIdx + 1) % cmdArgs.opts.length; return; }
+      if (ev.key === 'ArrowUp') { ev.preventDefault(); argIdx = (argIdx - 1 + cmdArgs.opts.length) % cmdArgs.opts.length; return; }
     }
     if (ev.key === 'ArrowUp' && !draft && !ev.shiftKey && !ev.ctrlKey && !ev.altKey && !menu.length) return void upArrow(ev);
     if (!menu.length) return enterSends(ev);
@@ -1933,6 +1950,16 @@
             {/each}
           </div>
         {/if}
+        {#if cmdArgs && !menu.length}
+          <div class="cmdmenu" role="listbox" aria-label="Arguments for /{cmdArgs.name}">
+            <div class="argshint muted small mono">/{cmdArgs.name} {cmdArgs.hint}</div>
+            {#each cmdArgs.opts as o, i (o)}
+              <button type="button" role="option" aria-selected={i === argIdx} class:on={i === argIdx} onmousedown={(e) => e.preventDefault()} onclick={() => pickArg(o)}>
+                <span class="mono">{o}</span>{#if i === argIdx}<span class="muted small">Tab</span>{/if}
+              </button>
+            {/each}
+          </div>
+        {/if}
         {#if attachments.length}
           <div class="attach" aria-label="Attached images">
             {#each attachments as a, i (a.url)}
@@ -2752,6 +2779,7 @@
   .pendingq .you .unqueue { margin-left: auto; padding: 0 6px; background: none; border: 0; color: inherit; cursor: pointer; opacity: 0.6; }
   .pendingq .you .unqueue:hover { opacity: 1; }
   .tiny.busy { animation: blink 1s infinite; }  /* a file on its way to the session's machine */
+  .argshint { padding: 4px 10px; white-space: pre-wrap; }
   .plan.high { color: var(--peach); }
   .startswith { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin: 2px 0 4px; }
   .readimg { align-self: flex-start; padding: 0; margin: 2px 0 6px 18px; border: 1px solid var(--s1); border-radius: 8px; background: none; cursor: zoom-in; line-height: 0; max-width: calc(100% - 18px); }
