@@ -1612,19 +1612,25 @@
           <p class="empty">No machines yet. Run <code>switchboard-daemon serve</code> and <code>switchboard-daemon pair</code>, then connect.</p>
         {/if}
         {#each machines as m (m.url)}
+          {@const mk = `m:${m.url}`}
+          {@const mOpen = subOpen[mk] ?? true}
           <div class="machine" class:offline={!!tree[m.url]?.error}>
             <div class="mhead">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2" /><line x1="8" y1="20" x2="16" y2="20" /></svg>
-              <span class="mname">{m.name}</span>
+              <!-- a machine folds like a project (remembered on this device) -->
+              <button class="mfold" aria-expanded={mOpen} aria-label={mOpen ? `Fold ${m.name}` : `Unfold ${m.name}`} title={mOpen ? `Fold ${m.name}` : `Unfold ${m.name}`} onclick={() => (subOpen[mk] = !mOpen)}>
+                <span class="arrow" aria-hidden="true">{mOpen ? '▾' : '▸'}</span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2" /><line x1="8" y1="20" x2="16" y2="20" /></svg>
+                <span class="mname">{m.name}</span>{#if !mOpen && tree[m.url]}<span class="muted small"> · {tree[m.url].entries.length}</span>{/if}
+              </button>
               {#if !tree[m.url]}<span class="muted small">connecting…</span>
               {:else if tree[m.url].error}<span class="offtag" title={tree[m.url].error}>can't reach</span>{/if}
               <button class="tiny" title="Disconnect" aria-label="Disconnect {m.name}" onclick={() => disconnect(m)}>×</button>
             </div>
-            {#if tree[m.url]?.error}
+            {#if mOpen && tree[m.url]?.error}
               <p class="offnote">{m.name} isn't answering ({route(m)}{conn[m.url]?.last ? `, last answered ${ago(conn[m.url].last)} ago` : ''}{conn[m.url]?.why ? `, ${conn[m.url].why}` : ''}). {route(m) === 'through the relay' ? 'Is it on, with Switchboard running there?' : 'Is it on, and is this device connected to it (Tailscale)?'}
                 <button class="link" onclick={() => refresh()}>Retry</button></p>
             {/if}
-            {#each groups(m) as [g, es] (g)}
+            {#each mOpen ? groups(m) : [] as [g, es] (g)}
               {@const gk = `g:${m.url}|${g}`}
               {@const gOpen = subOpen[gk] ?? true}
               {#if renaming?.key === gk}
@@ -1664,7 +1670,7 @@
                 {/if}
               {/each}
             {/each}
-            {#if tree[m.url] && tree[m.url].entries.length === 0 && !tree[m.url].error}<p class="empty small">Nothing added yet.</p>{/if}
+            {#if mOpen && tree[m.url] && tree[m.url].entries.length === 0 && !tree[m.url].error}<p class="empty small">Nothing added yet.</p>{/if}
           </div>
         {/each}
       </div>
@@ -2418,6 +2424,9 @@
   .offtag { font-size: 11px; color: var(--red); border: 1px solid var(--red); border-radius: 4px; padding: 0 5px; }
   .offnote { margin: 4px 8px 8px; font-size: 12px; color: var(--sub0); }
   .mhead { display: flex; align-items: center; gap: 6px; padding: 6px 8px; }
+  .mfold { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; text-align: left; }
+  .mfold .arrow { width: 0.8em; color: var(--muted); }
+  .mfold .mname { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }  /* the count sits beside it */
   .mname { font-weight: 600; flex: 1; }
   :global(.tiny.on) { border-color: var(--mauve); color: var(--text); }
   :global(.tiny) { background: none; border: 1px solid var(--s1); color: var(--sub0); border-radius: 6px; padding: 2px 8px; font-size: 12px; }
