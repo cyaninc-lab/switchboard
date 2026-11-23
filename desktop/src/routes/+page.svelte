@@ -4,6 +4,7 @@
     soloOf, popOut, takeHandoff, focusWindow, onSoloClosing, onSoloEvents, soloOpened, closeThisWindow, setOnTop, useParentShell, canOpenLocally,
     isPhoneApp, isDesktopApp, pairLink, scanPairCode, setPhonePush, takeNotificationOpen, setPhoneViewing, clipboardImage, phonePushStatus, desktopTransport } from '$lib/shell';
   import qrcode from 'qrcode-generator';
+  import { fly } from 'svelte/transition';
   import { backdrop } from '$lib/backdrop';
   import { theme, THEMES, applyTheme, fonts, UI_FONTS, MONO_FONTS, CHAT_FONTS, SIZES, applyFonts } from '$lib/themes.svelte';
   applyTheme(theme.name);
@@ -2037,7 +2038,8 @@
   {@const running = ts.filter((t) => t.status === 'running')}
   {@const done = ts.filter((t) => t.status !== 'running').reverse()}
   <div class="backdrop" role="presentation" {...backdrop(() => (tasksFor = null))}>
-    <div class="dialog tasksheet" class:sheet={phone} role="dialog" aria-label="Background tasks">
+    <!-- slides up from the bottom, on the phone and the desktop alike -->
+    <div class="dialog tasksheet sheet" class:desk={!phone} role="dialog" aria-label="Background tasks" transition:fly={{ y: 300, duration: 180 }}>
       <div class="sheethead"><h2>Background tasks</h2><span class="grow"></span><button type="button" class="tiny" aria-label="Close" onclick={() => (tasksFor = null)}>×</button></div>
       <p class="muted small">{tasksEntry.name}: commands Claude runs in the background. Background agents show in the session list.</p>
       {#snippet taskRow(t: api.Task)}
@@ -2546,6 +2548,7 @@
   .taskinfo code.path { background: none; padding: 0; cursor: pointer; text-decoration: underline dotted; }
   /* on a phone the list slides up from the bottom */
   .tasksheet.sheet { position: fixed; left: 0; right: 0; bottom: 0; max-width: none; width: auto; margin: 0; border-radius: 16px 16px 0 0; max-height: 85vh; overflow: auto; }
+  .tasksheet.sheet.desk { left: max(0px, calc(50% - 360px)); right: max(0px, calc(50% - 360px)); max-height: 70vh; }
   .pairqr { width: 180px; background: #fff; border-radius: 8px; padding: 6px; margin-top: 6px; }
   .pairqr :global(svg) { display: block; width: 100%; height: auto; }
   .removedlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
