@@ -121,7 +121,7 @@ test('phone layout: sessions → chat (as text messages) → back; inbox from th
   expect(ib.height / ib.width).toBeLessThan(2.35);
   expect(ib.x + ib.width).toBeGreaterThan(lb.x + lb.width - 40);  // on the right
   // attach and Send are the same size of square
-  const clip = (await page.getByRole('button', { name: 'Attach images' }).boundingBox())!, send = (await page.getByRole('button', { name: 'Send' }).boundingBox())!;
+  const clip = (await page.getByRole('button', { name: 'Attach files' }).boundingBox())!, send = (await page.getByRole('button', { name: 'Send' }).boundingBox())!;
   expect(Math.abs(clip.width - clip.height)).toBeLessThan(2);
   expect(Math.abs(clip.width - send.width)).toBeLessThan(2);
 

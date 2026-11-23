@@ -101,6 +101,10 @@ export const saveWatch = (m: Machine, w: Partial<Watch>) => w.id
   ? call<Watch>(m, `/v1/watches/${w.id}`, { method: 'PATCH', body: JSON.stringify(w) })
   : call<Watch>(m, '/v1/watches', { method: 'POST', body: JSON.stringify(w) });
 export const removeWatch = (m: Machine, id: string) => call<void>(m, `/v1/watches/${id}`, { method: 'DELETE' });
+// any file: saved on the session's machine, answers its path there (for the message). Up to 100 MB
+export const upload = async (m: Machine, id: string, f: File) =>
+  call<{ path: string }>(m, `/v1/entries/${id}/upload?name=${encodeURIComponent(f.name || 'file')}`,
+    { method: 'POST', body: await f.arrayBuffer(), headers: { 'Content-Type': 'application/octet-stream' }, signal: AbortSignal.timeout(600_000) }).then((r) => r.path);
 export const withdraw = (m: Machine, id: string, text: string) =>  // take back a message Claude hasn't read yet
   call<{ withdrawn: boolean }>(m, `/v1/entries/${id}/withdraw`, { method: 'POST', body: JSON.stringify({ text }) });
 export const testWatch = (m: Machine, id: string) => call<{ fired: boolean }>(m, `/v1/watches/${id}/test`, { method: 'POST' });

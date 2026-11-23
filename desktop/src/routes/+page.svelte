@@ -641,13 +641,26 @@
   let cmdIdx = $state(0);
   let fileInput = $state<HTMLInputElement>();
   const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+  let uploading = $state(0);
   async function addFiles(files: Iterable<File>) {
     for (const f of files) {
-      if (!IMAGE_TYPES.includes(f.type)) { liveErr = `${f.name || 'That file'} isn't a PNG, JPEG, GIF or WebP image`; continue; }
-      if (f.size > 5_000_000) { liveErr = `${f.name || 'Image'} is over 5 MB`; continue; }
+      // pictures Claude can see go in as images; any other file (or a big picture) goes to the session's machine and
+      // its path goes in the message, for Claude to read
+      if (!IMAGE_TYPES.includes(f.type) || f.size > 5_000_000) { void attachPath(f); continue; }
       const url = await new Promise<string>((ok) => { const r = new FileReader(); r.onload = () => ok(r.result as string); r.readAsDataURL(f); });
       attachments = [...attachments, { media_type: f.type, data: url.split(',')[1], url, name: f.name || 'pasted image' }];
     }
+  }
+  async function attachPath(f: File) {
+    const s = selected;
+    if (!s) return;
+    uploading++;
+    try {
+      const p = await api.upload(s.machine, s.entry.id, f);
+      const ref = /\s/.test(p) ? `"${p}"` : p;
+      if (selected === s) draft = draft && !/\s$/.test(draft) ? `${draft} ${ref} ` : `${draft}${ref} `;
+    } catch (e) { const c = (e as Error).message; say(`Couldn't attach ${f.name || 'that file'}: ${c.startsWith('413') ? 'over 100 MB' : c}`); }
+    finally { uploading--; }
   }
   function onPaste(ev: ClipboardEvent) {
     const files = [...(ev.clipboardData?.items ?? [])].filter((i) => i.kind === 'file').map((i) => i.getAsFile()!).filter(Boolean);
@@ -655,7 +668,7 @@
     // the desktop app on Linux: the paste carries no image, so read it from the system clipboard (text pastes as usual)
     if (!ev.clipboardData?.getData('text/plain')) clipboardImage().then((f) => { if (f) addFiles([f]); });
   }
-  function onDrop(ev: DragEvent) { ev.preventDefault(); if (ev.dataTransfer?.files.length) addFiles(ev.dataTransfer.files); }
+  function onDrop(ev: DragEvent) { if (!ev.dataTransfer?.files.length) return; ev.preventDefault(); addFiles(ev.dataTransfer.files); }
   async function loadCommands(m: Machine) { try { cmdList[m.url] = await api.commands(m); } catch {} }
   let menu = $derived.by(() => {
     if (!selected || !/^\/\S*$/.test(draft)) return [];
@@ -1801,6 +1814,7 @@
         <!-- focusable so keyboard users can scroll it (a scrollable region should be); the listeners only notice scrolling -->
         <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
         <div class="log mono" role="log" aria-label="Session history" bind:this={logEl} onscroll={onLogScroll}
+          ondragover={(e) => { if (selected && !selected.sub && e.dataTransfer?.types.includes('Files')) e.preventDefault(); }} ondrop={(e) => { if (selected && !selected.sub) onDrop(e); }}
           onwheel={markUser} ontouchmove={markUser} onpointerdown={markUser} onkeydown={markUser} tabindex="0">
           <div class="logbody" bind:this={logBody}>
           {#if loadingHistory}<div class="muted">Loading…</div>{/if}
@@ -1929,8 +1943,8 @@
           <label class="grow"><span class="sr">Message this session</span>
             <textarea rows="1" {@attach grow} bind:value={draft} bind:this={inputEl} oninput={onDraftInput} onblur={() => setTimeout(() => (atQ = null), 150)} onpaste={onPaste} onkeydown={onInputKey} disabled={selected.entry.state === 'terminal' || selected.entry.state === 'missing'}
               placeholder={selected.entry.state === 'terminal' ? 'Open in a terminal elsewhere' : selected.entry.state === 'working' ? (phone ? 'Working… Claude reads it after this step' : 'Working… Enter sends (Claude reads it after its current step), Ctrl+Enter interrupts and sends (Esc to interrupt)') : (phone ? 'Message' : 'Message this session (Shift+Enter for a new line)')}></textarea></label>
-          <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden bind:this={fileInput} onchange={(e) => { addFiles((e.target as HTMLInputElement).files ?? []); (e.target as HTMLInputElement).value = ''; }} />
-          <button type="button" class="tiny" aria-label="Attach images" title="Attach images (or paste / drop them)" onclick={() => fileInput?.click()}>
+          <input type="file" multiple hidden bind:this={fileInput} onchange={(e) => { addFiles((e.target as HTMLInputElement).files ?? []); (e.target as HTMLInputElement).value = ''; }} />
+          <button type="button" class="tiny" aria-label="Attach files" class:busy={uploading > 0} title="Attach pictures or files (or paste / drop them). Other files go to the session's machine; their path goes in the message" onclick={() => fileInput?.click()}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" /></svg>
           </button>
           {#if selected.entry.state === 'working' || selected.entry.state === 'waiting'}<button type="button" class="tiny" aria-label={phone ? 'Interrupt' : undefined} title="Interrupt (Esc)" onclick={() => act((l, id) => l.interrupt(id))}>{phone ? '■' : 'Esc · interrupt'}</button>{/if}
@@ -2726,6 +2740,7 @@
   .pendingq .you { display: flex; align-items: baseline; }
   .pendingq .you .unqueue { margin-left: auto; padding: 0 6px; background: none; border: 0; color: inherit; cursor: pointer; opacity: 0.6; }
   .pendingq .you .unqueue:hover { opacity: 1; }
+  .tiny.busy { animation: blink 1s infinite; }  /* a file on its way to the session's machine */
   .startswith { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin: 2px 0 4px; }
   .readimg { align-self: flex-start; padding: 0; margin: 2px 0 6px 18px; border: 1px solid var(--s1); border-radius: 8px; background: none; cursor: zoom-in; line-height: 0; max-width: calc(100% - 18px); }
   .readimg img { max-height: 160px; max-width: 240px; object-fit: contain; border-radius: 8px; }

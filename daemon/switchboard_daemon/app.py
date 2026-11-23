@@ -1,5 +1,5 @@
 """HTTP API v1 (phase 1: pairing, machine, sessions, tree entries, history). See docs/protocol.md."""
-import asyncio, dataclasses, glob, itertools, json, os, platform, socket, time, uuid
+import asyncio, dataclasses, glob, itertools, json, os, platform, socket, tempfile, time, uuid
 from pathlib import Path
 import aiohttp
 from aiohttp import web
@@ -685,6 +685,31 @@ async def folders(request):
     return web.json_response({"home": home, "folders": ([home] if home not in seen else []) + out[:30]})
 
 
+UPLOAD_MAX = 100 * 1024 * 1024
+
+
+async def upload_file(request):
+    """A file attached in the app (?name=, the body is its bytes), saved on this machine for the session to read: answers
+    {path}, which the app puts in the message. Kept in the temp folder (the session's own folder stays clean)."""
+    if not request.app[STORE].entry(request.match_info["id"]):
+        raise web.HTTPNotFound()
+    name = os.path.basename((request.query.get("name") or "").replace("\\", "/")).strip(". ") or "file"
+    d = Path(tempfile.gettempdir()) / "switchboard-uploads" / uuid.uuid4().hex[:12]
+    d.mkdir(parents=True, exist_ok=True)
+    path, size = d / name[:200], 0
+    try:
+        with open(path, "wb") as f:
+            async for chunk in request.content.iter_chunked(1 << 16):
+                size += len(chunk)
+                if size > UPLOAD_MAX:
+                    raise web.HTTPRequestEntityTooLarge(max_size=UPLOAD_MAX, actual_size=size)
+                f.write(chunk)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    return web.json_response({"path": str(path)})
+
+
 async def entry_files(request):
     """Files in the session's folder matching ?q= (for @-mentions in the message box)."""
     e = request.app[STORE].entry(request.match_info["id"])
@@ -941,7 +966,7 @@ def make_app(store: Store, name=None):
         web.get("/v1/network", get_network), web.put("/v1/network", set_network),
         web.get("/v1/settings", get_settings), web.put("/v1/settings", set_settings),
         web.get("/v1/push", get_push), web.put("/v1/push", set_push),
-        web.post("/v1/entries/{id}/answer", answer_request), web.post("/v1/entries/{id}/send", send_message), web.post("/v1/entries/{id}/withdraw", withdraw_message),
+        web.post("/v1/entries/{id}/answer", answer_request), web.post("/v1/entries/{id}/send", send_message), web.post("/v1/entries/{id}/withdraw", withdraw_message), web.post("/v1/entries/{id}/upload", upload_file),
         web.get("/v1/github", github_status), web.post("/v1/github/device", github_start), web.post("/v1/github/poll", github_poll),
         web.delete("/v1/github", github_sign_out), web.post("/v1/github/issue", github_issue), web.post("/v1/pair_code", pair_code),
         web.post("/v1/peer_token", peer_token), web.get("/v1/peers", get_peers), web.put("/v1/peers", set_peers),
