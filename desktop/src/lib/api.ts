@@ -194,7 +194,11 @@ const MAIL_IN = /^Message from the session "([^"]*)" \(sent through Switchboard[
 // Claude Code tells the session a background task ended with a "user" message holding <task-notification>: it's
 // Claude Code talking, not the user, so it shows as a step on Claude's side ("Background command … completed")
 const TASK_NOTE = /^\s*<task-notification>[\s\S]*?<summary>([\s\S]*?)<\/summary>[\s\S]*<\/task-notification>\s*$/;
+// Claude Code's own SendMessage from another session on the machine (the daemon adds these to history and live)
+const PEER_IN = /<cross-session-message[^>]*?from-name="([^"]*)"[^>]*>\n?([\s\S]*?)\n?<\/cross-session-message>/;
 const userText = (msg: HistoryMessage, t: string): Line => {
+  const peer = msg.type === 'user' ? PEER_IN.exec(t) : null;
+  if (peer) return { kind: 'mail', dir: 'in', who: peer[1], text: peer[2] };
   const note = msg.type === 'user' ? TASK_NOTE.exec(t) : null;
   if (note) return { kind: 'tool', text: note[1].trim(), name: 'TaskNotification', id: '', input: {} };
   const m = msg.type === 'user' ? MAIL_IN.exec(t) : null;
@@ -249,6 +253,8 @@ export function render(msg: HistoryMessage): Line[] {
         return [{ kind: 'diff', text: `Write(${i.file_path})`, file: i.file_path, lines: i.content.split('\n').map((s: string) => ({ t: '+' as const, s })), note: 'new contents', id: b.id }];
       if (b.name === 'mcp__switchboard__message_session' && typeof i.text === 'string')
         return [{ kind: 'mail', dir: 'out', who: String(i.session ?? ''), text: i.text }];
+      if (b.name === 'SendMessage' && i.recipient_kind !== 'agent' && typeof (i.message ?? i.content) === 'string')  // Claude Code's, to another session
+        return [{ kind: 'mail', dir: 'out', who: String(i.to ?? i.recipient ?? ''), text: i.message ?? i.content }];
       if (b.name === 'TodoWrite' && Array.isArray(i.todos))
         return [{ kind: 'todos', text: 'To-dos', items: i.todos }];
       const arg = i.command ?? i.file_path ?? i.pattern ?? i.description ?? i.questions?.[0]?.question ?? '';  // AskUserQuestion: its first question

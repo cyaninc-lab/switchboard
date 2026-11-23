@@ -26,6 +26,21 @@ def test_mid_turn_messages_come_back_where_they_were_read(tmp_path, monkeypatch)
     assert [m["uuid"] for m in patches.with_mid_turn("s1", msgs)] == ["u1", "a1", "r1", "q1", "a2"]
 
 
+def test_other_sessions_sendmessage_shows(tmp_path, monkeypatch):
+    # Claude Code's SendMessage between sessions arrives as a user line flagged isMeta, which the SDK's reader skips
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    d = tmp_path / "projects" / "-p"; d.mkdir(parents=True)
+    peer = 'Another Claude session sent a message:\n<cross-session-message from="uds:/x.sock" from-name="a-42">\nping\n</cross-session-message>\n\nThis came from'
+    lines = [{"type": "user", "uuid": "u1", "parentUuid": None, "message": {"role": "user", "content": "hi"}},
+             {"type": "assistant", "uuid": "a1", "parentUuid": "u1", "message": {"role": "assistant", "content": []}},
+             {"type": "user", "uuid": "p1", "parentUuid": "a1", "isMeta": True, "message": {"role": "user", "content": peer}},
+             {"type": "assistant", "uuid": "a2", "parentUuid": "p1", "message": {"role": "assistant", "content": []}}]
+    (d / "s1.jsonl").write_text("\n".join(json.dumps(l) for l in lines))
+    msgs = [{"type": l["type"], "uuid": l["uuid"], "message": l["message"]} for l in lines if not l.get("isMeta")]
+    out = patches.with_mid_turn("s1", msgs)
+    assert [m["uuid"] for m in out] == ["u1", "a1", "p1", "a2"] and out[2]["message"]["content"] == peer
+
+
 def test_claude_codes_own_notes_are_not_shown_as_the_users():
     from claude_agent_sdk._internal import message_parser
     from switchboard_daemon.runner import as_history

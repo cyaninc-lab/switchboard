@@ -123,7 +123,7 @@ def as_history(msg):
 def _yours(queue):
     """The user's messages in a mirrored queue. Claude Code also queues its own: a background task or subagent finishing
     (<task-notification>…) and empty entries; those are tracked so dequeues line up, never shown."""
-    return [t for t in queue if t and not t.startswith("<task-notification>")]
+    return [t for t in queue if t and not t.startswith(("<task-notification>", "<cross-session-message"))]
 
 
 @dataclasses.dataclass
@@ -245,6 +245,15 @@ class Runner:
                 pos += end
                 before, dropped = list(lv.unread), []
                 for line in chunk[:end].splitlines():
+                    if b"<cross-session-message" in line and b'"isMeta"' in line:  # another session's SendMessage: not
+                        try:  # in the SDK's stream, so shown from here (history reads it the same way: patches.with_mid_turn)
+                            d = json.loads(line)
+                        except ValueError:
+                            continue
+                        if patches.peer_message(d):
+                            await self.broadcast({"type": "message", "entry": lv.entry_id, "message": {
+                                "type": "user", "uuid": d["uuid"], "message": {"role": "user", "content": d["message"]["content"]}}})
+                        continue
                     if b'"queue-operation"' not in line:
                         continue
                     try:
