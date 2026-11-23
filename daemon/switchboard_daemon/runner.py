@@ -174,6 +174,7 @@ class Runner:
         self._models = None
         self.on_turn_end = None  # async (entry_id, reply_text, origin) for turns a watch started
         self.usage: dict[str, dict] = {}  # entry id -> last usage event (survives the session closing)
+        self.plans: dict[str, dict] = {}  # account ("" = machine login) -> {five_hour, seven_day: {used %, resets_at}}
         self.side: dict[str, Side] = {}  # entry id -> its open /btw side chat
         self.elsewhere = lambda: set()  # {session id} a process outside this daemon holds (set by the app)
         self.last_call: dict[str, float] = {}  # entry id -> when it last rang the user
@@ -636,6 +637,23 @@ class Runner:
               "turn_cost": getattr(m, "total_cost_usd", None), "session_cost": round(lv.cost, 4)}
         self.usage[lv.entry_id] = ev
         await self.broadcast(ev)
+        asyncio.get_running_loop().create_task(self._plan(lv))
+
+    async def _plan(self, lv):
+        """The plan's limits (5-hour and weekly use, %), as Claude Code's /usage shows them: asked after each turn, per
+        account (a session's account, or "" for the machine login). Costs no tokens."""
+        entry = self.store.entry(lv.entry_id) or {}
+        acct = entry.get("account") or ""
+        try:
+            r = await asyncio.wait_for(lv.client._query._send_control_request({"subtype": "get_usage", "skip_behaviors": True}), 15)
+        except Exception:
+            return  # an older Claude Code, the demo, or the API didn't answer: the last numbers stay
+        lim = (r or {}).get("rate_limits") or {}
+        plan = {k: {"used": round(w["utilization"]), "resets_at": w.get("resets_at")}
+                for k in ("five_hour", "seven_day") if isinstance(w := lim.get(k), dict) and w.get("utilization") is not None}
+        if plan:
+            self.plans[acct] = plan
+            await self.broadcast({"type": "plan", "account": acct, "plan": plan})
 
     async def _ask(self, lv, tool, inp, ctx=None):
         """Three kinds of request, all through can_use_tool: Claude's questions (AskUserQuestion), plan approval

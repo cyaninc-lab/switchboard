@@ -838,6 +838,8 @@
       setEntry(e.entry, { model: e.model });
     } else if (e.type === 'account') {
       setEntry(e.entry, { account: e.account });
+    } else if (e.type === 'plan') {
+      if (m && dset[m.url]) dset[m.url] = { ...dset[m.url]!, plans: { ...(dset[m.url]!.plans ?? {}), [e.account]: e.plan } };
     } else if (e.type === 'usage') {
       setEntry(e.entry, { usage: e });
     } else if (e.type === 'queued') {
@@ -2008,6 +2010,15 @@
     <span>{machines.length} machine{machines.length === 1 ? '' : 's'}</span>
     {@render pickers()}
     <span class="grow"></span>
+    {#if selected}{@const pl = dset[selected.machine.url]?.plans?.[selected.entry.account ?? '']}
+      {#if pl && (pl.five_hour || pl.seven_day)}
+        {@const when = (t: string | null | undefined) => (t ? new Date(t).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '?')}
+        <span class="plan" class:high={Math.max(pl.five_hour?.used ?? 0, pl.seven_day?.used ?? 0) >= 80}
+          title="Your plan's use ({selected.entry.account || 'machine login'} on {selected.machine.name}), as of the last reply.{pl.five_hour ? ` 5-hour window resets ${when(pl.five_hour.resets_at)}.` : ''}{pl.seven_day ? ` Week resets ${when(pl.seven_day.resets_at)}.` : ''}">
+          {[pl.five_hour && `5h ${pl.five_hour.used}%`, pl.seven_day && `week ${pl.seven_day.used}%`].filter(Boolean).join(' · ')}
+        </span>
+      {/if}
+    {/if}
     {#if selected?.entry.usage}
       {@const u = selected.entry.usage}
       <span title="Context used by the latest request{u.context_window ? ` of a ${Math.round(u.context_window / 1000)}k window` : ''}; cost is the API-equivalent for this session (plans aren't billed per token)">
@@ -2741,6 +2752,7 @@
   .pendingq .you .unqueue { margin-left: auto; padding: 0 6px; background: none; border: 0; color: inherit; cursor: pointer; opacity: 0.6; }
   .pendingq .you .unqueue:hover { opacity: 1; }
   .tiny.busy { animation: blink 1s infinite; }  /* a file on its way to the session's machine */
+  .plan.high { color: var(--peach); }
   .startswith { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin: 2px 0 4px; }
   .readimg { align-self: flex-start; padding: 0; margin: 2px 0 6px 18px; border: 1px solid var(--s1); border-radius: 8px; background: none; cursor: zoom-in; line-height: 0; max-width: calc(100% - 18px); }
   .readimg img { max-height: 160px; max-width: 240px; object-fit: contain; border-radius: 8px; }
