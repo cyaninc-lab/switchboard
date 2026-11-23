@@ -881,3 +881,19 @@ def test_messages_are_acknowledged_once_and_never_doubled(tmp_path, monkeypatch)
         assert len(said) == 1
         await client.close()
     asyncio.run(t())
+
+
+def test_upload_saves_the_file_for_the_session(tmp_path, monkeypatch):
+    """A file attached in the app lands on the session's machine; its path goes in the message."""
+    async def t():
+        monkeypatch.setattr(appmod.tempfile, "gettempdir", lambda: str(tmp_path))
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        r = await client.post(f"/v1/entries/{e['id']}/upload?name=../../notes.pdf", headers=h, data=b"%PDF-1.4 hello")
+        path = (await r.json())["path"]
+        assert path.startswith(str(tmp_path / "switchboard-uploads")) and path.endswith("/notes.pdf")  # no climbing out
+        assert open(path, "rb").read() == b"%PDF-1.4 hello"
+        monkeypatch.setattr(appmod, "UPLOAD_MAX", 10)
+        assert (await client.post(f"/v1/entries/{e['id']}/upload?name=big.bin", headers=h, data=b"x" * 100)).status == 413
+        assert (await client.post("/v1/entries/nope/upload?name=a", headers=h, data=b"x")).status == 404
+        await client.close()
+    asyncio.run(t())
