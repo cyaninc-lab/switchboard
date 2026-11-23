@@ -55,7 +55,7 @@ test('images and slash commands', async ({ page }) => {
   await input.press('Enter');
   await expect(log).toContainText('Done: which model [sonnet]');
 
-  // a non-image file is refused with a message
+  // a non-image file isn't refused: it goes to the machine and its path into the message (files.spec.ts)
   await page.locator('input[type=file]').setInputFiles({ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('hi') });
-  await expect(page.getByRole('alert')).toContainText("isn't a PNG, JPEG, GIF or WebP");
+  await expect(input).toHaveValue(/notes\.txt $/);
 });
