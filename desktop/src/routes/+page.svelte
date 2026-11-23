@@ -523,6 +523,35 @@
   // per session: what the daemon last said is unread (a message missing from the next list was read, if it was there)
   const unreadSeen: Record<string, Set<string>> = {};
   const msgText = (m: HistoryMessage) => (Array.isArray(m.message.content) ? m.message.content : []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n');
+  // Up in an empty box, as in Claude Code: queued messages come back here to edit (taken out of the queue);
+  // with nothing queued, your last message
+  async function upArrow(ev: KeyboardEvent) {
+    const s = selected;
+    if (!s) return;
+    const q = pendingQ[s.entry.id] ?? [];
+    let texts: string[] = [];
+    if (q.length) {
+      ev.preventDefault();
+      for (const m of [...q]) {
+        const t = msgText(m);
+        if (!unreadSeen[s.entry.id]?.has(t)) { pendingQ[s.entry.id] = pendingQ[s.entry.id].filter((x) => x !== m); texts.push(t); continue; }
+        try { if ((await api.withdraw(s.machine, s.entry.id, t)).withdrawn) { pendingQ[s.entry.id] = pendingQ[s.entry.id].filter((x) => x !== m); texts.push(t); } } catch {}
+      }
+      if (!texts.length) say("Couldn't take them back: Claude has read them");
+    } else {
+      const last = [...messages].reverse().find((m) => m.type === 'user' && !(m as any).isMeta && youSaid(m));
+      if (!last) return;
+      ev.preventDefault();
+      texts = [youSaid(last)];
+    }
+    if (selected === s && texts.length) { draft = texts.join('\n'); tick().then(() => { if (inputEl) inputEl.selectionStart = inputEl.selectionEnd = draft.length; }); }
+  }
+  // what you typed in a user message (not tool results, Claude Code's notes, or another session's letter)
+  const youSaid = (m: HistoryMessage) => {
+    const c = m.message.content;
+    const t = typeof c === 'string' ? c : Array.isArray(c) && !c.some((b: any) => b.type === 'tool_result') ? msgText(m) : '';
+    return t.startsWith('<') || t.startsWith('Message from the session "') || t.startsWith('Another Claude session sent') ? '' : t;
+  };
   async function unqueue(msg: HistoryMessage) {  // ✕ on a queued row: out of Claude Code's queue, unread
     const s = selected;
     if (!s) return;
@@ -627,6 +656,9 @@
     if (ev.key !== 'Enter' || ev.shiftKey || ev.isComposing || ev.defaultPrevented || (phone && !ev.ctrlKey && !ev.metaKey)) return;
     ev.preventDefault();
     sendNow = ev.ctrlKey || ev.metaKey;
+    // Ctrl+Enter with nothing typed: what's queued goes now. Stopping the turn is enough: Claude Code keeps the
+    // queued messages and takes them as the next turn
+    if (sendNow && !draft.trim() && !attachments.length && selected && pendingQ[selected.entry.id]?.length) { sendNow = false; return void act((l, id) => l.interrupt(id)); }
     (ev.currentTarget as HTMLTextAreaElement).form?.requestSubmit();
   }
   function grow(el: HTMLTextAreaElement) {  // fit the text, up to the CSS max-height
@@ -673,6 +705,7 @@
       if (ev.key === 'Tab' || ev.key === 'Enter') { ev.preventDefault(); pickAt(atList[atIdx]); return; }
       if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); atQ = null; atList = []; atSeq++; return; }
     }
+    if (ev.key === 'ArrowUp' && !draft && !ev.shiftKey && !ev.ctrlKey && !ev.altKey && !menu.length) return void upArrow(ev);
     if (!menu.length) return enterSends(ev);
     if (ev.key === 'ArrowDown') { ev.preventDefault(); cmdIdx = (cmdIdx + 1) % menu.length; }
     else if (ev.key === 'ArrowUp') { ev.preventDefault(); cmdIdx = (cmdIdx - 1 + menu.length) % menu.length; }
