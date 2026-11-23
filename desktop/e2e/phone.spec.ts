@@ -191,10 +191,11 @@ test('on a phone: an image Claude read shows as a thumbnail (tap for full size);
   await expect(thumb).toBeVisible();
   expect((await thumb.boundingBox())!.height).toBeLessThanOrEqual(160);
   const frame = page.locator('button.readimg');
-  await frame.click();
-  await expect(frame).toHaveClass(/big/);
-  await frame.click();
-  await expect(frame).not.toHaveClass(/big/);
+  await frame.click();  // full size over everything; a click (or Esc) closes it
+  const view = page.getByRole('button', { name: 'Close the picture' });
+  await expect(view.getByRole('img', { name: 'Full size' })).toBeVisible();
+  await view.click();
+  await expect(view).toHaveCount(0);
 
   // Android's back (the browser's here) leaves the chat for the session list, not the app
   const tree = page.getByRole('navigation', { name: 'Sessions' });
