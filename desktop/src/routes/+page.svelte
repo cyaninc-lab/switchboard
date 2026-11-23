@@ -1764,7 +1764,7 @@
                 </div>
               {:else if line.kind === 'text'}
                 {#if msg.type === 'user'}
-                  <div class="you"><span class="prompt">❯ </span>{line.text}</div>
+                  <div class="you"><span class="prompt">❯</span>{line.text}</div>
                 {:else}
                   <div class="reply"><span class="bullet">⏺</span><div class="md">{@html md(line.text)}</div>
                     <button type="button" class="copymsg" aria-label="Copy this reply" title="Copy (as markdown)" onclick={(ev) => copyText(line.text, ev.currentTarget)}>
@@ -1836,7 +1836,7 @@
         {#if liveErr}<div class="liveerr" role="alert">{liveErr}</div>{/if}
         {#if pendingQ[selected.entry.id]?.length}
           <div class="pendingq mono" role="list" aria-label="Queued messages">
-            {#each pendingQ[selected.entry.id] as m (m.uuid)}<div class="you" role="listitem"><span class="prompt">❯ </span>{msgText(m)}<span class="clock" title="Waiting for Claude to read it" aria-label="not read yet">🕒</span><button class="unqueue" title="Take it back (Claude hasn't read it)" aria-label="Remove from queue" onclick={() => unqueue(m)}>✕</button></div>{/each}
+            {#each pendingQ[selected.entry.id] as m (m.uuid)}<div class="you" role="listitem"><span class="prompt">❯</span>{msgText(m)}<span class="clock" title="Waiting for Claude to read it" aria-label="not read yet">🕒</span><button class="unqueue" title="Take it back (Claude hasn't read it)" aria-label="Remove from queue" onclick={() => unqueue(m)}>✕</button></div>{/each}
           </div>
         {/if}
         {#if queued[selected.entry.id]}<div class="queued muted small" aria-live="polite">{queued[selected.entry.id]} queued: sends when Claude finishes (Esc puts {queued[selected.entry.id] === 1 ? 'it' : 'them'} back here)</div>{/if}
@@ -1916,7 +1916,7 @@
         <p class="muted small btwnote">Answers from what's been said so far. Nothing here goes into the session.</p>
         <div class="btwlog" role="log" aria-label="Side chat answers">
           {#each c.items as it, i (i)}
-            {#if it.who === 'you'}<div class="you"><span class="prompt">❯ </span>{it.text}</div>
+            {#if it.who === 'you'}<div class="you"><span class="prompt">❯</span>{it.text}</div>
             {:else}<div class="md btwans">{@html md(it.text)}</div>{/if}
           {/each}
           {#if c.streaming}<div class="btwans">{c.streaming}<span class="cursor">▌</span></div>{:else if c.busy}<div class="muted small">Thinking…</div>{/if}
@@ -2555,7 +2555,7 @@
   .md :global(th), .md :global(td) { border: 1px solid var(--s1); padding: 3px 8px; text-align: left; }
   .md :global(th) { background: var(--s0); }
   .md :global(a) { color: var(--sky); }
-  .md :global(ul), .md :global(ol) { margin: 4px 0 8px; padding-left: 20px; } .prompt { color: var(--mauve); font-weight: 600; } .bullet { color: var(--mauve); }
+  .md :global(ul), .md :global(ol) { margin: 4px 0 8px; padding-left: 20px; } .prompt { color: var(--mauve); font-weight: 600; } .you .prompt { margin-right: 0.45em; } .bullet { color: var(--mauve); }
   .tool { color: var(--sub1); } .result { color: var(--o2); padding-left: 18px; }
   .more { align-self: flex-start; margin-left: 30px; }
   .agent { border-left: 2px solid var(--s1); padding-left: 10px; } .agent summary { cursor: pointer; color: var(--sub1); }
