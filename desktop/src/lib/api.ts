@@ -101,6 +101,8 @@ export const saveWatch = (m: Machine, w: Partial<Watch>) => w.id
   ? call<Watch>(m, `/v1/watches/${w.id}`, { method: 'PATCH', body: JSON.stringify(w) })
   : call<Watch>(m, '/v1/watches', { method: 'POST', body: JSON.stringify(w) });
 export const removeWatch = (m: Machine, id: string) => call<void>(m, `/v1/watches/${id}`, { method: 'DELETE' });
+export const withdraw = (m: Machine, id: string, text: string) =>  // take back a message Claude hasn't read yet
+  call<{ withdrawn: boolean }>(m, `/v1/entries/${id}/withdraw`, { method: 'POST', body: JSON.stringify({ text }) });
 export const testWatch = (m: Machine, id: string) => call<{ fired: boolean }>(m, `/v1/watches/${id}/test`, { method: 'POST' });
 export const inbox = (m: Machine) => call<{ items: InboxItem[] }>(m, '/v1/inbox').then((d) => d.items);
 export const deleteInboxItem = (m: Machine, id: number) => call<void>(m, `/v1/inbox/${id}`, { method: 'DELETE' });
