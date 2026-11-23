@@ -737,6 +737,16 @@ def test_new_session_defaults(tmp_path, monkeypatch):
         added = await (await client.post("/v1/entries", headers=h, json={"session_id": "demo-2"})).json()
         assert (added["mode"], added["model"], added["effort"]) == ("plan", "haiku", "low")
         assert store.entry(e["id"])["mode"] is None  # the session added before keeps its own
+        # a project's defaults go over the machine's, for sessions added to that project
+        assert (await client.put("/v1/settings", headers=h, json={"project_defaults": {"web": {"mode": "yolo"}}})).status == 400
+        r = await (await client.put("/v1/settings", headers=h, json={"project_defaults": {"web": {"model": "sonnet", "mode": None}}})).json()
+        assert r["project_defaults"] == {"web": {"model": "sonnet"}}
+        web_ = await (await client.post("/v1/entries", headers=h, json={"new": {"cwd": str(tmp_path)}, "group": "web"})).json()
+        assert (web_["mode"], web_["model"], web_["effort"]) == ("plan", "sonnet", "low")
+        other = await (await client.post("/v1/entries", headers=h, json={"new": {"cwd": str(tmp_path)}, "group": "other"})).json()
+        assert other["model"] == "haiku"
+        r = await (await client.put("/v1/settings", headers=h, json={"project_defaults": {"web": {}}})).json()
+        assert r["project_defaults"] == {}
         await client.close()
     asyncio.run(t())
 
