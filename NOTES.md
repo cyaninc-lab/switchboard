@@ -1,3 +1,2 @@
-## Switchboard 0.1.38
-
-- **Machines fold in the session list, like projects:** click a machine's name to collapse it (it shows how many sessions it has); remembered on each device.
+- Queued messages: no more empty rows with a clock at the bottom when a subagent or background task finishes.
+- Changed your mind about a message you sent while Claude was working? Click the ✕ on its row to take it back before Claude reads it.
