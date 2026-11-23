@@ -39,5 +39,12 @@ test('messages between sessions show in their own box, in both chats', async ({ 
   const got = log.getByRole('note', { name: 'From Mail A' });
   await expect(got).toContainText('is the backup finished?');
   await expect(log.locator('.you', { hasText: 'sent through Switchboard' })).toHaveCount(0);  // not shown as typed (the demo's reply echoes it)
+  // and on the right, the two agents' conversation
+  const side = page.getByRole('complementary', { name: 'Between agents' });
+  await expect(side.getByRole('log', { name: 'Letters with Mail A' })).toContainText('is the backup finished?');
+  await side.getByRole('button', { name: "Hide the agents' chat" }).click();
+  await expect(side).toHaveCount(0);
+  await page.getByRole('button', { name: '✉ Agents' }).click();
+  await expect(side).toBeVisible();
   await page.screenshot({ path: 'e2e/.results/mail.png' });  // the demo's trigger words (run, plan, slow…) are avoided above
 });
