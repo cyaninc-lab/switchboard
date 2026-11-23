@@ -890,7 +890,7 @@ def test_upload_saves_the_file_for_the_session(tmp_path, monkeypatch):
         client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
         r = await client.post(f"/v1/entries/{e['id']}/upload?name=../../notes.pdf", headers=h, data=b"%PDF-1.4 hello")
         path = (await r.json())["path"]
-        assert path.startswith(str(tmp_path / "switchboard-uploads")) and path.endswith("/notes.pdf")  # no climbing out
+        assert path.startswith(str(tmp_path / "switchboard-uploads")) and os.path.basename(path) == "notes.pdf"  # no climbing out
         assert open(path, "rb").read() == b"%PDF-1.4 hello"
         monkeypatch.setattr(appmod, "UPLOAD_MAX", 10)
         assert (await client.post(f"/v1/entries/{e['id']}/upload?name=big.bin", headers=h, data=b"x" * 100)).status == 413
