@@ -54,3 +54,37 @@ test('defaults for new sessions in Settings; the footer says what "default" is',
   await row.getByRole('combobox', { name: 'Model', exact: true }).selectOption('');
   await expect(row.getByRole('combobox', { name: 'Model', exact: true })).toHaveValue('');
 });
+
+test('right-click a project: a new session in it, and its own defaults', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '+ Connect a machine' }).click();
+  await page.getByLabel('Daemon address').fill(`http://127.0.0.1:${DAEMON_PORT}`);
+  await page.getByLabel('One-time code').fill(execFileSync(daemon, ['--data', DATA, 'pair']).toString().trim());
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  const tree = page.getByRole('navigation', { name: 'Sessions' });
+  const dir = mkdtempSync(join(tmpdir(), 'sb-proj-'));
+  const proj = dir.split('/').pop()!;
+  await page.getByRole('button', { name: '+ Add' }).click();
+  const dialog = page.getByRole('form', { name: 'Add to Switchboard' });
+  await dialog.getByRole('tab', { name: 'New session' }).click();
+  await dialog.getByLabel(/Folder on/).fill(dir);
+  await dialog.getByLabel('Name in the tree').fill('First in project');
+  await dialog.getByRole('button', { name: 'Create session' }).click();
+  await expect(tree.getByRole('button', { name: /First in project/ })).toBeVisible();
+
+  await tree.getByRole('button', { name: new RegExp(proj) }).first().click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Defaults…' }).click();
+  const pd = page.getByRole('dialog', { name: `Defaults for ${proj}` });
+  await Promise.all([page.waitForResponse((r) => r.url().endsWith('/v1/settings') && r.request().method() === 'PUT'),
+    pd.getByRole('combobox', { name: 'Model' }).selectOption({ label: 'Haiku 5.5' })]);
+  await pd.getByRole('button', { name: 'Done' }).click();
+
+  await tree.getByRole('button', { name: new RegExp(proj) }).first().click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'New session' }).click();
+  await expect(dialog.getByLabel(/Folder on/)).toHaveValue(dir);  // where the project works
+  await expect(dialog.getByText('Starts with')).toBeVisible();
+  await expect(dialog.locator('.startswith')).toContainText('haiku');
+  await dialog.getByLabel('Name in the tree').fill('Second in project');
+  await dialog.getByRole('button', { name: 'Create session' }).click();
+  await expect(page.getByRole('contentinfo').getByLabel('Model')).toHaveValue('haiku');
+});

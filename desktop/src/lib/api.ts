@@ -130,7 +130,7 @@ export const githubSignOut = (m: Machine) => call<GitHub>(m, '/v1/github', { met
 export const githubIssue = (m: Machine, title: string, body: string) => call<{ url: string; number: number }>(m, '/v1/github/issue', { method: 'POST', body: JSON.stringify({ title, body }) });
 export const machineInfo = (m: Machine) => call<{ name: string; daemon: string; sdk: string; os: string }>(m, '/v1/machine');
 export type NewSessionDefaults = { mode?: string; model?: string; effort?: string; account?: string };
-export type DaemonSettings = { idle_close_minutes: number; project_order?: string[]; new_session?: NewSessionDefaults; claude_default_mode?: string };
+export type DaemonSettings = { idle_close_minutes: number; project_order?: string[]; new_session?: NewSessionDefaults; project_defaults?: Record<string, NewSessionDefaults>; claude_default_mode?: string };
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export const settings = (m: Machine) => call<DaemonSettings>(m, '/v1/settings');
 // phone notifications: the ntfy server (set on one machine is enough) and the phones subscribed to this daemon

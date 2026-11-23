@@ -103,7 +103,7 @@
   let loadingHistory = $state(false);
   let openSeq = 0;
   let filter = $state('');
-  let dialog = $state<'connect' | 'add' | 'settings' | 'pair' | 'report' | 'watches' | 'delete' | 'removed' | null>(null);
+  let dialog = $state<'connect' | 'add' | 'settings' | 'pair' | 'report' | 'watches' | 'delete' | 'removed' | 'projdefaults' | null>(null);
 
   // inbox: per machine, merged newest first
   let inboxBy = $state<Record<string, api.InboxItem[]>>({});
@@ -407,6 +407,21 @@
     const next = { ...(dset[m.url]?.new_session ?? {}), [key]: value || undefined };
     try { dset[m.url] = await api.setSettings(m, { new_session: next }); } catch (e) { say(`Couldn't change ${m.name}: ${(e as Error).message}`); }
   }
+  // a project's own defaults (right-click a project → Defaults…), over the machine's
+  let pdFor = $state<{ machine: Machine; group: string } | null>(null);
+  async function setProjDefault(m: Machine, g: string, key: keyof api.NewSessionDefaults, value: string) {
+    const next = { ...(dset[m.url]?.project_defaults?.[g] ?? {}), [key]: value || undefined };
+    try { dset[m.url] = await api.setSettings(m, { project_defaults: { [g]: next } }); } catch (e) { say(`Couldn't change ${g}: ${(e as Error).message}`); }
+  }
+  async function newInProject(m: Machine, g: string) {
+    ctx = null;
+    await openAdd();
+    aMachine = m; aProj = projects.includes(g) ? g : '';
+    // its folder: where the project's latest session works
+    const cwd = (tree[m.url]?.entries ?? []).filter((e) => (e.group ?? '') === g && e.session?.cwd).sort((a, b) => (b.session!.last_modified ?? 0) - (a.session!.last_modified ?? 0))[0]?.session?.cwd;
+    if (cwd) { nFolder = cwd; nTyped = true; }
+    await newTab();
+  }
   async function setIdle(m: Machine, minutes: number) {
     try { dset[m.url] = await api.setSettings(m, { idle_close_minutes: minutes }); } catch (e) { say(`Couldn't change ${m.name}: ${(e as Error).message}`); }
   }
@@ -455,14 +470,13 @@
   let nTyped = false; // the suggested folder arrives async: never let it land in the middle of someone's typing
   let nFolders = $state<string[]>([]);
   let nName = $state('');
-  let nMode = $state('default');
-  let nModel = $state('default');
+  // '' = what the project (or else the machine) starts new sessions with: the daemon fills it in
+  let nMode = $state('');
+  let nModel = $state('');
   let nAccount = $state('');
-  // the New session form starts from the machine's defaults (Settings → New sessions), so you see what you'll get
-  $effect(() => {
-    const d = aMachine ? dset[aMachine.url]?.new_session ?? {} : {};
-    untrack(() => { nMode = d.mode ?? 'default'; nModel = d.model ?? 'default'; nAccount = d.account ?? ''; });
-  });
+  let nMore = $state(false);  // the mode/model/account pickers, folded behind "Change"
+  // what a new session in this project would start with: the project's defaults over the machine's
+  const startsWith = (m: Machine | null, group: string) => m ? { ...(dset[m.url]?.new_session ?? {}), ...(dset[m.url]?.project_defaults?.[group] ?? {}) } : {};
   async function newTab() {
     aTab = 'new'; aError = '';
     if (!aMachine) return;
@@ -473,8 +487,8 @@
     ev.preventDefault();
     if (!aMachine) return;
     try {
-      const e = await api.addEntry(aMachine, { new: { cwd: nFolder.trim() }, name: nName.trim() || undefined, group: aGroup || undefined, mode: nMode, model: nModel === 'default' ? undefined : nModel, account: nAccount || undefined });
-      dialog = null; nName = ''; aProj = ''; aNewProj = '';
+      const e = await api.addEntry(aMachine, { new: { cwd: nFolder.trim() }, name: nName.trim() || undefined, group: aGroup || undefined, mode: nMode || undefined, model: nModel || undefined, account: nAccount || undefined });
+      dialog = null; nName = ''; nMode = ''; nModel = ''; nAccount = ''; nMore = false; aProj = ''; aNewProj = '';
       await refresh();
       open(aMachine, e);
     } catch (e) { aError = (e as Error).message === 'no_such_folder' ? `No folder ${nFolder} on ${aMachine.name}` : (e as Error).message; }
@@ -1582,6 +1596,8 @@
   {:else if mm.group !== undefined}
     {@const g = mm.group}
     <div class="ctxmenu" role="menu" aria-label="{g} project actions" style="left: {mm.x}px; top: {mm.y}px">
+      <button role="menuitem" onclick={() => newInProject(mm.machine, g)}>New session</button>
+      <button role="menuitem" onclick={() => { const m = mm.machine; pdFor = { machine: m, group: g }; ctx = null; loadModels(m); loadAccounts(m); dialog = 'projdefaults'; }}>Defaults…</button>
       <button role="menuitem" onclick={() => startRename(`g:${mm.machine.url}|${g}`, g)}>Rename project</button>
     </div>
   {/if}
@@ -2188,16 +2204,7 @@
             {@render hint('What sessions on ' + m.name + ' start with.', 'Applies to sessions you add or create from now on; sessions already in the list keep theirs.')}
             {#if dset[m.url] === null}<p class="muted small">{m.name}: needs a newer Switchboard there.</p>
             {:else}
-              <div class="defaults" role="group" aria-label="New sessions on {m.name}">
-                <label>Mode<select aria-label="Mode" value={ns.mode ?? ''} onchange={(e) => setDefault(m, 'mode', (e.currentTarget as HTMLSelectElement).value)}>
-                  <option value="">Claude Code's ({dset[m.url]?.claude_default_mode ?? 'default'})</option>{#each api.MODES as md}<option value={md}>{md}</option>{/each}</select></label>
-                <label>Model<select aria-label="Model" value={ns.model ?? ''} onchange={(e) => setDefault(m, 'model', (e.currentTarget as HTMLSelectElement).value)}>
-                  <option value="">Claude Code's default</option>{#each (modelList[m.url] ?? []).filter((x) => x.value !== 'default') as md (md.value)}<option value={md.value}>{md.displayName}</option>{/each}</select></label>
-                <label>Effort<select aria-label="Effort" value={ns.effort ?? ''} onchange={(e) => setDefault(m, 'effort', (e.currentTarget as HTMLSelectElement).value)}>
-                  <option value="">the model's default</option>{#each api.EFFORTS as ef}<option value={ef}>{ef}</option>{/each}</select></label>
-                <label>Account<select aria-label="Account" value={ns.account ?? ''} onchange={(e) => setDefault(m, 'account', (e.currentTarget as HTMLSelectElement).value)}>
-                  <option value="">machine login</option>{#each acctList[m.url] ?? [] as a (a.name)}<option value={a.name}>{a.name}</option>{/each}</select></label>
-              </div>
+              {@render defaultsRow(m, 'New sessions on ' + m.name, ns, {}, (k, v) => setDefault(m, k, v))}
             {/if}
             <h3 class="sub">Idle sessions</h3>
             <label>Close idle sessions on {m.name}
@@ -2303,6 +2310,33 @@
     </div>
   </div>
 {/if}
+{#snippet defaultsRow(m: Machine, label: string, ns: api.NewSessionDefaults, under: api.NewSessionDefaults, set: (k: keyof api.NewSessionDefaults, v: string) => void)}
+  <!-- under: what applies when this is left alone (a project's row: the machine's defaults) -->
+  <div class="defaults" role="group" aria-label={label}>
+    <label>Mode<select aria-label="Mode" value={ns.mode ?? ''} onchange={(e) => set('mode', (e.currentTarget as HTMLSelectElement).value)}>
+      <option value="">{under.mode ? `machine's (${under.mode})` : `Claude Code's (${dset[m.url]?.claude_default_mode ?? 'default'})`}</option>{#each api.MODES as md}<option value={md}>{md}</option>{/each}</select></label>
+    <label>Model<select aria-label="Model" value={ns.model ?? ''} onchange={(e) => set('model', (e.currentTarget as HTMLSelectElement).value)}>
+      <option value="">{under.model ? `machine's (${under.model})` : "Claude Code's default"}</option>{#each (modelList[m.url] ?? []).filter((x) => x.value !== 'default') as md (md.value)}<option value={md.value}>{md.displayName}</option>{/each}</select></label>
+    <label>Effort<select aria-label="Effort" value={ns.effort ?? ''} onchange={(e) => set('effort', (e.currentTarget as HTMLSelectElement).value)}>
+      <option value="">{under.effort ? `machine's (${under.effort})` : "the model's default"}</option>{#each api.EFFORTS as ef}<option value={ef}>{ef}</option>{/each}</select></label>
+    <label>Account<select aria-label="Account" value={ns.account ?? ''} onchange={(e) => set('account', (e.currentTarget as HTMLSelectElement).value)}>
+      <option value="">{under.account ? `machine's (${under.account})` : 'machine login'}</option>{#each acctList[m.url] ?? [] as a (a.name)}<option value={a.name}>{a.name}</option>{/each}</select></label>
+  </div>
+{/snippet}
+
+{#if dialog === 'projdefaults' && pdFor}
+  {@const m = pdFor.machine}{@const g = pdFor.group}
+  <div class="backdrop" role="presentation" {...backdrop(() => (dialog = null))}>
+    <div class="dialog" role="dialog" aria-label="Defaults for {g}">
+      <h2>Defaults for {g}</h2>
+      <p class="muted small">What new sessions in {g} on {m.name} start with. Left alone, a setting comes from the machine's (Settings → Sessions). Sessions already in it keep theirs.</p>
+      {#if dset[m.url] === null}<p class="muted small">{m.name}: needs a newer Switchboard there.</p>
+      {:else}{@render defaultsRow(m, 'Defaults for ' + g, dset[m.url]?.project_defaults?.[g] ?? {}, dset[m.url]?.new_session ?? {}, (k, v) => setProjDefault(m, g, k, v))}{/if}
+      <div class="actions"><button type="button" class="btn primary" onclick={() => (dialog = null)}>Done</button></div>
+    </div>
+  </div>
+{/if}
+
 {#if dialog === 'add'}
   <div class="backdrop" role="presentation" {...backdrop(() => (dialog = null))}>
     <form class="dialog wide" aria-label="Add to Switchboard" onsubmit={(e) => (aTab === 'new' ? createNew(e) : add(e))}>
@@ -2333,15 +2367,25 @@
         <div class="grid2">
           <label>Name in the tree<input bind:value={nName} placeholder="New session" /></label>
           {@render projectPicker()}
-          <label>Permission mode<select bind:value={nMode}>{#each api.MODES as m}<option value={m}>{m}</option>{/each}</select></label>
-          <label>Account<select bind:value={nAccount}>
-            <option value="">machine login</option>
-            {#each aMachine ? acctList[aMachine.url] ?? [] : [] as a (a.name)}<option value={a.name}>{a.name}</option>{/each}
-          </select></label>
-          <label>Model<select bind:value={nModel}>
-            {#each (aMachine && modelList[aMachine.url]?.length) ? modelList[aMachine.url] : [{ value: 'default', displayName: 'Default' }] as m (m.value)}<option value={m.value}>{m.displayName}</option>{/each}
-          </select></label>
         </div>
+        <!-- what it starts with: the project's (or machine's) defaults, changeable for this one -->
+        {@const sw = startsWith(aMachine, aGroup || (nFolder.trim().replace(/\/+$/, '').split(/[\\/]/).pop() ?? ''))}
+        <div class="startswith small">
+          <span class="muted">Starts with</span>
+          <span>{nMode || sw.mode || 'default mode'} · {nModel || sw.model || 'default model'} · {nAccount || sw.account || 'machine login'}</span>
+          <button type="button" class="link" aria-expanded={nMore} onclick={() => (nMore = !nMore)}>{nMore ? 'Done' : 'Change'}</button>
+        </div>
+        {#if nMore}
+          <div class="grid2">
+            <label>Permission mode<select bind:value={nMode}><option value="">project default{sw.mode ? ` (${sw.mode})` : ''}</option>{#each api.MODES as m}<option value={m}>{m}</option>{/each}</select></label>
+            <label>Model<select bind:value={nModel}><option value="">project default{sw.model ? ` (${sw.model})` : ''}</option>
+              {#each (aMachine ? modelList[aMachine.url] ?? [] : []).filter((x) => x.value !== 'default') as m (m.value)}<option value={m.value}>{m.displayName}</option>{/each}
+            </select></label>
+            <label>Account<select bind:value={nAccount}><option value="">project default ({sw.account ?? 'machine login'})</option>
+              {#each aMachine ? acctList[aMachine.url] ?? [] : [] as a (a.name)}<option value={a.name}>{a.name}</option>{/each}
+            </select></label>
+          </div>
+        {/if}
         {#if aError}<p class="error">{aError}</p>{/if}
         <div class="actions"><button type="button" class="btn ghost" onclick={() => (dialog = null)}>Cancel</button><button class="btn primary">Create session</button></div>
       {:else}
@@ -2679,6 +2723,7 @@
   .pendingq .you { display: flex; align-items: baseline; }
   .pendingq .you .unqueue { margin-left: auto; padding: 0 6px; background: none; border: 0; color: inherit; cursor: pointer; opacity: 0.6; }
   .pendingq .you .unqueue:hover { opacity: 1; }
+  .startswith { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin: 2px 0 4px; }
   .readimg { align-self: flex-start; padding: 0; margin: 2px 0 6px 18px; border: 1px solid var(--s1); border-radius: 8px; background: none; cursor: zoom-in; line-height: 0; max-width: calc(100% - 18px); }
   .readimg img { max-height: 160px; max-width: 240px; object-fit: contain; border-radius: 8px; }
   .shotbtn { all: unset; cursor: zoom-in; display: contents; }

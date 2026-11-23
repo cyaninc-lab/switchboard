@@ -196,8 +196,25 @@ NEW_SESSION = "new_session"  # defaults for sessions added from now on: {mode, m
 DEFAULT_KEYS = ("mode", "model", "effort", "account")
 
 
-def _defaults(store):
-    return json.loads(store.setting(NEW_SESSION, "{}") or "{}")
+PROJECT_DEFAULTS = "project_defaults"  # per project: {group: {mode, model, effort, account}}, over the machine's
+
+
+def _defaults(store, group=None):
+    d = json.loads(store.setting(NEW_SESSION, "{}") or "{}")
+    return d | (json.loads(store.setting(PROJECT_DEFAULTS, "{}") or "{}").get(group) or {}) if group else d
+
+
+def _bad_defaults(d, store):
+    return not isinstance(d, dict) or set(d) - set(DEFAULT_KEYS) or (d.get("mode") and d["mode"] not in MODES) \
+        or (d.get("effort") and d["effort"] not in EFFORTS) or (d.get("account") and d["account"] not in {a["name"] for a in store.accounts()})
+
+
+def _fill(body, store, group):
+    """What the request leaves out comes from the project's defaults, then the machine's."""
+    d = _defaults(store, group)
+    for k in DEFAULT_KEYS:
+        if not body.get(k) and d.get(k):
+            body[k] = d[k]
 
 
 def _claude_default_mode():
@@ -211,14 +228,11 @@ def _claude_default_mode():
 
 async def add_entry(request):
     body, store = await request.json(), request.app[STORE]
-    d = _defaults(store)  # what the request leaves out comes from the machine's defaults for new sessions
-    for k in DEFAULT_KEYS:
-        if not body.get(k) and d.get(k):
-            body[k] = d[k]
     if "new" in body:
         cwd = os.path.abspath(os.path.expanduser(body["new"].get("cwd") or "~"))
         if not os.path.isdir(cwd):
             raise web.HTTPBadRequest(text=json.dumps({"code": "no_such_folder"}), content_type="application/json")
+        _fill(body, store, body.get("group") or _default_group(cwd))
         e = store.add_entry(str(uuid.uuid4()), body.get("name") or "New session", body.get("group") or _default_group(cwd),
                             body.get("account"), body.get("mode"), cwd=cwd, model=body.get("model") or None)
         if body.get("effort"):
@@ -237,6 +251,7 @@ async def add_entry(request):
         e = store.restore_entry(old["id"])
         e = store.update_entry(e["id"], name=body.get("name") or e["name"], grp=body.get("group") or _default_group(info.cwd))
         return web.json_response(_entry_view(e, info, await _live(request), request.app[RUNNER]), status=200)
+    _fill(body, store, body.get("group") or _default_group(info.cwd))
     e = store.add_entry(info.session_id, body.get("name") or info.custom_title or info.summary or "Untitled",
                         body.get("group") or _default_group(info.cwd),
                         body.get("account") or None, body.get("mode"))
@@ -428,7 +443,8 @@ async def get_settings(request):
     st = request.app[STORE]
     return web.json_response({"idle_close_minutes": int(st.setting(IDLE_SETTING, "0") or 0),
                               "project_order": json.loads(st.setting(PROJECT_ORDER, "[]")),
-                              "new_session": _defaults(st), "claude_default_mode": _claude_default_mode()})
+                              "new_session": _defaults(st), "project_defaults": json.loads(st.setting(PROJECT_DEFAULTS, "{}") or "{}"),
+                              "claude_default_mode": _claude_default_mode()})
 
 
 async def set_settings(request):
@@ -439,10 +455,19 @@ async def set_settings(request):
         request.app[STORE].set_setting(IDLE_SETTING, str(body["idle_close_minutes"]))
     if "new_session" in body:  # only sessions added after this get them
         d = body["new_session"] or {}
-        if not isinstance(d, dict) or set(d) - set(DEFAULT_KEYS) or (d.get("mode") and d["mode"] not in MODES) \
-                or (d.get("effort") and d["effort"] not in EFFORTS) or (d.get("account") and d["account"] not in {a["name"] for a in request.app[STORE].accounts()}):
+        if _bad_defaults(d, request.app[STORE]):
             raise web.HTTPBadRequest(text=json.dumps({"code": "bad_new_session_defaults"}), content_type="application/json")
         request.app[STORE].set_setting(NEW_SESSION, json.dumps({k: v for k, v in d.items() if v}))
+    if "project_defaults" in body:  # {group: {...}}: one project's at a time is fine (others are kept); {} or null clears one
+        pd, st = body["project_defaults"], request.app[STORE]
+        if not isinstance(pd, dict) or any(not isinstance(g, str) or (v and _bad_defaults(v, st)) for g, v in pd.items()):
+            raise web.HTTPBadRequest(text=json.dumps({"code": "bad_project_defaults"}), content_type="application/json")
+        cur = json.loads(st.setting(PROJECT_DEFAULTS, "{}") or "{}")
+        for g, v in pd.items():
+            v = {k: x for k, x in (v or {}).items() if x}
+            if v: cur[g] = v
+            else: cur.pop(g, None)
+        st.set_setting(PROJECT_DEFAULTS, json.dumps(cur))
     if "project_order" in body:  # project names, top first (projects not listed follow, as before)
         order = body["project_order"]
         if not isinstance(order, list) or not all(isinstance(x, str) for x in order) or len(order) > 1000:
