@@ -482,6 +482,14 @@ async def answer_request(request):
     return web.json_response({"answered": ok}, status=200 if ok else 409)
 
 
+async def withdraw_message(request):
+    """Take back a message sent while Claude worked, before Claude reads it."""
+    b = await request.json()
+    if not isinstance(b.get("text"), str):
+        raise web.HTTPBadRequest(text=json.dumps({"code": "bad_withdraw"}), content_type="application/json")
+    return web.json_response({"withdrawn": await request.app[RUNNER].withdraw(request.match_info["id"], b["text"])})
+
+
 async def send_message(request):
     """A reply from a phone notification: send it to the session (the WebSocket's send, over plain HTTP)."""
     st, b = request.app[STORE], await request.json()
@@ -908,7 +916,7 @@ def make_app(store: Store, name=None):
         web.get("/v1/network", get_network), web.put("/v1/network", set_network),
         web.get("/v1/settings", get_settings), web.put("/v1/settings", set_settings),
         web.get("/v1/push", get_push), web.put("/v1/push", set_push),
-        web.post("/v1/entries/{id}/answer", answer_request), web.post("/v1/entries/{id}/send", send_message),
+        web.post("/v1/entries/{id}/answer", answer_request), web.post("/v1/entries/{id}/send", send_message), web.post("/v1/entries/{id}/withdraw", withdraw_message),
         web.get("/v1/github", github_status), web.post("/v1/github/device", github_start), web.post("/v1/github/poll", github_poll),
         web.delete("/v1/github", github_sign_out), web.post("/v1/github/issue", github_issue), web.post("/v1/pair_code", pair_code),
         web.post("/v1/peer_token", peer_token), web.get("/v1/peers", get_peers), web.put("/v1/peers", set_peers),

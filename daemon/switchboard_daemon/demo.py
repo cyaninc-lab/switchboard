@@ -266,6 +266,8 @@ class ClaudeSDKClient:
         else:
             async for msg in text:  # a user message with content blocks (images)
                 blocks = msg["message"]["content"]
+                if isinstance(blocks, str):  # text with a uuid (sent mid-turn)
+                    blocks = [{"type": "text", "text": blocks}]
                 self.inbox.append((" ".join(b.get("text", "") for b in blocks if b["type"] == "text"), sum(b["type"] == "image" for b in blocks)))
         self.go.set()
 

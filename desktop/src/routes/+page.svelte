@@ -523,6 +523,14 @@
   // per session: what the daemon last said is unread (a message missing from the next list was read, if it was there)
   const unreadSeen: Record<string, Set<string>> = {};
   const msgText = (m: HistoryMessage) => (Array.isArray(m.message.content) ? m.message.content : []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n');
+  async function unqueue(msg: HistoryMessage) {  // ✕ on a queued row: out of Claude Code's queue, unread
+    const s = selected;
+    if (!s) return;
+    const id = s.entry.id, rm = () => (pendingQ[id] = (pendingQ[id] ?? []).filter((x) => x !== msg));
+    if (!unreadSeen[id]?.has(msgText(msg))) return rm();  // not handed to Claude yet (or an old daemon): only here
+    try { if ((await api.withdraw(s.machine, id, msgText(msg))).withdrawn) rm(); else say("Couldn't take it back: Claude has read it"); }
+    catch (e) { say(`Couldn't take it back: ${e}`); }
+  }
   function giveBack(entryId: string, texts: string[]) {  // queued text that won't be sent goes back in the box
     const t = texts.filter((x) => x.trim()).join('\n');
     if (!t) return;
@@ -736,7 +744,7 @@
         else if (seen.has(msgText(msg)) && !e.dropped.includes(msgText(msg))) read.push(msg);
         else if (!e.dropped.includes(msgText(msg))) keep.push(msg);  // sent just now: not in the queue yet
       }
-      for (const t of left) keep.push({ type: 'user', uuid: api.uid(), message: { role: 'user', content: t } });  // from another device, or before a restart
+      for (const t of left) keep.push({ type: 'user', uuid: api.uid(), message: { role: 'user', content: [{ type: 'text', text: t }] } });  // from another device, or before a restart
       pendingQ[e.entry] = keep;
       unreadSeen[e.entry] = new Set(e.items);
       if (read.length) {
@@ -1000,7 +1008,7 @@
         const local = pendingQ[entry.id] ?? [];
         const left = [...un];
         const keep = local.filter((msg) => { const i = left.indexOf(msgText(msg)); if (i >= 0) { left.splice(i, 1); return true; } return !unreadSeen[entry.id]?.has(msgText(msg)); });
-        pendingQ[entry.id] = [...keep, ...left.map((t) => ({ type: 'user' as const, uuid: api.uid(), message: { role: 'user', content: t } }))];
+        pendingQ[entry.id] = [...keep, ...left.map((t) => ({ type: 'user' as const, uuid: api.uid(), message: { role: 'user', content: [{ type: 'text', text: t }] } }))];
         unreadSeen[entry.id] = new Set(un);
       }
       const have = new Set(hist.map((m) => m.uuid));
@@ -1828,7 +1836,7 @@
         {#if liveErr}<div class="liveerr" role="alert">{liveErr}</div>{/if}
         {#if pendingQ[selected.entry.id]?.length}
           <div class="pendingq mono" role="list" aria-label="Queued messages">
-            {#each pendingQ[selected.entry.id] as m (m.uuid)}<div class="you" role="listitem"><span class="prompt">❯ </span>{msgText(m)}<span class="clock" title="Waiting for Claude to read it" aria-label="not read yet">🕒</span></div>{/each}
+            {#each pendingQ[selected.entry.id] as m (m.uuid)}<div class="you" role="listitem"><span class="prompt">❯ </span>{msgText(m)}<span class="clock" title="Waiting for Claude to read it" aria-label="not read yet">🕒</span><button class="unqueue" title="Take it back (Claude hasn't read it)" aria-label="Remove from queue" onclick={() => unqueue(m)}>✕</button></div>{/each}
           </div>
         {/if}
         {#if queued[selected.entry.id]}<div class="queued muted small" aria-live="polite">{queued[selected.entry.id]} queued: sends when Claude finishes (Esc puts {queued[selected.entry.id] === 1 ? 'it' : 'them'} back here)</div>{/if}
@@ -2633,6 +2641,9 @@
     .settabs button { white-space: nowrap; }
   }
   .pendingq .clock { margin-left: 6px; font-size: 0.85em; opacity: 0.8; }
+  .pendingq .you { display: flex; align-items: baseline; }
+  .pendingq .you .unqueue { margin-left: auto; padding: 0 6px; background: none; border: 0; color: inherit; cursor: pointer; opacity: 0.6; }
+  .pendingq .you .unqueue:hover { opacity: 1; }
   .readimg { align-self: flex-start; padding: 0; margin: 2px 0 6px 18px; border: 1px solid var(--s1); border-radius: 8px; background: none; cursor: zoom-in; line-height: 0; max-width: calc(100% - 18px); }
   .readimg img { max-height: 160px; max-width: 240px; object-fit: contain; border-radius: 8px; }
   .readimg:global(.big) { cursor: zoom-out; }  /* toggled on click */

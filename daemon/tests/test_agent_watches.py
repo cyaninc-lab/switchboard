@@ -76,12 +76,27 @@ def test_unread_messages_follow_claude_codes_queue(tmp_path, monkeypatch):
         add({"operation": "enqueue", "content": "one"}, {"operation": "enqueue", "content": "two"}, {"operation": "enqueue", "content": "three"})
         await asyncio.sleep(1)
         assert runner.unread("e1") == ["one", "two", "three"] and events[-1]["items"] == ["one", "two", "three"]
+        add({"operation": "enqueue", "content": "<task-notification>\n<task-id>a1</task-id>"}, {"operation": "enqueue"})  # Claude's own: never shown
+        await asyncio.sleep(1)
+        assert runner.unread("e1") == ["one", "two", "three"]
         add({"operation": "remove", "content": "two", "reason": "absorbed_mid_turn"})  # read between steps
         await asyncio.sleep(1)
         assert runner.unread("e1") == ["one", "three"]
         add({"operation": "dequeue"})  # taken as the next turn
         await asyncio.sleep(1)
         assert runner.unread("e1") == ["three"]
+        # the user takes "four" back before Claude reads it: cancelled by uuid; Claude Code logs that as a dequeue
+        calls = []
+        async def control(req): calls.append(req); return {"cancelled": True}
+        lv.client = SimpleNamespace(_query=SimpleNamespace(_send_control_request=control))
+        add({"operation": "enqueue", "content": "four"}); lv.sent = [("four", "u4")]
+        await asyncio.sleep(1)
+        assert await runner.withdraw("e1", "three") is False  # not sent by this daemon mid-turn: nothing to cancel
+        assert await runner.withdraw("e1", "four") is True and calls == [{"subtype": "cancel_async_message", "message_uuid": "u4"}]
+        assert runner.unread("e1") == ["three"] and events[-1]["items"] == ["three"]
+        add({"operation": "dequeue"})
+        await asyncio.sleep(1)
+        assert runner.unread("e1") == ["three"]  # the cancel's dequeue didn't take "three"
         add({"operation": "popAll", "content": "three"})  # interrupted: back to the user
         await asyncio.sleep(1)
         assert runner.unread("e1") == [] and events[-1]["dropped"] == ["three"]

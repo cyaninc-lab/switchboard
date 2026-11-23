@@ -120,6 +120,12 @@ def as_history(msg):
     return h
 
 
+def _yours(queue):
+    """The user's messages in a mirrored queue. Claude Code also queues its own: a background task or subagent finishing
+    (<task-notification>…) and empty entries; those are tracked so dequeues line up, never shown."""
+    return [t for t in queue if t and not t.startswith("<task-notification>")]
+
+
 @dataclasses.dataclass
 class Live:
     entry_id: str
@@ -141,6 +147,8 @@ class Live:
     tasks: dict = dataclasses.field(default_factory=dict)  # background tasks (commands, agents) by id: shown, stoppable; running ones keep it open
     unread: list = dataclasses.field(default_factory=list)  # messages in Claude Code's queue, not yet read (mirrored from its transcript)
     qwatch: asyncio.Task = None
+    sent: list = dataclasses.field(default_factory=list)  # (text, uuid) of messages handed to the CLI mid-turn: what withdraw() cancels
+    withdrawn: int = 0  # withdrawn messages whose dequeue hasn't shown up in the transcript yet
 
 
 @dataclasses.dataclass
@@ -188,7 +196,26 @@ class Runner:
     def unread(self, entry_id):
         """Messages waiting in this session's queue, not yet read by Claude (what a client that opens it later shows)."""
         lv = self.live.get(entry_id)
-        return list(lv.unread) if lv else []
+        return _yours(lv.unread) if lv else []
+
+    async def withdraw(self, entry_id, text):
+        """Take a message the user sent mid-turn back out of the CLI's queue, unread. False if Claude already read it."""
+        lv = self.live.get(entry_id)
+        uid = next((u for t, u in (lv.sent if lv else []) if t == text and t in lv.unread), None)
+        if not uid:
+            return False
+        try:
+            r = await lv.client._query._send_control_request({"subtype": "cancel_async_message", "message_uuid": uid})
+        except Exception:
+            log.exception("withdraw")
+            return False
+        if not (r or {}).get("cancelled"):
+            return False
+        lv.sent = [s for s in lv.sent if s[1] != uid]
+        lv.unread.remove(text)
+        lv.withdrawn += 1
+        await self.broadcast({"type": "unread", "entry": entry_id, "items": _yours(lv.unread), "dropped": []})
+        return True
 
     async def _watch_queue(self, lv, session_id):
         """Mirror Claude Code's message queue from its transcript: enqueue adds, remove (read mid-turn) and dequeue (taken
@@ -227,6 +254,8 @@ class Runner:
                     op, t = d.get("operation"), text(d.get("content"))
                     if op == "enqueue":
                         lv.unread.append(t)
+                    elif op == "dequeue" and lv.withdrawn:  # Claude Code logs a cancel as a dequeue; withdraw() already took it off
+                        lv.withdrawn -= 1
                     elif op == "dequeue" and lv.unread:
                         lv.unread.pop(0)
                     elif op == "remove":
@@ -236,8 +265,8 @@ class Runner:
                             lv.unread.pop(0)
                     elif op == "popAll":
                         dropped += lv.unread; lv.unread = []
-                if lv.unread != before or dropped:
-                    await self.broadcast({"type": "unread", "entry": lv.entry_id, "items": list(lv.unread), "dropped": dropped})
+                if _yours(lv.unread) != _yours(before) or _yours(dropped):
+                    await self.broadcast({"type": "unread", "entry": lv.entry_id, "items": _yours(lv.unread), "dropped": _yours(dropped)})
             except OSError:
                 continue
 
@@ -471,7 +500,8 @@ class Runner:
         if lv.working and not origin and not lv.queue:
             # like Claude Code: the CLI reads a message sent mid-turn after its current step (a tool call finishing),
             # or as the next turn if this one has no step left. Clients move it into the chat now.
-            await self._query(lv, text, images)  # clients keep it at the bottom, unread, until the queue says it was read
+            lv.sent = [s for s in lv.sent if s[0] in lv.unread][-20:] + [(text, uid := str(uuid.uuid4()))]
+            await self._query(lv, text, images, uid)  # clients keep it at the bottom, unread, until the queue says it was read
             from . import patches
             if not patches._transcript(entry["session_id"]):  # no transcript to watch (the demo): read as soon as handed over
                 await self.broadcast({"type": "unread", "entry": entry["id"], "items": [text], "dropped": []})
@@ -489,13 +519,14 @@ class Runner:
                 "type": "user", "uuid": uuid.uuid4().hex, "message": {"role": "user", "content": text}}})
         await self._query(lv, text, images)
 
-    async def _query(self, lv, text, images):
-        if images:
-            content = [{"type": "image", "source": {"type": "base64", "media_type": im["media_type"], "data": im["data"]}} for im in images]
+    async def _query(self, lv, text, images, uid=None):
+        if images or uid:  # a uuid lets withdraw() cancel it while it waits in the CLI's queue
+            content = [{"type": "image", "source": {"type": "base64", "media_type": im["media_type"], "data": im["data"]}} for im in images or []]
             content.append({"type": "text", "text": text or "(image)"})
 
             async def one():
-                yield {"type": "user", "message": {"role": "user", "content": content}}
+                # text alone as a string: Claude Code's queue log leaves out content given as blocks, and the mirror needs it
+                yield {"type": "user", "message": {"role": "user", "content": content if images else text}, "parent_tool_use_id": None, "session_id": "default", **({"uuid": uid} if uid else {})}
             await lv.client.query(one())
         else:
             await lv.client.query(text)
@@ -753,7 +784,7 @@ class Runner:
         if lv.qwatch and not lv.qwatch.done():
             lv.qwatch.cancel()
         if lv.unread:  # still unread when the session closed: back to the user's message box
-            dropped, lv.unread = lv.unread, []
+            dropped, lv.unread = _yours(lv.unread), []
             await self.broadcast({"type": "unread", "entry": entry_id, "items": [], "dropped": dropped})
         try:
             await lv.client.disconnect()
