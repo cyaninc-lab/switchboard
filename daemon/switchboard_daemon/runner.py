@@ -345,8 +345,8 @@ class Runner:
         async def sessions(args):
             others = [e for e in self.store.entries() if e["id"] != entry_id]
             lines = [f'- "{e["name"]}" ({e["grp"]}): {view(e)}' for e in others] or ["No other sessions in Switchboard on this machine."]
-            for p in peers.peers(self.store):  # the user's other machines, if they linked them
-                es = await peers.entries(p)
+            for p in await peers.all_peers(self.store):  # the user's other machines (same relay account, or linked by hand)
+                es = None if p.get("online") is False else await peers.entries(p)  # offline on the relay: don't wait for it
                 lines += [f"- {p['name']}: can't be reached right now"] if es is None else \
                     [f'- "{e["name"]}@{p["name"]}" ({e.get("group", "")}, on {p["name"]}): {e.get("state", "")}' for e in es]
             return say("\n".join(lines))
@@ -355,7 +355,7 @@ class Runner:
             want, text = str(args.get("session", "")).strip(), str(args.get("text", ""))
             me = self.store.entry(entry_id)
             name, _, machine = want.rpartition("@")
-            if name and (p := peers.find(self.store, machine)):  # "session@machine": one of the user's other machines
+            if name and (p := await peers.find(self.store, machine)):  # "session@machine": one of the user's other machines
                 if not text.strip():
                     return say("The message is empty.", True)
                 es = await peers.entries(p)

@@ -2339,8 +2339,12 @@
         {/if}
         {#if netError}<p class="error">{netError === 'only_from_this_machine' ? 'This can only be changed on that machine itself.' : netError}</p>{/if}
         <h3 class="sub">Sessions across machines</h3>
-        {@render hint('Sessions can message sessions on your other machines.', 'They show as name@machine. Each machine gets its own revocable key for the others. Link again after adding a machine.')}
-        <div class="actions" style="justify-content: flex-start"><button type="button" class="btn ghost" disabled={linking || machines.length < 2} onclick={linkMachines}>{linking ? 'Linking…' : 'Let sessions on my machines message each other'}</button></div>
+        {#if acct}
+          {@render hint('Sessions message sessions on your other machines as name@machine.', 'Machines signed in to your account find each other through your relay, on any network: nothing to set up, and new machines join by signing in.')}
+        {:else}
+          {@render hint('Sessions can message sessions on your other machines.', 'They show as name@machine. Signed in to an account (Account tab), machines find each other by themselves. Without one, link them here: each gets its own revocable key for the others; link again after adding a machine.')}
+          <div class="actions" style="justify-content: flex-start"><button type="button" class="btn ghost" disabled={linking || machines.length < 2} onclick={linkMachines}>{linking ? 'Linking…' : 'Let sessions on my machines message each other'}</button></div>
+        {/if}
         {#if linkMsg}<p class="muted small" role="status">{linkMsg}</p>{/if}
       {:else if setTab === 'notifications'}
         <p class="muted small">{acct ? 'Your phones get notifications through your account: nothing to set up.' : 'Sign in on each device (Settings → Account) and your phones get notifications through your account.'}</p>

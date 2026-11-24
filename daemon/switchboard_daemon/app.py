@@ -552,7 +552,8 @@ async def peer_token(request):
 
 
 async def get_peers(request):
-    return web.json_response({"peers": [{"name": p["name"], "url": p["url"]} for p in peers.peers(request.app[STORE])]})
+    return web.json_response({"peers": [{"name": p["name"], "url": p["url"]} for p in peers.peers(request.app[STORE])],
+                              "on_account": [{"name": p["name"], "online": p.get("online")} for p in await peers.on_account(request.app[STORE])]})
 
 
 async def set_peers(request):

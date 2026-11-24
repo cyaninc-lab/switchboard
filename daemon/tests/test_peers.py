@@ -46,3 +46,23 @@ def test_link_list_message_and_receive(tmp_path, monkeypatch):
         await until(ws, lambda m: m["type"] == "message" and 'session \\"infra agent@yagoo\\"' in json.dumps(m) and "done!" in json.dumps(m))
         await client.close(); await srv.close()
     asyncio.run(t())
+
+
+def test_the_accounts_machines_are_peers(tmp_path, monkeypatch):
+    from switchboard_daemon import peers, relay
+    from switchboard_daemon.store import Store
+    st = Store(str(tmp_path / "s.db"))
+    assert asyncio.run(peers.all_peers(st)) == []  # not signed in: only machines linked by hand
+    st.set_setting(relay.URL, "https://r.example/relay"); st.set_setting(relay.ID, "me"); st.set_setting(relay.SECRET, "s3")
+    devs = [{"id": "me", "name": "Fantome", "kind": "machine", "approved": True, "address": "/d/me", "online": True},
+            {"id": "y", "name": "yagoo", "kind": "machine", "approved": True, "address": "/d/y", "online": True},
+            {"id": "w", "name": "work", "kind": "machine", "approved": False, "address": "/d/w"},  # not approved yet
+            {"id": "p", "name": "Phone", "kind": "app", "approved": True}]
+    async def account(store, method="GET", path="/v1/devices"):
+        return 200, {"devices": devs}
+    monkeypatch.setattr(relay, "account", account)
+    monkeypatch.setitem(peers._found, "at", 0)
+    peers.set_peers(st, [{"name": "YAGOO", "url": "http://old:7878", "token": "t"}, {"name": "lab", "url": "http://lab:7878", "token": "t2"}])
+    ps = asyncio.run(peers.all_peers(st))
+    assert [(p["name"], p["url"], p["token"]) for p in ps] == [("yagoo", "https://r.example/relay/d/y", "s3"), ("lab", "http://lab:7878", "t2")]
+    assert asyncio.run(peers.find(st, "Yagoo"))["url"].endswith("/d/y")  # the relay wins over the old link
