@@ -83,6 +83,7 @@ test('diffs, to-dos, expandable output and the context/cost meter', async ({ pag
   await expect(page.getByRole('status').filter({ hasText: 'Copied:' })).toContainText(copied);
 
   await page.getByRole('button', { name: 'More' }).click();
-  await page.getByRole('menuitem', { name: 'Close session' }).click();
-  await page.getByRole('button', { name: 'Remove from tree' }).click();
+  await page.getByRole('menuitem', { name: 'Close session' }).click();  // its tab closes with it
+  await page.getByRole('navigation', { name: 'Sessions' }).getByRole('button', { name: /Deploy #52 rolled back/ }).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Remove from tree' }).click();
 });
