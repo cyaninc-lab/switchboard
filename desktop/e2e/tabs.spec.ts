@@ -104,9 +104,10 @@ test('closing a session from its right-click menu closes its tab too', async ({ 
     await dialog.getByLabel(/Folder on/).fill(mkdtempSync(join(tmpdir(), 'sb-e2e-')));
     await dialog.getByLabel('Name in the tree').fill(name);
     await dialog.getByRole('button', { name: 'Create session' }).click();
+    await expect(page.getByRole('tablist', { name: 'Open sessions' }).getByRole('tab', { name })).toHaveAttribute('aria-selected', 'true');
     const box = page.getByLabel('Message this session');
-    await box.fill('hello'); await box.press('Enter');  // live, and its tab kept
-    await expect(page.getByRole('log', { name: 'Session history' }).getByText('hello').first()).toBeVisible();
+    await box.fill(`hello ${name}`); await box.press('Enter');  // live, and its tab kept
+    await expect(page.getByRole('log', { name: 'Session history' }).getByText(`hello ${name}`).first()).toBeVisible();
   }
   const tabs = page.getByRole('tablist', { name: 'Open sessions' });
   await expect(tabs.getByRole('tab', { name: 'Close me' })).toBeVisible();

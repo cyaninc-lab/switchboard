@@ -67,6 +67,7 @@ test('questions, plan approval, and allow for this session', async ({ page }) =>
   await expect(log).toContainText('(remembered for: session)');
 
   await page.getByRole('button', { name: 'More' }).click();
-  await page.getByRole('menuitem', { name: 'Close session' }).click();
-  await page.getByRole('button', { name: 'Remove from tree' }).click();
+  await page.getByRole('menuitem', { name: 'Close session' }).click();  // its tab closes with it
+  await page.getByRole('navigation', { name: 'Sessions' }).getByRole('button', { name: /Deploy #52 rolled back/ }).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Remove from tree' }).click();
 });
