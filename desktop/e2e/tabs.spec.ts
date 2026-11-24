@@ -89,3 +89,29 @@ test('tabs: preview tab replaced by the next click, kept by sending or Ctrl+clic
   await expect(bar).toHaveCount(0);
   await expect(page.getByLabel('Message this session')).toHaveCount(0);
 });
+
+test('closing a session from its right-click menu closes its tab too', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '+ Connect a machine' }).click();
+  await page.getByLabel('Daemon address').fill(`http://127.0.0.1:${DAEMON_PORT}`);
+  await page.getByLabel('One-time code').fill(execFileSync(daemon, ['--data', DATA, 'pair']).toString().trim());
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  const tree = page.getByRole('navigation', { name: 'Sessions' });
+  for (const name of ['Close me', 'Stay open']) {
+    await page.getByRole('button', { name: '+ Add' }).click();
+    const dialog = page.getByRole('form', { name: 'Add to Switchboard' });
+    await dialog.getByRole('tab', { name: 'New session' }).click();
+    await dialog.getByLabel(/Folder on/).fill(mkdtempSync(join(tmpdir(), 'sb-e2e-')));
+    await dialog.getByLabel('Name in the tree').fill(name);
+    await dialog.getByRole('button', { name: 'Create session' }).click();
+    const box = page.getByLabel('Message this session');
+    await box.fill('hello'); await box.press('Enter');  // live, and its tab kept
+    await expect(page.getByRole('log', { name: 'Session history' }).getByText('hello').first()).toBeVisible();
+  }
+  const tabs = page.getByRole('tablist', { name: 'Open sessions' });
+  await expect(tabs.getByRole('tab', { name: 'Close me' })).toBeVisible();
+  await tree.getByRole('button', { name: /Close me/ }).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Close session' }).click();
+  await expect(tabs.getByRole('tab', { name: 'Close me' })).toHaveCount(0);
+  await expect(tabs.getByRole('tab', { name: 'Stay open' })).toBeVisible();
+});

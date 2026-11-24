@@ -1422,6 +1422,11 @@
   function closeSession(m: Machine, e: Entry) {
     ctx = null;
     try { lives.get(m.url)!.stop(e.id); liveErr = ''; } catch (err) { liveErr = (err as Error).message; }
+    closeTabsOf(m, e);  // its tabs (and its subagents') go with it
+  }
+  function closeTabsOf(m: Machine, e: Entry) {
+    for (const t of tabs.filter((x) => x.url === m.url && x.entry === e.id && tabKey(x) !== curKey)) closeTab(tabKey(t));
+    if (selected?.machine.url === m.url && selected.entry.id === e.id && curKey) closeTab(curKey);
   }
   function kids(e: Entry, parent: string | null) {
     const all = (e.subagents ?? []).filter((a) => subRunning(e, a));
@@ -1537,8 +1542,7 @@
   // off the tree, or (forever) deleted from its machine too; its tabs close either way
   async function removeEntry(m: Machine, e: Entry, forever = false) {
     await api.removeEntry(m, e.id, forever);
-    for (const t of tabs.filter((x) => x.entry === e.id && tabKey(x) !== curKey)) closeTab(tabKey(t));
-    if (selected?.entry.id === e.id && curKey) closeTab(curKey);
+    closeTabsOf(m, e);
     refresh();
   }
   // the Removed list: sessions taken off the tree, per machine, to restore or delete for good
