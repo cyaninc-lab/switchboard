@@ -23,8 +23,16 @@ test('Up in an empty box brings back your last message', async ({ page }) => {
   await expect(box).toHaveValue('');
   await box.press('ArrowUp');
   await expect(box).toHaveValue('say it again please');
-  await box.press('ArrowUp');  // not empty any more: the caret moves, nothing else
-  await expect(box).toHaveValue('say it again please');
+  await box.fill('');
+  await box.fill('and a second one'); await box.press('Enter');
+  await expect(page.getByRole('log').getByText('and a second one').first()).toBeVisible();
+  await expect(box).toHaveValue('');
+  await box.press('ArrowUp'); await expect(box).toHaveValue('and a second one');
+  await box.press('ArrowUp'); await expect(box).toHaveValue('say it again please');  // further back
+  await box.press('ArrowUp'); await expect(box).toHaveValue('say it again please');  // the oldest: stays
+  await box.press('ArrowDown'); await expect(box).toHaveValue('and a second one');
+  await box.press('ArrowDown'); await expect(box).toHaveValue('');  // back to an empty box
+  await box.fill('typed'); await box.press('ArrowUp'); await expect(box).toHaveValue('typed');  // your own text isn't replaced
 });
 
 test("the footer shows the plan's use after a reply", async ({ page }) => {

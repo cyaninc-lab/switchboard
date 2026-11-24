@@ -37,3 +37,37 @@ test('drag a project to reorder; the machine keeps the order, so it survives a r
   await page.reload();
   await expect.poll(mine).toEqual(want);  // kept by the daemon, not this window
 });
+
+test('+ Add → New project makes an empty one; right-click removes a project (its sessions go to Removed)', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '+ Connect a machine' }).click();
+  await page.getByLabel('Daemon address').fill(`http://127.0.0.1:${DAEMON_PORT}`);
+  await page.getByLabel('One-time code').fill(execFileSync(daemon, ['--data', DATA, 'pair']).toString().trim());
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  const tree = page.getByRole('navigation', { name: 'Sessions' });
+  await page.getByRole('button', { name: '+ Add' }).click();
+  const dialog = page.getByRole('form', { name: 'Add to Switchboard' });
+  await dialog.getByRole('tab', { name: 'New project' }).click();
+  await dialog.getByLabel('Project name').fill('Empty one');
+  await dialog.getByRole('button', { name: 'Create project' }).click();
+  const proj = tree.getByRole('button', { name: /Empty one/ });
+  await expect(proj).toBeVisible();
+  await page.reload();
+  await expect(proj).toBeVisible();  // the machine keeps it
+  // a session made in it from its right-click menu
+  await proj.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'New session' }).click();
+  await expect(dialog.getByRole('combobox', { name: /^Project/ })).toHaveValue('Empty one');
+  await dialog.getByLabel(/Folder on/).fill('/tmp');
+  await dialog.getByLabel('Name in the tree').fill('In the new project');
+  await dialog.getByRole('button', { name: 'Create session' }).click();
+  await expect(tree.getByRole('button', { name: /In the new project/ })).toBeVisible();
+  // removed: the project and its session leave the tree
+  await proj.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Remove project…' }).click();
+  const rm = page.getByRole('dialog', { name: 'Remove project Empty one' });
+  await expect(rm).toContainText('Its 1 session leaves the tree too');
+  await rm.getByRole('button', { name: 'Remove project' }).click();
+  await expect(proj).toHaveCount(0);
+  await expect(tree.getByRole('button', { name: /In the new project/ })).toHaveCount(0);
+});

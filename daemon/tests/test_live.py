@@ -747,6 +747,10 @@ def test_new_session_defaults(tmp_path, monkeypatch):
         assert other["model"] == "haiku"
         r = await (await client.put("/v1/settings", headers=h, json={"project_defaults": {"web": {}}})).json()
         assert r["project_defaults"] == {}
+        # empty projects: kept by name, once each
+        assert (await client.put("/v1/settings", headers=h, json={"projects": ["", "x"]})).status == 400
+        r = await (await client.put("/v1/settings", headers=h, json={"projects": ["Ideas", " Ideas ", "Later"]})).json()
+        assert r["projects"] == ["Ideas", "Later"]
         await client.close()
     asyncio.run(t())
 
