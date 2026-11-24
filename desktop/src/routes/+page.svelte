@@ -104,7 +104,7 @@
   let loadingHistory = $state(false);
   let openSeq = 0;
   let filter = $state('');
-  let dialog = $state<'connect' | 'add' | 'settings' | 'pair' | 'report' | 'watches' | 'delete' | 'removed' | 'projdefaults' | null>(null);
+  let dialog = $state<'connect' | 'add' | 'settings' | 'pair' | 'report' | 'watches' | 'delete' | 'removed' | 'projdefaults' | 'rmproject' | null>(null);
 
   // inbox: per machine, merged newest first
   let inboxBy = $state<Record<string, api.InboxItem[]>>({});
@@ -464,9 +464,33 @@
   let aProj = $state('');
   let aNewProj = $state('');
   const aGroup = $derived(aProj === '\u0000new' ? aNewProj.trim() : aProj);
-  const projects = $derived(aMachine ? [...new Set((tree[aMachine.url]?.entries ?? []).map((e) => e.group))].sort((x, y) => x.localeCompare(y)) : []);
+  const projects = $derived(aMachine ? [...new Set([...(tree[aMachine.url]?.entries ?? []).map((e) => e.group), ...(dset[aMachine.url]?.projects ?? [])])].sort((x, y) => x.localeCompare(y)) : []);
+  // + Add → New project: one with no sessions yet (the machine keeps it)
+  let pName = $state('');
+  async function setProjects(m: Machine, names: string[]) {
+    try { dset[m.url] = await api.setSettings(m, { projects: names }); return true; }
+    catch (e) { say(`Couldn't change ${m.name}'s projects: ${(e as Error).message}`); return false; }
+  }
+  async function createProject(ev: Event) {
+    ev.preventDefault();
+    const m = aMachine, name = pName.trim();
+    if (!m || !name) return;
+    if (projects.includes(name)) { aError = `${m.name} already has a project called ${name}`; return; }
+    if (await setProjects(m, [...(dset[m.url]?.projects ?? []), name])) { dialog = null; pName = ''; say(`Made ${name} on ${m.name}`); }
+  }
+  // right-click a project → Remove project: its sessions leave the tree (back from Removed), the project goes
+  let rpFor = $state<{ machine: Machine; group: string } | null>(null);
+  async function removeProject() {
+    const r = rpFor;
+    if (!r) return;
+    const es = (tree[r.machine.url]?.entries ?? []).filter((e) => e.group === r.group);
+    try { for (const e of es) await removeEntry(r.machine, e); }
+    catch (e) { say(`Couldn't remove all of it: ${(e as Error).message}`); }
+    await setProjects(r.machine, (dset[r.machine.url]?.projects ?? []).filter((x) => x !== r.group));
+    dialog = null; rpFor = null; await refresh();
+  }
   let aError = $state('');
-  let aTab = $state<'existing' | 'new'>('existing');
+  let aTab = $state<'existing' | 'new' | 'project'>('existing');
   let nFolder = $state('');
   let nTyped = false; // the suggested folder arrives async: never let it land in the middle of someone's typing
   let nFolders = $state<string[]>([]);
@@ -553,13 +577,21 @@
         try { if ((await api.withdraw(s.machine, s.entry.id, t)).withdrawn) { pendingQ[s.entry.id] = pendingQ[s.entry.id].filter((x) => x !== m); texts.push(t); } } catch {}
       }
       if (!texts.length) say("Couldn't take them back: Claude has read them");
-    } else {
-      const last = [...messages].reverse().find((m) => m.type === 'user' && !(m as any).isMeta && youSaid(m));
-      if (!last) return;
-      ev.preventDefault();
-      texts = [youSaid(last)];
-    }
+    } else return stepHistory(ev, 1);
     if (selected === s && texts.length) { draft = texts.join('\n'); tick().then(() => { if (inputEl) inputEl.selectionStart = inputEl.selectionEnd = draft.length; }); }
+  }
+  // Up/Down through what you've sent in this session, newest first (recall: where in it the box is)
+  let recall: { entry: string; i: number; text: string } | null = null;
+  function stepHistory(ev: KeyboardEvent, step: number) {
+    const s = selected;
+    if (!s) return;
+    const sent = [...messages].reverse().filter((m) => m.type === 'user' && !(m as any).isMeta).map(youSaid).filter(Boolean);
+    const i = (recall?.entry === s.entry.id && draft === recall.text ? recall.i : -1) + step;
+    if (i >= sent.length) return;  // the oldest: stay there
+    ev.preventDefault();
+    recall = i < 0 ? null : { entry: s.entry.id, i, text: sent[i] };
+    draft = recall?.text ?? '';
+    tick().then(() => { if (inputEl) inputEl.selectionStart = inputEl.selectionEnd = draft.length; });
   }
   // what you typed in a user message (not tool results, Claude Code's notes, or another session's letter)
   const youSaid = (m: HistoryMessage) => {
@@ -702,7 +734,8 @@
     (ev.currentTarget as HTMLTextAreaElement).form?.requestSubmit();
   }
   function grow(el: HTMLTextAreaElement) {  // fit the text, up to the CSS max-height
-    const fit = () => { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; };
+    // empty: one line (WebKit counts a wrapped placeholder in scrollHeight, so a narrow pane grew a tall empty box)
+    const fit = () => { el.style.height = 'auto'; if (el.value) el.style.height = `${el.scrollHeight}px`; };
     $effect(() => { void draft; fit(); });  // also shrinks back after sending
     // and when its width changes: squeezed narrow it grew tall, and stayed tall once it had room again
     let w = 0;
@@ -750,7 +783,10 @@
       if (ev.key === 'ArrowDown') { ev.preventDefault(); argIdx = (argIdx + 1) % cmdArgs.opts.length; return; }
       if (ev.key === 'ArrowUp') { ev.preventDefault(); argIdx = (argIdx - 1 + cmdArgs.opts.length) % cmdArgs.opts.length; return; }
     }
-    if (ev.key === 'ArrowUp' && !draft && !ev.shiftKey && !ev.ctrlKey && !ev.altKey && !menu.length) return void upArrow(ev);
+    const plain = !ev.shiftKey && !ev.ctrlKey && !ev.altKey && !menu.length;
+    // Up again (the box still holds what Up brought back): further back through what you've sent; Down: forward again
+    if (plain && recall && draft === recall.text && (ev.key === 'ArrowUp' || ev.key === 'ArrowDown')) return void stepHistory(ev, ev.key === 'ArrowUp' ? 1 : -1);
+    if (ev.key === 'ArrowUp' && !draft && plain) return void upArrow(ev);
     if (!menu.length) return enterSends(ev);
     if (ev.key === 'ArrowDown') { ev.preventDefault(); cmdIdx = (cmdIdx + 1) % menu.length; }
     else if (ev.key === 'ArrowUp') { ev.preventDefault(); cmdIdx = (cmdIdx - 1 + menu.length) % menu.length; }
@@ -1027,6 +1063,7 @@
     const es = (tree[m.url]?.entries ?? []).filter((e) => !filter || (e.name + ' ' + e.group).toLowerCase().includes(filter.toLowerCase()));
     const g: Record<string, Entry[]> = {};
     for (const e of es) (g[e.group] ??= []).push(e);
+    for (const name of dset[m.url]?.projects ?? []) if (!g[name] && (!filter || name.toLowerCase().includes(filter.toLowerCase()))) g[name] = [];  // made empty
     const h = held;
     for (const list of Object.values(g))
       list.sort(h ? (a, b) => (h[a.id] ?? 1e9) - (h[b.id] ?? 1e9) : (a, b) => Number(b.pinned) - Number(a.pinned) || activity(b) - activity(a));
@@ -1058,7 +1095,7 @@
     if (!d || d.url !== m.url || d.g === target) return;
     // every project on that machine, even ones the filter hides, so dragging with a filter on loses no places
     const order = dset[m.url]?.project_order ?? [];
-    const all = [...new Set((tree[m.url]?.entries ?? []).map((e) => e.group))];
+    const all = [...new Set([...(tree[m.url]?.entries ?? []).map((e) => e.group), ...(dset[m.url]?.projects ?? [])])];
     const rank = (g: string) => { const k = order.indexOf(g); return k < 0 ? 1e6 + all.indexOf(g) : k; };
     const names = all.sort((a, b) => rank(a) - rank(b)).filter((g) => g !== d.g);
     names.splice(names.indexOf(target), 0, d.g);
@@ -1409,6 +1446,8 @@
     try {
       if (entry && name !== entry.name) { await api.updateEntry(m, entry.id, { name }); setEntry(entry.id, { name }); }
       // a project is the group name its sessions share: renaming it moves them all
+      if (group !== undefined && name !== group && (dset[m.url]?.projects ?? []).includes(group))
+        await setProjects(m, (dset[m.url]?.projects ?? []).map((x) => (x === group ? name : x)));
       if (group !== undefined && name !== group)
         await Promise.all((tree[m.url]?.entries ?? []).filter((e) => e.group === group).map((e) => api.updateEntry(m, e.id, { group: name })));
     } catch (e) { liveErr = (e as Error).message; }
@@ -1639,8 +1678,9 @@
     {@const g = mm.group}
     <div class="ctxmenu" role="menu" aria-label="{g} project actions" style="left: {mm.x}px; top: {mm.y}px">
       <button role="menuitem" onclick={() => newInProject(mm.machine, g)}>New session</button>
-      <button role="menuitem" onclick={() => { const m = mm.machine; pdFor = { machine: m, group: g }; ctx = null; loadModels(m); loadAccounts(m); dialog = 'projdefaults'; }}>Defaults…</button>
+      <button role="menuitem" onclick={() => { const m = mm.machine, gr = g; pdFor = { machine: m, group: gr }; ctx = null; loadModels(m); loadAccounts(m); dialog = 'projdefaults'; }}>Defaults…</button>
       <button role="menuitem" onclick={() => startRename(`g:${mm.machine.url}|${g}`, g)}>Rename project</button>
+      <button role="menuitem" class="danger" onclick={() => { const m = mm.machine, gr = g; ctx = null; rpFor = { machine: m, group: gr }; dialog = 'rmproject'; }}>Remove project…</button>
     </div>
   {/if}
 {/if}
@@ -1981,7 +2021,7 @@
           <span class="prompt">❯</span>
           <label class="grow"><span class="sr">Message this session</span>
             <textarea rows="1" {@attach grow} bind:value={draft} bind:this={inputEl} oninput={onDraftInput} onblur={() => setTimeout(() => (atQ = null), 150)} onpaste={onPaste} onkeydown={onInputKey} disabled={selected.entry.state === 'terminal' || selected.entry.state === 'missing'}
-              placeholder={selected.entry.state === 'terminal' ? 'Open in a terminal elsewhere' : selected.entry.state === 'working' ? (phone ? 'Working… Claude reads it after this step' : 'Working… Enter sends (Claude reads it after its current step), Ctrl+Enter interrupts and sends (Esc to interrupt)') : (phone ? 'Message' : 'Message this session (Shift+Enter for a new line)')}></textarea></label>
+              placeholder={selected.entry.state === 'terminal' ? 'Open in a terminal elsewhere' : selected.entry.state === 'working' ? (phone ? 'Working… Claude reads it after this step' : 'Working… Enter: Claude reads it after this step · Ctrl+Enter: now') : (phone ? 'Message' : 'Message this session (Shift+Enter for a new line)')}></textarea></label>
           <input type="file" multiple hidden bind:this={fileInput} onchange={(e) => { addFiles((e.target as HTMLInputElement).files ?? []); (e.target as HTMLInputElement).value = ''; }} />
           <button type="button" class="tiny" aria-label="Attach files" class:busy={uploading > 0} title="Attach pictures or files (or paste / drop them). Other files go to the session's machine; their path goes in the message" onclick={() => fileInput?.click()}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" /></svg>
@@ -2415,6 +2455,17 @@
   </div>
 {/snippet}
 
+{#if dialog === 'rmproject' && rpFor}
+  {@const n = (tree[rpFor.machine.url]?.entries ?? []).filter((e) => e.group === rpFor!.group).length}
+  <div class="backdrop" role="presentation" {...backdrop(() => (dialog = null))}>
+    <div class="dialog" role="dialog" aria-label="Remove project {rpFor.group}">
+      <h2>Remove {rpFor.group}?</h2>
+      <p>{n ? `Its ${n} session${n === 1 ? '' : 's'} leave${n === 1 ? 's' : ''} the tree too; they stay on ${rpFor.machine.name}, and Removed brings them back.` : 'It has no sessions.'}</p>
+      <div class="actions"><button type="button" class="btn ghost" onclick={() => (dialog = null)}>Cancel</button><button type="button" class="btn primary" onclick={removeProject}>Remove project</button></div>
+    </div>
+  </div>
+{/if}
+
 {#if dialog === 'projdefaults' && pdFor}
   {@const m = pdFor.machine}{@const g = pdFor.group}
   <div class="backdrop" role="presentation" {...backdrop(() => (dialog = null))}>
@@ -2430,16 +2481,17 @@
 
 {#if dialog === 'add'}
   <div class="backdrop" role="presentation" {...backdrop(() => (dialog = null))}>
-    <form class="dialog wide" aria-label="Add to Switchboard" onsubmit={(e) => (aTab === 'new' ? createNew(e) : add(e))}>
+    <form class="dialog wide" aria-label="Add to Switchboard" onsubmit={(e) => (aTab === 'new' ? createNew(e) : aTab === 'project' ? createProject(e) : add(e))}>
       <h2>Add to Switchboard</h2>
       <div class="tabs" role="tablist" aria-label="Add from">
         <button type="button" role="tab" aria-selected={aTab === 'existing'} class:on={aTab === 'existing'} onclick={() => (aTab = 'existing')}>Existing session</button>
         <button type="button" role="tab" aria-selected={aTab === 'new'} class:on={aTab === 'new'} onclick={newTab}>New session</button>
+        <button type="button" role="tab" aria-selected={aTab === 'project'} class:on={aTab === 'project'} onclick={() => { aTab = 'project'; aError = ''; }}>New project</button>
       </div>
       <div class="pills">
         <span class="muted small">Machine</span>
         {#each machines as m (m.url)}
-          <button type="button" class="pill" class:on={aMachine?.url === m.url} onclick={() => { aMachine = m; aPicks = []; aTab === 'new' ? newTab() : search(); }}>{m.name}</button>
+          <button type="button" class="pill" class:on={aMachine?.url === m.url} onclick={() => { aMachine = m; aPicks = []; aTab === 'new' ? newTab() : aTab === 'existing' ? search() : null; }}>{m.name}</button>
         {/each}
       </div>
       {#snippet projectPicker()}
@@ -2450,7 +2502,12 @@
         </select></label>
         {#if aProj === '\u0000new'}<label>New project name<input bind:value={aNewProj} required placeholder="e.g. Client work" /></label>{/if}
       {/snippet}
-      {#if aTab === 'new'}
+      {#if aTab === 'project'}
+        <label>Project name<input bind:value={pName} required placeholder="e.g. Client work" {@attach focusOnMount} /></label>
+        <p class="muted small">An empty project on {aMachine?.name}. Right-click it for New session, or drag sessions into it.</p>
+        {#if aError}<p class="error">{aError}</p>{/if}
+        <div class="actions"><button type="button" class="btn ghost" onclick={() => (dialog = null)}>Cancel</button><button class="btn primary" disabled={!pName.trim()}>Create project</button></div>
+      {:else if aTab === 'new'}
         <label>Folder on {aMachine?.name}
           <input bind:value={nFolder} oninput={() => (nTyped = true)} onfocus={() => (nTyped = true)} list="folder-list" required placeholder="/path/to/project" />
           <datalist id="folder-list">{#each nFolders as f}<option value={f}></option>{/each}</datalist>
@@ -2823,6 +2880,7 @@
   .sesschip { background: none; border: 1px solid var(--s1); border-radius: 6px; color: inherit; padding: 1px 8px; font: inherit; }
   .sesschip:hover { border-color: var(--mauve); }
   .plan { white-space: nowrap; } .plan.high { color: var(--peach); }
+  .inputbar textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .startswith { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin: 2px 0 4px; }
   .readimg { align-self: flex-start; padding: 0; margin: 2px 0 6px 18px; border: 1px solid var(--s1); border-radius: 8px; background: none; cursor: zoom-in; line-height: 0; max-width: calc(100% - 18px); }
   .readimg img { max-height: 160px; max-width: 240px; object-fit: contain; border-radius: 8px; }

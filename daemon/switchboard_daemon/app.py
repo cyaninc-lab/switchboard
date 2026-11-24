@@ -196,6 +196,7 @@ NEW_SESSION = "new_session"  # defaults for sessions added from now on: {mode, m
 DEFAULT_KEYS = ("mode", "model", "effort", "account")
 
 
+PROJECTS = "projects"  # projects that exist with no sessions yet (made with + Add → New project)
 PROJECT_DEFAULTS = "project_defaults"  # per project: {group: {mode, model, effort, account}}, over the machine's
 
 
@@ -443,6 +444,7 @@ async def get_settings(request):
     st = request.app[STORE]
     return web.json_response({"idle_close_minutes": int(st.setting(IDLE_SETTING, "0") or 0),
                               "project_order": json.loads(st.setting(PROJECT_ORDER, "[]")),
+                              "projects": json.loads(st.setting(PROJECTS, "[]")),
                               "plans": request.app[RUNNER].plans,  # the plan's limits per account, as last seen
                               "new_session": _defaults(st), "project_defaults": json.loads(st.setting(PROJECT_DEFAULTS, "{}") or "{}"),
                               "claude_default_mode": _claude_default_mode()})
@@ -469,6 +471,12 @@ async def set_settings(request):
             if v: cur[g] = v
             else: cur.pop(g, None)
         st.set_setting(PROJECT_DEFAULTS, json.dumps(cur))
+    if "projects" in body:  # projects made empty (+ Add → New project): they show with no sessions in them
+        ps = body["projects"]
+        if not isinstance(ps, list) or not all(isinstance(x, str) and x.strip() for x in ps) or len(ps) > 1000:
+            raise web.HTTPBadRequest(text=json.dumps({"code": "bad_projects"}), content_type="application/json")
+        request.app[STORE].set_setting(PROJECTS, json.dumps(list(dict.fromkeys(x.strip()[:200] for x in ps))))
+        await _broadcast(request.app, {"type": "settings"})
     if "project_order" in body:  # project names, top first (projects not listed follow, as before)
         order = body["project_order"]
         if not isinstance(order, list) or not all(isinstance(x, str) for x in order) or len(order) > 1000:
