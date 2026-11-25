@@ -268,6 +268,8 @@ async def update_entry(request):
     e = store.update_entry(request.match_info["id"], **body)
     if not e:
         raise web.HTTPNotFound()
+    if "name" in body:
+        await request.app[RUNNER].rename(e)
     return web.json_response(_entry_view(e, await _off(sdk.get_session_info, e["session_id"]), await _live(request), request.app[RUNNER]))
 
 

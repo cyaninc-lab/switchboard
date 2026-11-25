@@ -102,3 +102,17 @@ def test_unread_messages_follow_claude_codes_queue(tmp_path, monkeypatch):
         assert runner.unread("e1") == [] and events[-1]["dropped"] == ["three"]
         runner.live.pop("e1"); task.cancel()
     asyncio.run(t())
+
+
+def test_sessions_are_found_by_any_of_their_names():
+    """message_session: id, Switchboard name, Claude Code's own name or project, any capitalisation; else the closest."""
+    from switchboard_daemon.runner import pick
+    es = [{"id": "e1", "name": "Nuvola Support", "title": "Guides RIG", "group": "rig-guides"},
+          {"id": "e2", "name": "Menus Import", "title": None, "group": "menus"},
+          {"id": "e3", "name": "Menus Export", "title": None, "group": "menus"}]
+    for want in ("e1", "nuvola support", "GUIDES rig", "rig-guides", "nuvola"):
+        assert pick(es, want)[0]["id"] == "e1", want
+    hit, why = pick(es, "menus")  # a project with two sessions: say which
+    assert hit is None and '"Menus Import" (id e2)' in why and '"Menus Export" (id e3)' in why
+    hit, why = pick(es, "Nuvla Suport")
+    assert hit is None and 'Closest: "Nuvola Support"' in why

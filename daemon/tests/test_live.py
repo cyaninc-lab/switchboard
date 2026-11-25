@@ -436,7 +436,7 @@ def test_sessions_message_each_other_and_wake_a_stopped_one(tmp_path, monkeypatc
         while runner.state(a["id"]) != "ready":  # its ready event may already be behind us
             await asyncio.sleep(0.05)
         await ws.send_json({"type": "send", "entry": a["id"], "text": "tell nobody: hi"})
-        await until(ws, lambda m: m["type"] == "message" and 'No session named "nobody"' in str(m))
+        await until(ws, lambda m: m["type"] == "message" and 'No session called "nobody"' in str(m))
 
         # open in a terminal elsewhere: refused, pointing at SendMessage
         while runner.state(a["id"]) != "ready":  # its ready event may already be behind us
