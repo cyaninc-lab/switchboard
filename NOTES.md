@@ -1,5 +1,4 @@
-- Sessions message sessions on your other machines with nothing to set up: machines signed in to your account find each other, on any network.
-- Projects: + Add → New project makes an empty one; right-click a project to remove it (its sessions go to Removed, so you can bring them back).
-- Closing a session from its right-click menu closes its tabs too.
-- Up keeps going back through what you've sent; Down comes forward again.
-- In a narrow split, the empty message box stays one line.
+- Quick filters in the session list: click into Filter to show only sessions with a reply in the last hour, day or week, or ones waiting on you, working, unread or pinned.
+- Session names agree everywhere: renaming a session in Switchboard renames it in Claude Code too, so agents find each other by the same name.
+- Agents can message a session by any of its names, its project or its id, and get the closest names when nothing matches.
+- Each session knows its own Switchboard name.
