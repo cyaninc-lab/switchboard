@@ -3,7 +3,7 @@
 Events (docs/protocol.md): state, delta, message, permission_request, permission_resolved, error.
 """
 import functools, subprocess
-import asyncio, dataclasses, json, os, shutil, sys, time, uuid
+import asyncio, dataclasses, difflib, json, os, shutil, sys, time, uuid
 from .logs import log, scrub
 from . import patches, peers
 
@@ -118,6 +118,25 @@ def as_history(msg):
         if p := patches.from_result(tid, msg.tool_use_result):
             h["patches"] = p
     return h
+
+
+def pick(es, want, where=""):
+    """The session `want` means among `es` ({id, name, group, title?}): its id, Switchboard name, Claude Code's own name
+    (title) or its project, any capitalisation; else a word in the name. Returns (entry, None) or (None, why + the closest)."""
+    w = want.strip().lower()
+    for key in ("id", "name", "title", "group"):
+        hits = [e for e in es if str(e.get(key) or "").lower() == w]
+        if len(hits) == 1:
+            return hits[0], None
+        if len(hits) > 1:
+            return None, f'{len(hits)} sessions{where} match "{want}": ' + ", ".join(f'"{e["name"]}" (id {e["id"]})' for e in hits) + ". Use one of their ids."
+    hits = [e for e in es if w and (w in e["name"].lower() or w in str(e.get("title") or "").lower())]
+    if len(hits) == 1:
+        return hits[0], None
+    names = {str(x).lower(): e for e in es for x in (e["name"], e.get("title"), e.get("group")) if x}
+    near = list(dict.fromkeys(names[n]["name"] for n in difflib.get_close_matches(w, list(names), n=4, cutoff=0.4)))
+    return None, (f'No session{where} called "{want}".' + (f' Closest: {", ".join(chr(34) + n + chr(34) for n in near)}.' if near else "")
+                  + " The sessions tool lists them all.")
 
 
 def _yours(queue):
@@ -318,7 +337,8 @@ class Runner:
             **({"model": m} if (m := os.environ.get("SWITCHBOARD_MODEL") or entry.get("model")) else {}),
             **({"cli_path": self.cli_path} if self.cli_path else {}),
             # Claude Code's own system prompt (how it works, stays brief, uses tools): the SDK's default is an empty one
-            system_prompt={"type": "preset", "preset": "claude_code"},
+            # plus its own name, so it signs letters with it and other sessions can address it
+            system_prompt={"type": "preset", "preset": "claude_code", "append": self._who(entry)},
             mcp_servers={"switchboard": self._tools(entry["id"])}, allowed_tools=list(TOOLS),
             max_buffer_size=MAX_MESSAGE,
             # Claude in Chrome: the terminal turns it on by itself, SDK sessions only with --chrome (checked on 2.1.327)
@@ -329,7 +349,41 @@ class Runner:
         lv = holder["lv"] = self.live[entry["id"]] = Live(entry["id"], client)
         lv.reader = asyncio.get_running_loop().create_task(self._read(lv))
         lv.qwatch = asyncio.get_running_loop().create_task(self._watch_queue(lv, entry["session_id"]))
+        await self._title(lv, entry)  # Claude Code's own name for it (ListAgents, SendMessage) = its Switchboard name
         return lv
+
+    def _who(self, entry):
+        return (f'In Switchboard (the app the user runs you in) this session is called "{entry["name"]}", on the machine '
+                f'"{self.machine}". Sessions on the user’s other machines address it as "{entry["name"]}@{self.machine}". '
+                "If the user renames it, the switchboard sessions tool shows the new name.")
+
+    async def _title(self, lv, entry):
+        try:
+            await asyncio.wait_for(lv.client._query._send_control_request(
+                {"subtype": "rename_session", "title": entry["name"], "source": "host", "session_id": entry["session_id"]}), 10)
+        except Exception:
+            pass  # an older Claude Code, or the demo: the name still matches from the next start
+
+    async def _local(self, skip):
+        """This machine's sessions for the switchboard tools: {id, name, group, title (Claude Code's own name), ...entry}."""
+        async def title(e):
+            try:
+                info = await asyncio.to_thread(self.sdk.get_session_info, e["session_id"])
+                return getattr(info, "custom_title", None)
+            except Exception:
+                return None
+        es = [e for e in self.store.entries() if e["id"] != skip]
+        titles = await asyncio.gather(*(title(e) for e in es))
+        return [{**e, "group": e["grp"], "title": t} for e, t in zip(es, titles)]
+
+    async def rename(self, entry):
+        """Renamed in Switchboard: rename it in Claude Code too, so ListAgents/SendMessage and other sessions agree."""
+        if (lv := self.live.get(entry["id"])):
+            return await self._title(lv, entry)
+        try:
+            await asyncio.to_thread(self.sdk.rename_session, entry["session_id"], entry["name"])
+        except Exception:
+            pass  # not on disk yet (no first message): it's named when it starts
 
     # ---- messaging between tree sessions: Claude Code's own SendMessage only reaches running ones ----
     def _tools(self, entry_id):
@@ -343,8 +397,12 @@ class Runner:
             return "open in a terminal outside Switchboard" if e["session_id"] in self.elsewhere() else "stopped (a message resumes it)"
 
         async def sessions(args):
-            others = [e for e in self.store.entries() if e["id"] != entry_id]
-            lines = [f'- "{e["name"]}" ({e["grp"]}): {view(e)}' for e in others] or ["No other sessions in Switchboard on this machine."]
+            me = self.store.entry(entry_id) or {}
+            others = await self._local(entry_id)
+            lines = [f'You are "{me.get("name")}" on {self.machine} ("{me.get("name")}@{self.machine}" from other machines). '
+                     "Address others by name (or Claude Code's name, project or id); on another machine add @machine.", ""]
+            lines += [f'- "{e["name"]}" ({e["group"]}' + (f', Claude Code calls it "{e["title"]}"' if e["title"] and e["title"] != e["name"] else "")
+                      + f"): {view(e)}" for e in others] or ["No other sessions in Switchboard on this machine."]
             for p in await peers.all_peers(self.store):  # the user's other machines (same relay account, or linked by hand)
                 es = None if p.get("online") is False else await peers.entries(p)  # offline on the relay: don't wait for it
                 lines += [f"- {p['name']}: can't be reached right now"] if es is None else \
@@ -361,18 +419,16 @@ class Runner:
                 es = await peers.entries(p)
                 if es is None:
                     return say(f"{p['name']} can't be reached right now.", True)
-                hits = [e for e in es if e["id"] == name] or [e for e in es if e["name"].lower() == name.lower()]
-                if len(hits) != 1:
-                    return say(f'{"No" if not hits else len(hits)} session{"s" if len(hits) > 1 else ""} named "{name}" on {p["name"]}; '
-                               "use the sessions tool to see their names.", True)
-                err = await peers.send(p, hits[0]["id"], text, f'{me["name"]}@{self.machine}')
-                return say(f'Couldn\'t deliver to "{want}": {err}', True) if err else say(f'Delivered to "{hits[0]["name"]}" on {p["name"]}.')
-            hits = [e for e in self.store.entries() if e["id"] == want] or [e for e in self.store.entries() if e["name"].lower() == want.lower()]
-            if not hits:
-                return say(f'No session named "{want}". Use the sessions tool to see their names.', True)
-            if len(hits) > 1:
-                return say(f'{len(hits)} sessions are named "{want}"; use one of these ids instead: {", ".join(e["id"] for e in hits)}', True)
-            to = hits[0]
+                hit, why = pick(es, name, f" on {p['name']}")
+                if not hit:
+                    return say(why, True)
+                err = await peers.send(p, hit["id"], text, f'{me["name"]}@{self.machine}')
+                return say(f'Couldn\'t deliver to "{want}": {err}', True) if err else say(f'Delivered to "{hit["name"]}" on {p["name"]}.')
+            local = await self._local(None)
+            hit, why = pick(local, want)
+            if not hit:
+                return say(why, True)
+            to = self.store.entry(hit["id"])
             if to["id"] == entry_id:
                 return say("That's this session.", True)
             if not text.strip():
@@ -467,11 +523,12 @@ class Runner:
                           if action == "wake" else "When it fires the user gets it in their inbox."))
 
         return sdk.create_sdk_mcp_server("switchboard", tools=[
-            sdk.tool("sessions", "List the other Claude sessions in Switchboard, by name, with their state: this machine's, and "
-                     "(as name@machine) those on the user's other machines if they linked them. Stopped ones are included: unlike "
-                     "SendMessage, message_session can reach them.", {})(sessions),
-            sdk.tool("message_session", "Send a message to another Switchboard session, by its name from the sessions tool "
-                     "(name@machine for one on another machine). "
+            sdk.tool("sessions", "Who you are, and the other Claude sessions in Switchboard by name (and Claude Code's own name, "
+                     "when it differs), with their state: this machine's, and (as name@machine) those on the user's other machines. "
+                     "Stopped ones are included: unlike SendMessage, message_session can reach them.", {})(sessions),
+            sdk.tool("message_session", "Send a message to another Switchboard session: its name from the sessions tool, Claude "
+                     "Code's name for it, its project or its id, any capitalisation (name@machine for one on another machine). "
+                     "If nothing matches, it says the closest names. "
                      "A stopped session is resumed to receive it. It arrives as a new prompt; the reply comes back the same way only "
                      "if that session chooses to answer.", {"session": str, "text": str})(message),
             sdk.tool("call_user", "Phone the user: their phone rings, and if they answer it reads your message aloud and you talk, turn by turn. "
