@@ -104,6 +104,20 @@
   let loadingHistory = $state(false);
   let openSeq = 0;
   let filter = $state('');
+  // quick filters under the Filter box (shown while it's in use): last reply within N hours, and states; kept on this device
+  const TF_KEY = 'switchboard.treefilter';
+  const tfSaved = (() => { try { return JSON.parse(localStorage.getItem(TF_KEY) || '{}'); } catch { return {}; } })();
+  let fAge = $state<number>(typeof tfSaved.age === 'number' ? tfSaved.age : 0);  // hours; 0 = any age
+  let fStates = $state<string[]>(Array.isArray(tfSaved.states) ? tfSaved.states : []);
+  let filterFocus = $state(false);
+  $effect(() => { try { localStorage.setItem(TF_KEY, JSON.stringify({ age: fAge, states: fStates })); } catch {} });
+  const AGES = [[1, '< 1 hour'], [24, '< 1 day'], [168, '< 1 week']] as const;
+  const FSTATES = [['waiting', 'Waiting on me'], ['working', 'Working'], ['unread', 'Unread'], ['pinned', 'Pinned']] as const;
+  const quickActive = $derived(fAge > 0 || fStates.length > 0);
+  function quickMatch(e: Entry) {
+    if (fAge && Date.now() - (e.session?.last_modified ?? 0) > fAge * 3_600_000) return false;  // last reply (the transcript's last change)
+    return !fStates.length || fStates.some((st) => (st === 'pinned' ? e.pinned : icon(e) === st));
+  }
   let dialog = $state<'connect' | 'add' | 'settings' | 'pair' | 'report' | 'watches' | 'delete' | 'removed' | 'projdefaults' | 'rmproject' | null>(null);
 
   // inbox: per machine, merged newest first
@@ -1060,10 +1074,10 @@
     held = pos;
   }
   function groups(m: Machine) {
-    const es = (tree[m.url]?.entries ?? []).filter((e) => !filter || (e.name + ' ' + e.group).toLowerCase().includes(filter.toLowerCase()));
+    const es = (tree[m.url]?.entries ?? []).filter((e) => (!filter || (e.name + ' ' + e.group).toLowerCase().includes(filter.toLowerCase())) && quickMatch(e));
     const g: Record<string, Entry[]> = {};
     for (const e of es) (g[e.group] ??= []).push(e);
-    for (const name of dset[m.url]?.projects ?? []) if (!g[name] && (!filter || name.toLowerCase().includes(filter.toLowerCase()))) g[name] = [];  // made empty
+    if (!quickActive) for (const name of dset[m.url]?.projects ?? []) if (!g[name] && (!filter || name.toLowerCase().includes(filter.toLowerCase()))) g[name] = [];  // made empty
     const h = held;
     for (const list of Object.values(g))
       list.sort(h ? (a, b) => (h[a.id] ?? 1e9) - (h[b.id] ?? 1e9) : (a, b) => Number(b.pinned) - Number(a.pinned) || activity(b) - activity(a));
@@ -1748,7 +1762,18 @@
       {/each}
     {/snippet}
     <nav class="tree" class:folded={phone ? !!solo : !sideOpen || !!solo} aria-label="Sessions" onpointerenter={holdOrder} onpointermove={() => { if (!held) holdOrder(); }} onpointerleave={() => (held = null)}>
-      <label class="search"><span class="sr">Filter</span><input type="search" placeholder="Filter…" bind:value={filter} /></label>
+      <label class="search"><span class="sr">Filter</span><input type="search" placeholder={quickActive ? 'Filter… (quick filters on)' : 'Filter…'} bind:value={filter}
+        onfocus={() => (filterFocus = true)} onblur={() => (filterFocus = false)} /></label>
+      {#if filterFocus || quickActive}
+        <div class="quickf" role="group" aria-label="Quick filters">
+          <span class="muted small">Last reply</span>
+          {#each AGES as [h, label] (h)}<button type="button" class="pill" class:on={fAge === h} aria-pressed={fAge === h} onmousedown={(e) => e.preventDefault()} onclick={() => (fAge = fAge === h ? 0 : h)}>{label}</button>{/each}
+          <span class="muted small">Show</span>
+          {#each FSTATES as [st, label] (st)}<button type="button" class="pill" class:on={fStates.includes(st)} aria-pressed={fStates.includes(st)} onmousedown={(e) => e.preventDefault()}
+            onclick={() => (fStates = fStates.includes(st) ? fStates.filter((x) => x !== st) : [...fStates, st])}>{label}</button>{/each}
+          {#if quickActive}<button type="button" class="link small" onmousedown={(e) => e.preventDefault()} onclick={() => { fAge = 0; fStates = []; }}>Clear</button>{/if}
+        </div>
+      {/if}
       <div class="scroll">
         {#if machines.length === 0}
           <p class="empty">No machines yet. Run <code>switchboard-daemon serve</code> and <code>switchboard-daemon pair</code>, then connect.</p>
@@ -2881,6 +2906,9 @@
   .sesschip:hover { border-color: var(--mauve); }
   .plan { white-space: nowrap; } .plan.high { color: var(--peach); }
   .inputbar textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .quickf { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; padding: 0 12px 8px; }
+  .quickf .muted.small { flex-basis: 100%; margin-top: 2px; }
+  .quickf .pill { font-size: 11px; padding: 2px 8px; }
   .startswith { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin: 2px 0 4px; }
   .readimg { align-self: flex-start; padding: 0; margin: 2px 0 6px 18px; border: 1px solid var(--s1); border-radius: 8px; background: none; cursor: zoom-in; line-height: 0; max-width: calc(100% - 18px); }
   .readimg img { max-height: 160px; max-width: 240px; object-fit: contain; border-radius: 8px; }
