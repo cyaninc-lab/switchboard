@@ -305,7 +305,7 @@ export type LiveEvent =
   | { type: 'settings' }
   | { type: 'relay' }
   | { type: 'ack'; ref: string }
-  | { type: 'unread'; entry: string; items: string[]; dropped: string[] }
+  | { type: 'unread'; entry: string; items: string[]; dropped: string[]; withdrawn?: string[] }
   | { type: 'pong' }
   | { type: 'terminal_output'; entry: string; data: string }
   | { type: 'error'; entry?: string; code: string; message: string };

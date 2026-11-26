@@ -238,7 +238,8 @@ class Runner:
         lv.sent = [s for s in lv.sent if s[1] != uid]
         lv.unread.remove(text)
         lv.withdrawn += 1
-        await self.broadcast({"type": "unread", "entry": entry_id, "items": _yours(lv.unread), "dropped": []})
+        # withdrawn: taken back, not read (clients just drop its row; it doesn't join the chat)
+        await self.broadcast({"type": "unread", "entry": entry_id, "items": _yours(lv.unread), "dropped": [], "withdrawn": [text]})
         return True
 
     async def _watch_queue(self, lv, session_id):
