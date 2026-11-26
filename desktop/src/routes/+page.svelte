@@ -2045,7 +2045,8 @@
           </div>
         {/if}
         <form class="inputbar mono" onsubmit={sendDraft} ondragover={(e) => e.preventDefault()} ondrop={onDrop}>
-          <span class="prompt">❯</span>
+          <!-- ❯, or a spinner while Claude works -->
+          {#if selected.entry.state === 'working'}<span class="prompt"><span class="promptspin" role="status" aria-label="Claude is working"></span></span>{:else}<span class="prompt">❯</span>{/if}
           <label class="grow"><span class="sr">Message this session</span>
             <textarea rows="1" {@attach grow} bind:value={draft} bind:this={inputEl} oninput={onDraftInput} onblur={() => setTimeout(() => (atQ = null), 150)} onpaste={onPaste} onkeydown={onInputKey} disabled={selected.entry.state === 'terminal' || selected.entry.state === 'missing'}
               placeholder={selected.entry.state === 'terminal' ? 'Open in a terminal elsewhere' : selected.entry.state === 'working' ? (phone ? 'Working… Claude reads it after this step' : 'Working… Enter: Claude reads it after this step · Ctrl+Enter: now') : (phone ? 'Message' : 'Message this session (Shift+Enter for a new line)')}></textarea></label>
@@ -2844,6 +2845,8 @@
   .bgspin { display: inline-block; width: 9px; height: 9px; border: 2px solid var(--sky); border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
   .bgbadge { font-size: 10px; font-weight: 600; color: var(--crust); background: var(--sky); border-radius: 99px; padding: 0 6px; }
   @media (prefers-reduced-motion: reduce) { .bgspin { animation: none; } }
+  .promptspin { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--mauve); border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -1px; }
+  @media (prefers-reduced-motion: reduce) { .promptspin { animation: none; } }
   .toast { position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%); z-index: 60; max-width: min(70vw, 720px); word-break: break-all;
     background: var(--s0); color: var(--text); border: 1px solid var(--s1); border-radius: 8px; padding: 6px 12px; box-shadow: 0 4px 16px rgb(0 0 0 / 0.25); }
   /* paths in step headers (Read(...), Edit(...)): clickable like those in replies, without the code pill */

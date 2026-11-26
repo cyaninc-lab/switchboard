@@ -59,6 +59,7 @@ test('chat: stream, approve, deny, interrupt, auto mode, stop', async ({ page })
   await input.fill('a slow job');
   await input.press('Enter');
   await expect(page.getByRole('button', { name: 'Stop Claude' })).toHaveText('■');  // Send turns into Stop while it works
+  await expect(page.getByRole('status', { name: 'Claude is working' })).toBeVisible();  // the ❯ by the box spins
   await page.keyboard.press('Escape');
   await expect(entry).toHaveAttribute('title', 'Live and ready', { timeout: 5000 });
 
