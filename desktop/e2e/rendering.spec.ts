@@ -28,9 +28,15 @@ test('diffs, to-dos, expandable output and the context/cost meter', async ({ pag
   await expect(log).not.toContainText('Todos have been modified');
   // long tool output: 6 lines, then expand
   await expect(log).toContainText('test_6 PASSED');
-  await expect(log).not.toContainText('test_20 PASSED');
-  await log.getByRole('button', { name: 'Show all 20 lines' }).click();
-  await expect(log).toContainText('test_20 PASSED');
+  const win = log.locator('.result', { hasText: 'test_1 PASSED' });
+  const text = win.locator('.rtext');
+  const lineH = await text.evaluate((el) => parseFloat(getComputedStyle(el).lineHeight));
+  expect((await text.boundingBox())!.height).toBeLessThanOrEqual(lineH * 6 + 1);  // six lines as they show on screen
+  await page.screenshot({ path: 'e2e/.results/output-window.png' });
+  const more = win.getByRole('button', { name: 'Show all 20 lines' });  // inside the window, at its foot
+  await more.click();
+  expect((await text.boundingBox())!.height).toBeGreaterThan(lineH * 15);
+  await expect(win.getByRole('button', { name: 'Show less' })).toBeVisible();
   await page.screenshot({ path: 'e2e/.results/rendering.png' });
 
   // context and cost after a turn

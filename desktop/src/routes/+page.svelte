@@ -566,6 +566,15 @@
   const icon = (e: Entry) => (e.state === 'waiting' || e.state === 'working' ? e.state : unread[e.id] ? 'unread' : e.state);
   let expanded = $state<Record<string, boolean>>({});  // tool output shown in full
   const RESULT_LINES = 6;
+  // a tool's output window: is anything cut off at its six lines? (measured, so wrapped long lines count too)
+  let clipped = $state<Record<string, boolean>>({});
+  const measureClip = (k: string) => (el: HTMLElement) => {
+    const check = () => { const over = el.scrollHeight > el.clientHeight + 2; if (!!clipped[k] !== over) clipped[k] = over; };
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  };
   let prompts = $state<Record<string, { request_id: string; tool: string; kind: 'tool' | 'question' | 'plan'; input: any; remember: string[] }[]>>({});
   let draft = $state('');
   // each session (and subagent view) keeps its own unsent text and images; ponytail: in memory, a restart forgets it
@@ -1969,10 +1978,12 @@
                   <span class="arttext"><b>{artifacts[line.id]}</b><span class="muted small">{artifactUpdated(line.text) ? 'Updated' : 'Published'} on claude.ai · Open</span></span>
                 </button>
               {:else}
-                {@const rows = line.text.split('\n')}
+                {@const out = line.text.replace(/\s+$/, '')}  <!-- trailing blank lines left an empty band -->
+                {@const rows = out.split('\n')}
                 {@const cmd = 'id' in line && line.id ? bashCmd[line.id] : undefined}
-                <div class="result">{#if cmd}<span class="cmdline"><span class="dollar">$</span>{cmd}</span>{'\n'}{/if}{expanded[msg.uuid + li] ? line.text : rows.slice(0, RESULT_LINES).join('\n')}</div>
-                {#if rows.length > RESULT_LINES}<button class="link small more" onclick={() => (expanded[msg.uuid + li] = !expanded[msg.uuid + li])}>{expanded[msg.uuid + li] ? 'Show less' : `Show all ${rows.length} lines`}</button>{/if}
+                {@const k = msg.uuid + li}
+                <!-- six lines as they show on screen (long lines wrap), the rest behind "Show all", inside the window -->
+                <div class="result"><div class="rtext" class:clip={!expanded[k]} {@attach measureClip(k)}>{#if cmd}<span class="cmdline"><span class="dollar">$</span>{cmd}</span>{'\n'}{/if}{expanded[k] ? out : rows.slice(0, RESULT_LINES * 10).join('\n')}</div>{#if expanded[k] || clipped[k]}<button class="link small inwin" onclick={() => (expanded[k] = !expanded[k])}>{expanded[k] ? 'Show less' : `Show all ${rows.length} lines`}</button>{/if}</div>
               {/if}
             {/each}
           {/snippet}
@@ -2874,6 +2885,8 @@
   .log .result { align-self: flex-start; box-sizing: border-box; max-width: 100%; width: min(100%, 760px); background: var(--crust); border: 1px solid var(--s1); color: var(--sub0);
     border-radius: 10px; padding: 7px 10px 9px; font-size: 12px; overflow-x: auto; }
   .log .step + .result { margin-top: -8px; border-top: 0; border-radius: 0 0 10px 10px; }  /* the gap between lines is 8px */
+  .rtext.clip { max-height: calc(6 * 1.45em); max-height: 6lh; overflow: hidden; }
+  .result .inwin { display: block; margin-top: 6px; padding-top: 5px; border-top: 1px dashed var(--s1); width: 100%; text-align: left; font-family: var(--ui-font, Inter, system-ui, sans-serif); }
   .log .result .cmdline { color: var(--text); } .log .result .dollar { color: var(--o1); margin-right: 1ch; }
   .app.phone .log .step, .app.phone .log .result { width: 92%; }
   .app.phone .log .step + .result { margin-top: -10px; }
