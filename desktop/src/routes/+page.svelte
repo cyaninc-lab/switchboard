@@ -1131,7 +1131,7 @@
   }
 
   async function open(machine: Machine, entry: Entry, how: How = 'preview') {
-    if (!solo && inWindow[entry.id] === 'split') return;  // it's in view already, in the split pane
+    if (!solo && inWindow[entry.id] === 'split') { if (split) split.active = entry.id; return; }  // in the split pane: its tab there
     if (!solo && inWindow[entry.id]) {
       if (await focusWindow(entry.id).catch(() => false)) return;
       delete inWindow[entry.id];  // its window is gone after all
@@ -1236,7 +1236,7 @@
   }
   // middle-click opens/closes tabs; without this Windows (WebView2) starts autoscroll on the button going down
   const noAutoscroll = (ev: MouseEvent) => { if (ev.button === 1) ev.preventDefault(); };
-  let dragTab: string | null = null;
+  let dragTab = $state<string | null>(null);
   function dropTab(target: string) {
     const from = tabs.findIndex((t) => tabKey(t) === dragTab), to = tabs.findIndex((t) => tabKey(t) === target);
     if (from < 0 || to < 0 || from === to) return;
@@ -1302,49 +1302,54 @@
   // the main window does what its split pane asks (links in the browser, files on this machine, notifications)
   if (!solo && typeof window !== 'undefined') window.addEventListener('message', (ev) => {
     const d = ev.data;
-    if (ev.origin !== location.origin || !splitFrame || ev.source !== splitFrame.contentWindow) return;
-    if (d?.type === 'pane-ready' && inShell()) return void splitFrame.contentWindow?.postMessage({ type: 'sb-shell' }, location.origin);
+    const frame = Object.values(splitFrames).find((f) => f?.contentWindow === ev.source);
+    if (ev.origin !== location.origin || !frame) return;
+    if (d?.type === 'pane-ready' && inShell()) return void frame.contentWindow?.postMessage({ type: 'sb-shell' }, location.origin);
     if (!d?.sb) return;
     if (d.do === 'url' && typeof d.url === 'string' && /^https?:\/\//i.test(d.url)) openExternal(d.url);
     else if (d.do === 'path' && typeof d.path === 'string') openLocal(d.path).then((r) => r === 'revealed' && say(`Shown in its folder: ${d.path}`), (e) => say(String(e)));
     else if (d.do === 'notify' && typeof d.title === 'string') notify(d.title, String(d.body ?? ''));
   });
 
-  // ---- split view: one more session beside or below the chat (the single-session page in a pane) ----
+  // ---- split view: more sessions beside or below the chat, with tabs of their own (each the single-session page in a
+  // pane, kept loaded); tabs drag between the main strip and the split's ----
   type SplitDir = 'side' | 'below';
+  type SplitTab = { url: string; entry: string };
   const SPLIT_KEY = 'switchboard.split';
   const splitSaved = (() => { try { return JSON.parse(localStorage.getItem(SPLIT_KEY) || '{}'); } catch { return {}; } })();
-  const splitStart = !solo && splitSaved.entry ? { url: splitSaved.url as string, entry: splitSaved.entry as string } : null;
-  let split = $state<{ url: string; entry: string } | null>(splitStart);
+  const splitTabs0: SplitTab[] = solo ? [] : Array.isArray(splitSaved.tabs) ? splitSaved.tabs : splitSaved.entry ? [{ url: splitSaved.url, entry: splitSaved.entry }] : [];
+  const splitStart = splitTabs0.length ? { tabs: splitTabs0, active: splitSaved.active ?? splitTabs0[0].entry } : null;
+  let split = $state<{ tabs: SplitTab[]; active: string } | null>(splitStart);
+  let splitFrames = $state<Record<string, HTMLIFrameElement>>({});
+  let dragSplitTab = $state<string | null>(null);
   let splitDir = $state<SplitDir>(splitSaved.dir === 'below' ? 'below' : 'side');
   let splitSize = $state<number>(typeof splitSaved.size === 'number' ? splitSaved.size : 0.5);  // the pane's share of the space
-  let splitFrame = $state<HTMLIFrameElement>();
   let workEl = $state<HTMLDivElement>();
   let splitDrag = $state(false);
-  if (splitStart) inWindow[splitStart.entry] = 'split';
+  for (const t of splitTabs0) inWindow[t.entry] = 'split';
   $effect(() => {
     if (solo) return;
-    const v = JSON.stringify({ ...(split ?? {}), dir: splitDir, size: splitSize });
+    const v = JSON.stringify({ tabs: split?.tabs ?? [], active: split?.active, dir: splitDir, size: splitSize });
     try { localStorage.setItem(SPLIT_KEY, v); } catch {}
   });
-  const splitEntry = $derived(split ? tree[split.url]?.entries.find((e) => e.id === split!.entry) : undefined);
+  const splitTabEntry = (t: SplitTab) => tree[t.url]?.entries.find((e) => e.id === t.entry);
+  const splitEntry = $derived(split ? splitTabEntry(split.tabs.find((t) => t.entry === split!.active) ?? split.tabs[0]) : undefined);
   async function openSplit(m: Machine, e: Entry, dir: SplitDir) {
-    if (split?.entry === e.id) { splitDir = dir; return; }
-    if (split) await closeSplit();
+    if (split?.tabs.some((t) => t.entry === e.id)) { split.active = e.id; splitDir = dir; return; }
     const k = tabKey({ entry: e.id });
     const h = k === curKey ? { text: draft, images: attachments } : drafts[e.id] ?? { text: '', images: [] };
     try { localStorage.setItem('switchboard.handoff.' + e.id, JSON.stringify({ url: m.url, entry: e.id, ...h })); } catch {}
     if (tabs.some((t) => tabKey(t) === k)) closeTab(k);
     delete drafts[e.id];  // the draft goes with it
     inWindow[e.id] = 'split';
-    splitDir = dir;
-    split = { url: m.url, entry: e.id };
+    if (!split) splitDir = dir;
+    split = { tabs: [...(split?.tabs ?? []), { url: m.url, entry: e.id }], active: e.id };
   }
-  // close the pane: its draft comes back (asked for over postMessage) and the session returns as a tab
-  async function closeSplit() {
-    const s = split;
-    if (!s) return;
-    const w = splitFrame?.contentWindow;
+  // a split tab back to the main strip: its draft comes back (asked for over postMessage) and it opens as a tab there
+  async function closeSplitTab(entry: string) {
+    const s = split?.tabs.find((t) => t.entry === entry);
+    if (!split || !s) return;
+    const w = splitFrames[entry]?.contentWindow;
     const got: { text: string; images: unknown[] } | null = w ? await new Promise((ok) => {
       const done = (v: any) => { clearTimeout(t); window.removeEventListener('message', on); ok(v); };
       const on = (ev: MessageEvent) => { if (ev.origin === location.origin && ev.data?.type === 'split-draft' && ev.data.entry === s.entry) done(ev.data); };
@@ -1352,12 +1357,30 @@
       window.addEventListener('message', on);
       w.postMessage({ type: 'give-draft' }, location.origin);
     }) : null;
-    split = null;
+    const left = split.tabs.filter((t) => t.entry !== entry);
+    const i = split.tabs.findIndex((t) => t.entry === entry);
+    split = left.length ? { tabs: left, active: split.active === entry ? (left[i] ?? left[i - 1]).entry : split.active } : null;
+    delete splitFrames[entry];
     delete inWindow[s.entry];
     if (got) drafts[s.entry] = { text: got.text, images: got.images as typeof attachments };
     const m = machines.find((x) => x.url === s.url), e = tree[s.url]?.entries.find((x) => x.id === s.entry);
     if (m && e) open(m, e, 'new');
   }
+  async function closeSplit() { for (const t of [...(split?.tabs ?? [])]) await closeSplitTab(t.entry); }
+  // a drop on the split's strip: a main tab moves in; a split tab moves to where it was dropped
+  function dropOnSplit(target?: string) {
+    if (dragSplitTab && split && target && dragSplitTab !== target) {
+      const from = split.tabs.findIndex((t) => t.entry === dragSplitTab), to = split.tabs.findIndex((t) => t.entry === target);
+      if (from >= 0 && to >= 0) { const [t] = split.tabs.splice(from, 1); split.tabs.splice(to, 0, t); }
+    } else if (dragTab) {
+      const t = tabs.find((x) => tabKey(x) === dragTab);
+      const m = t && !t.sub ? tabMachine(t) : null, e = t && !t.sub ? tabEntry(t) : null;
+      if (m && e) openSplit(m, e, splitDir);
+    }
+    dragTab = null; dragSplitTab = null;
+  }
+  // a drop on the main strip: a split tab comes back
+  function dropOnMain(ev: DragEvent) { if (dragSplitTab) { ev.preventDefault(); const id = dragSplitTab; dragSplitTab = null; closeSplitTab(id); } }
   function dragSplit(ev: PointerEvent) {
     const el = workEl;
     if (!el) return;
@@ -1861,8 +1884,8 @@
 
     <div class="work" class:below={splitDir === 'below'} bind:this={workEl}>
     <main class="term">
-      {#if tabs.length && !solo}
-        <div class="tabs" role="tablist" aria-label="Open sessions">
+      {#if (tabs.length || split) && !solo}
+        <div class="tabs" role="tablist" aria-label="Open sessions" tabindex="-1" ondragover={(ev) => { if (dragSplitTab) ev.preventDefault(); }} ondrop={dropOnMain}>
           {#each tabs as t (tabKey(t))}
             {@const e = tabEntry(t)}
             {#if e}
@@ -1871,7 +1894,7 @@
               {@const k = tabKey(t)}
               <div class="tab" class:on={k === curKey} class:preview={t.preview} role="presentation" draggable="true"
                 ondragstart={(ev) => { dragTab = k; ev.dataTransfer?.setData('text/plain', name); if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'move'; }}
-                ondragend={(ev) => tabDragEnd(ev, t)} ondragover={(ev) => ev.preventDefault()} ondrop={(ev) => { ev.preventDefault(); dropTab(k); }}
+                ondragend={(ev) => tabDragEnd(ev, t)} ondragover={(ev) => ev.preventDefault()} ondrop={(ev) => { ev.preventDefault(); if (dragSplitTab) return; ev.stopPropagation(); dropTab(k); }}
                 onmousedown={noAutoscroll} onauxclick={(ev) => { if (ev.button === 1) { ev.preventDefault(); closeTab(k); } }}>
                 <button class="tabname" role="tab" aria-selected={k === curKey} title={t.preview ? `${name} (preview: the next session you open replaces it; double-click to keep)` : name}
                   onclick={() => k !== curKey && showTab(t)} ondblclick={() => (t.preview = false)}>
@@ -2079,15 +2102,29 @@
     {#if split && !solo}
       <div class="divider" role="separator" aria-label="Resize the split" aria-orientation={splitDir === 'side' ? 'vertical' : 'horizontal'} onpointerdown={dragSplit}></div>
       <section class="splitpane" style="flex-basis: {splitSize * 100}%" aria-label="Split: {splitEntry?.name ?? 'session'}">
-        <div class="splithead">
-          <span class="st {splitEntry ? icon(splitEntry) : 'stopped'}"></span><span class="splitname">{splitEntry?.name ?? '…'}</span>
+        <div class="splithead" role="presentation" ondragover={(ev) => { if (dragTab || dragSplitTab) ev.preventDefault(); }} ondrop={(ev) => { ev.preventDefault(); dropOnSplit(); }}>
+          <div class="splittabs" role="tablist" aria-label="Split sessions">
+            {#each split.tabs as t (t.entry)}
+              {@const e = splitTabEntry(t)}
+              <div class="tab" class:on={t.entry === split.active} role="presentation" draggable="true"
+                ondragstart={(ev) => { dragSplitTab = t.entry; ev.dataTransfer?.setData('text/plain', e?.name ?? ''); if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'move'; }}
+                ondragend={() => (dragSplitTab = null)} ondragover={(ev) => ev.preventDefault()} ondrop={(ev) => { ev.preventDefault(); ev.stopPropagation(); dropOnSplit(t.entry); }}
+                onauxclick={(ev) => { if (ev.button === 1) { ev.preventDefault(); closeSplitTab(t.entry); } }}>
+                <button class="tabname" role="tab" aria-selected={t.entry === split.active} title={e?.name} onclick={() => (split!.active = t.entry)}>
+                  <span class="st {e ? icon(e) : 'stopped'}"></span><span class="tlabel">{e?.name ?? '…'}</span></button>
+                <button class="tabx" aria-label="Back to the main tabs: {e?.name ?? 'session'}" title="Move it back to the main tabs" onclick={() => closeSplitTab(t.entry)}>×</button>
+              </div>
+            {/each}
+          </div>
           <span class="grow"></span>
           <button class="tiny" onclick={() => (splitDir = splitDir === 'side' ? 'below' : 'side')} title={splitDir === 'side' ? 'Stack it below instead' : 'Put it side by side instead'}
             aria-label={splitDir === 'side' ? 'Stack below' : 'Side by side'}>{splitDir === 'side' ? '⬓' : '◨'}</button>
-          <button class="tiny" onclick={closeSplit} title="Close the split; the session goes back to a tab" aria-label="Close split">×</button>
+          <button class="tiny" onclick={closeSplit} title="Close the split; its sessions go back to the main tabs" aria-label="Close split">⨯</button>
         </div>
-        <iframe bind:this={splitFrame} class:dragging={splitDrag} title="Split: {splitEntry?.name ?? 'session'}"
-          src="/?machine={encodeURIComponent(split.url)}&solo={encodeURIComponent(split.entry)}&embed=1"></iframe>
+        {#each split.tabs as t (t.entry)}
+          <iframe bind:this={splitFrames[t.entry]} class:dragging={splitDrag || !!dragTab || !!dragSplitTab} class:hidden={t.entry !== split.active} title="Split: {splitTabEntry(t)?.name ?? 'session'}"
+            src="/?machine={encodeURIComponent(t.url)}&solo={encodeURIComponent(t.entry)}&embed=1"></iframe>
+        {/each}
       </section>
     {/if}
     </div>
@@ -2785,6 +2822,9 @@
   .splitname { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .splitpane iframe { flex: 1; border: 0; width: 100%; background: var(--base); }
   .splitpane iframe.dragging { pointer-events: none; }  /* so a resize drag isn't swallowed by the pane */
+  .splitpane iframe.hidden { display: none; }  /* the split's other tabs stay loaded */
+  .splittabs { display: flex; gap: 2px; min-width: 0; overflow-x: auto; }
+  .splithead .tab { flex: 0 1 auto; }
   .term { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--base); }
   /* the bottom line is drawn inside the bar (inset shadow) so the active tab can cover it without overflowing the bar,
      which made Windows show a vertical scrollbar */
