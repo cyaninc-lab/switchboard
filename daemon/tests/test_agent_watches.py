@@ -38,6 +38,17 @@ def test_agents_watch_tool(tmp_path, monkeypatch):
     assert run(action="pause", id=theirs["id"]).get("is_error")  # not theirs to pause either
     assert not run(action="pause", id=w["id"]).get("is_error") and store.watch(w["id"])["enabled"] is False
     assert "paused" in text(run(action="list"))
+    # edit in place: same id, rescheduled; next run times in replies
+    r = run(action="edit", id=w["id"], config={"url": "https://example.org", "every_minutes": 30}, instructions="Only outages")
+    assert not r.get("is_error") and "Next:" in text(r), text(r)
+    e2 = store.watch(w["id"])
+    assert e2["config"]["url"] == "https://example.org" and e2["instructions"] == "Only outages" and e2["enabled"]
+    assert run(action="edit", id=w["id"], config={"url": "https://x.org", "every_minutes": 1}).get("is_error")  # limits still apply
+    assert run(action="edit", id=theirs["id"], name="mine now").get("is_error")
+    r = run(action="add", name="one-off", kind="schedule", config={"run_at": "2099-01-01 22:00"})
+    assert not r.get("is_error") and "first run" in text(r)
+    assert "next:" in text(run(action="list"))
+    run(action="remove", id=next(x for x in store.watches() if x["name"] == "one-off")["id"])
     assert not run(action="resume", id=w["id"]).get("is_error") and store.watch(w["id"])["enabled"] is True
     assert not run(action="remove", id=w["id"]).get("is_error") and all(x["id"] != w["id"] for x in store.watches())
     # nothing fits: the idea goes to the user's inbox, a few a day
