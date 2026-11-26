@@ -14,10 +14,11 @@ IDLE_CHOICES = (0, 10, 30, 60, 240)
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 MAX_IMAGE_B64 = 7_000_000  # ~5 MB of image per attachment
 MAX_IMAGES = 10
-TOOLS = ("mcp__switchboard__sessions", "mcp__switchboard__message_session", "mcp__switchboard__call_user",
+TOOLS = ("mcp__switchboard__inbox", "mcp__switchboard__sessions", "mcp__switchboard__message_session", "mcp__switchboard__call_user",
          "mcp__switchboard__watch")  # allowed without asking
 AGENT_WATCHES, AGENT_MIN_MINUTES = 10, 5  # an agent's own watches: how many, how often at most (each wake costs a turn)
 AGENT_IDEAS = 3  # watch ideas one session may send the user per day
+AGENT_INBOX = 6  # inbox notes one session may leave per hour
 CALL_GAP = 180  # seconds between calls from one session: a guardrail against a session ringing over and over
 MODES = {"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}
 EFFORTS = {"low", "medium", "high", "xhigh", "max"}
@@ -199,6 +200,7 @@ class Runner:
         self.elsewhere = lambda: set()  # {session id} a process outside this daemon holds (set by the app)
         self.last_call: dict[str, float] = {}  # entry id -> when it last rang the user
         self.machine = "this machine"  # its name in clients (set by the app): how other machines address its sessions
+        self.inbox_sent: dict[str, list[float]] = {}  # entry id -> when it left inbox notes (a few an hour)
         self.watches = None  # the scheduler (set by it): next run times, rescheduling after an agent's edit
         self.ideas: dict[str, list[float]] = {}  # entry id -> when it sent watch ideas (a few a day)
 
@@ -555,6 +557,21 @@ class Runner:
                        + ("When it fires you're woken with the instructions you gave and what it found."
                           if action == "wake" else "When it fires the user gets it in their inbox."))
 
+        async def inbox(args):
+            """A note to the user's inbox (their phone is notified), from this session, at most a few an hour."""
+            title, body = str(args.get("title") or "").strip(), str(args.get("body") or "").strip()
+            if not title:
+                return say("Give it a title (one line), and the details in body.", True)
+            now = time.time()
+            recent = self.inbox_sent[entry_id] = [t for t in self.inbox_sent.get(entry_id, []) if t > now - 3600]
+            if len(recent) >= AGENT_INBOX:
+                return say(f"You've sent {AGENT_INBOX} inbox notes this hour; put the rest in one note later, or in the chat.", True)
+            recent.append(now)
+            me = self.store.entry(entry_id) or {}
+            item = self.store.add_inbox(me.get("name") or "A session", title[:200], body[:8000], entry_id=entry_id, from_agent=True)
+            await self.broadcast({"type": "inbox", "item": item})
+            return say("In the user's inbox (their phone is notified). Opening it takes them to this session.")
+
         return sdk.create_sdk_mcp_server("switchboard", tools=[
             sdk.tool("sessions", "Who you are, and the other Claude sessions in Switchboard by name (and Claude Code's own name, "
                      "when it differs), with their state: this machine's, and (as name@machine) those on the user's other machines. "
@@ -564,6 +581,10 @@ class Runner:
                      "If nothing matches, it says the closest names. "
                      "A stopped session is resumed to receive it. It arrives as a new prompt; the reply comes back the same way only "
                      "if that session chooses to answer.", {"session": str, "text": str})(message),
+            sdk.tool("inbox", "Leave the user a note in their Switchboard inbox: their phone gets a notification, and tapping it opens "
+                     "this session. For something they should see when they look, not now: a finished report, a result while they're away, "
+                     f"something to decide later. title: one line; body: the details (markdown). At most {AGENT_INBOX} an hour; for something "
+                     "urgent use call_user, for a normal answer just reply in the chat.", {"title": str, "body": str})(inbox),
             sdk.tool("call_user", "Phone the user: their phone rings, and if they answer it reads your message aloud and you talk, turn by turn. "
                      "Only for something that really needs them now (blocked, a decision only they can make, something urgent); a normal "
                      "question can wait in the chat. Keep the message short and spoken, without markdown, and warm and upbeat: say hi, "

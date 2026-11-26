@@ -127,3 +127,26 @@ def test_sessions_are_found_by_any_of_their_names():
     assert hit is None and '"Menus Import" (id e2)' in why and '"Menus Export" (id e3)' in why
     hit, why = pick(es, "Nuvla Suport")
     assert hit is None and 'Closest: "Nuvola Support"' in why
+
+
+def test_sessions_leave_inbox_notes(tmp_path, monkeypatch):
+    """The inbox tool: a note from this session (the phone is notified through the usual inbox event), a few an hour."""
+    from switchboard_daemon.runner import AGENT_INBOX
+    tools = {}
+    monkeypatch.setattr(sdk, "create_sdk_mcp_server", lambda name, tools=(): {t.name: t for t in tools})
+    store = Store(str(tmp_path / "s.db"))
+    me = store.add_entry("sess-1", "Support", "home", None, None, cwd="/tmp")
+    events = []
+    async def broadcast(ev): events.append(ev)
+    runner = Runner(store, sdk, broadcast)
+    tools.update(runner._tools(me["id"]))
+    run = lambda **a: asyncio.run(tools["inbox"].handler(a))
+    assert run(title="", body="x").get("is_error")
+    r = run(title="22:00 check: 2 stuck orders", body="Orders 1041 and 1043 are stuck in *pending*.")
+    assert not r.get("is_error")
+    item = events[-1]["item"]
+    assert events[-1]["type"] == "inbox" and item["source"] == "Support" and item["entry_id"] == me["id"] and item["from_agent"]
+    assert item["title"] == "22:00 check: 2 stuck orders" and "1041" in item["body"]
+    for _ in range(AGENT_INBOX - 1):
+        assert not run(title="t", body="b").get("is_error")
+    assert run(title="one too many", body="b").get("is_error")
