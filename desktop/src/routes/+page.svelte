@@ -1001,6 +1001,8 @@
     try { fn(live()!, selected.entry.id); liveErr = ''; } catch (e) { liveErr = (e as Error).message; }
   }
   let viewImg = $state<string | null>(null);  // a picture in the chat, full size over everything (click or Esc closes)
+  // the message bar's one button: Stop while Claude is busy and there's nothing to send, else Send
+  const stopping = $derived(!!selected && (selected.entry.state === 'working' || selected.entry.state === 'waiting') && !draft.trim() && !attachments.length);
   function onKey(ev: KeyboardEvent) {
     if (ev.ctrlKey && !dialog && (ev.key === 'Tab' || ev.key === 'PageDown' || ev.key === 'PageUp')) {
       ev.preventDefault(); return cycleTab(ev.key === 'PageUp' || (ev.key === 'Tab' && ev.shiftKey) ? -1 : 1);
@@ -2048,11 +2050,12 @@
             <textarea rows="1" {@attach grow} bind:value={draft} bind:this={inputEl} oninput={onDraftInput} onblur={() => setTimeout(() => (atQ = null), 150)} onpaste={onPaste} onkeydown={onInputKey} disabled={selected.entry.state === 'terminal' || selected.entry.state === 'missing'}
               placeholder={selected.entry.state === 'terminal' ? 'Open in a terminal elsewhere' : selected.entry.state === 'working' ? (phone ? 'Working… Claude reads it after this step' : 'Working… Enter: Claude reads it after this step · Ctrl+Enter: now') : (phone ? 'Message' : 'Message this session (Shift+Enter for a new line)')}></textarea></label>
           <input type="file" multiple hidden bind:this={fileInput} onchange={(e) => { addFiles((e.target as HTMLInputElement).files ?? []); (e.target as HTMLInputElement).value = ''; }} />
-          <button type="button" class="tiny" aria-label="Attach files" class:busy={uploading > 0} title="Attach pictures or files (or paste / drop them). Other files go to the session's machine; their path goes in the message" onclick={() => fileInput?.click()}>
+          <button type="button" class="tiny sq" aria-label="Attach files" class:busy={uploading > 0} title="Attach pictures or files (or paste / drop them). Other files go to the session's machine; their path goes in the message" onclick={() => fileInput?.click()}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" /></svg>
           </button>
-          {#if selected.entry.state === 'working' || selected.entry.state === 'waiting'}<button type="button" class="tiny" aria-label={phone ? 'Interrupt' : undefined} title="Interrupt (Esc)" onclick={() => act((l, id) => l.interrupt(id))}>{phone ? '■' : 'Esc · interrupt'}</button>{/if}
-          {#if phone}<button type="submit" class="sendbtn" aria-label="Send" title="Send (hold for send now)"
+          <!-- one button: Stop while Claude is busy and there's nothing to send, else Send (as in the Claude apps) -->
+          {#if stopping}<button type="button" class="sendbtn stop" aria-label="Stop Claude" title="Stop what Claude is doing (Esc)" onclick={() => act((l, id) => l.interrupt(id))}>■</button>
+          {:else}<button type="submit" class="sendbtn" aria-label="Send" title={phone ? 'Send (hold for send now)' : 'Send (Enter; Ctrl+Enter or right-click sends now)'}
             oncontextmenu={(ev) => { ev.preventDefault(); sendNow = true; (ev.currentTarget as HTMLButtonElement).form?.requestSubmit(); }}>↑</button>{/if}
         </form>
         {/if}
@@ -2641,11 +2644,15 @@
   .app.phone .inputbar { padding: 8px 10px 12px; gap: 8px; }
   .app.phone .inputbar > .prompt { display: none; }
   .app.phone .inputbar { align-items: center; }
-  .app.phone .inputbar > .tiny { flex: none; width: 38px; height: 38px; border-radius: 10px; padding: 0; display: grid; place-items: center; }  /* square, like Send */
+  .inputbar > .tiny.sq { flex: none; width: 34px; height: 34px; border-radius: 10px; padding: 0; display: grid; place-items: center; }  /* square, like Send */
+  .app.phone .inputbar > .tiny.sq { width: 38px; height: 38px; }
   .app.phone .log .shot { align-self: flex-end; margin: 0; max-width: 72%; max-height: 360px; border-radius: 14px; }  /* your picture, on your side */
   .app.phone .btw { width: 100%; flex: 1 1 auto; border-left: 0; }
   .app.phone.inbtw .work { display: none; }
-  .sendbtn { flex: none; width: 38px; height: 38px; border-radius: 10px; border: 0; background: var(--mauve); color: var(--crust); font-weight: 700; font-size: 16px; cursor: pointer; }
+  .sendbtn { flex: none; width: 34px; height: 34px; border-radius: 10px; border: 0; background: var(--mauve); color: var(--crust); font-weight: 700; font-size: 16px; cursor: pointer; align-self: flex-end; }
+  .app.phone .sendbtn { width: 38px; height: 38px; align-self: auto; }
+  .sendbtn.stop { background: var(--red); font-size: 13px; }
+  .inputbar > .tiny.sq { align-self: flex-end; }
   .phonebar { display: flex; border-top: 1px solid var(--s0); background: var(--mantle); }
   .phonebar button { flex: 1; background: none; border: 0; color: var(--o1); font: inherit; font-size: 13px; padding: 12px 0 16px; cursor: pointer; }
   .phonebar button.on { color: var(--mauve); font-weight: 600; }  /* in the split pane: the main window's own bar already shows these */

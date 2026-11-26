@@ -58,7 +58,7 @@ test('chat: stream, approve, deny, interrupt, auto mode, stop', async ({ page })
   await expect(entry).toHaveAttribute('title', 'Live and ready');
   await input.fill('a slow job');
   await input.press('Enter');
-  await expect(page.getByRole('button', { name: 'Esc · interrupt' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Stop Claude' })).toHaveText('■');  // Send turns into Stop while it works
   await page.keyboard.press('Escape');
   await expect(entry).toHaveAttribute('title', 'Live and ready', { timeout: 5000 });
 
