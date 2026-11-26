@@ -136,3 +136,44 @@ def test_quiet_wake_watch_and_active_hours(tmp_path, monkeypatch):
         assert wmod.active_now({}, at(2026, 11, 21, 3, 0))         # no hours: always
         await client.close()
     asyncio.run(t())
+
+
+def test_one_off_end_and_instructions_from_a_file(tmp_path, monkeypatch):
+    """run_at fires once then switches off; max_runs and until end a watch; instructions_file is read when it fires."""
+    import datetime, time
+    from switchboard_daemon import watches as wm
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        watches = client.server.app[appmod.WATCHES]
+        fmt = lambda ts: datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+        now = time.time()
+        r = await client.post("/v1/watches", headers=h, json={"name": "old", "kind": "schedule", "config": {"run_at": fmt(now - 120)}})
+        assert r.status == 400 and "run_at_is_in_the_past" in await r.text()
+        at = (now // 60 + 2) * 60  # two minutes from now, on the minute
+        once = await (await client.post("/v1/watches", headers=h, json={"name": "once", "kind": "schedule", "config": {"run_at": fmt(at)}})).json()
+        assert watches.next_run(once) == at
+        await watches.tick(now)  # not yet
+        assert store.watch(once["id"])["enabled"] and not store.watch(once["id"])["last_fired"]
+        await watches.tick(at + 1)
+        w = store.watch(once["id"])
+        assert w["last_fired"] and not w["enabled"] and w["state"]["runs"] == 1 and watches.next_run(w) is None  # fired once, off
+        await watches.tick(at + 10_000)
+        assert store.watch(once["id"])["state"]["runs"] == 1
+        # max_runs: off after two
+        two = await (await client.post("/v1/watches", headers=h, json={"name": "two", "kind": "schedule", "config": {"every_minutes": 1, "max_runs": 2}})).json()
+        for k in range(4):
+            await watches.tick(now + 120 * (k + 1))
+        w = store.watch(two["id"])
+        assert w["state"]["runs"] == 2 and not w["enabled"]
+        # until: off once past it
+        u = await (await client.post("/v1/watches", headers=h, json={"name": "until", "kind": "schedule", "config": {"every_minutes": 1, "until": fmt(now + 600)}})).json()
+        await watches.tick(now + 1200)
+        assert not store.watch(u["id"])["enabled"]
+        # instructions from a file, read when it fires
+        f = tmp_path / "steps.md"; f.write_text("Check the back office for stuck orders.")
+        w = {"config": {"instructions_file": str(f)}, "instructions": "old pasted text"}
+        assert watches._instructions(w) == "Check the back office for stuck orders."
+        assert "couldn't be read" in watches._instructions({"config": {"instructions_file": str(tmp_path / "gone.md")}})
+        assert watches._instructions({"config": {"skill": "stuck-orders", "args": "site 12"}}) == "Use the stuck-orders skill with: site 12."
+        await client.close()
+    asyncio.run(t())

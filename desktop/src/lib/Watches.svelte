@@ -19,7 +19,7 @@
     { kind: 'github', label: 'GitHub', hint: "New issues, PRs or failed runs (uses this machine's gh login)" },
   ];
   const errors: Record<string, string> = {
-    name_required: 'Give it a name', bad_kind: 'Pick a kind', schedule_needs_every_minutes_or_daily_at: 'Set minutes or a daily time',
+    name_required: 'Give it a name', bad_kind: 'Pick a kind', schedule_needs_every_minutes_daily_at_or_run_at: 'Set minutes or a daily time',
     'daily_at_must_be_HH:MM': 'Daily time must be HH:MM', command_required: 'Enter a command', url_must_be_http: 'The address must start with http:// or https://',
     'repo_must_be_owner/name': 'Repository must be owner/name', wake_needs_an_entry: 'Pick the session to wake',
   };
@@ -78,9 +78,10 @@
   }
   const describe = (w: Watch) => {
     const c = w.config;
-    const when = c.daily_at ? `daily at ${c.daily_at}` : `every ${c.every_minutes ?? 15} min`;
+    const when = c.run_at ? `once at ${c.run_at}` : c.daily_at ? `daily at ${c.daily_at}` : `every ${c.every_minutes ?? 15} min`;
+    const ends = [c.until && `until ${c.until}`, c.max_runs && `${c.max_runs} runs`].filter(Boolean).join(', ');
     const what = w.kind === 'command' ? `$ ${c.command}` : w.kind === 'http' ? c.url : w.kind === 'github' ? `${c.repo}: ${(c.events ?? []).join(', ')}` : 'scheduled';
-    return `${what} · ${when}${hoursText(c.active)}${c.quiet && w.action === 'wake' ? ' · quiet' : ''}`;
+    return `${what} · ${when}${ends ? ` (${ends})` : ''}${hoursText(c.active)}${c.quiet && w.action === 'wake' ? ' · quiet' : ''}${c.instructions_file ? ` · steps from ${c.instructions_file}` : c.skill ? ` · /${c.skill}` : ''}`;
   };
   const entryName = (id: string | null) => (machine && id ? entries[machine.url]?.find((e) => e.id === id)?.name : null) ?? 'a session';
   const ago = (s: number | null) => {
