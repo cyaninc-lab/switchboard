@@ -104,7 +104,7 @@ def test_unread_messages_follow_claude_codes_queue(tmp_path, monkeypatch):
         await asyncio.sleep(1)
         assert await runner.withdraw("e1", "three") is False  # not sent by this daemon mid-turn: nothing to cancel
         assert await runner.withdraw("e1", "four") is True and calls == [{"subtype": "cancel_async_message", "message_uuid": "u4"}]
-        assert runner.unread("e1") == ["three"] and events[-1]["items"] == ["three"]
+        assert runner.unread("e1") == ["three"] and events[-1]["items"] == ["three"] and events[-1]["withdrawn"] == ["four"]
         add({"operation": "dequeue"})
         await asyncio.sleep(1)
         assert runner.unread("e1") == ["three"]  # the cancel's dequeue didn't take "three"

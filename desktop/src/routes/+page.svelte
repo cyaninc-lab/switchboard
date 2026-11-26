@@ -874,10 +874,11 @@
       // Claude Code's queue as the daemon mirrors it: what's in it stays at the bottom with a clock; what left it was
       // read and joins the chat; dropped (an interrupt, the session stopping) goes back in the message box
       const seen = unreadSeen[e.entry] ?? new Set<string>(), q = pendingQ[e.entry] ?? [];
-      const left = [...e.items], read: HistoryMessage[] = [], keep: HistoryMessage[] = [];
+      const left = [...e.items], read: HistoryMessage[] = [], keep: HistoryMessage[] = [], gone = [...(e.withdrawn ?? [])];
       for (const msg of q) {
-        const i = left.indexOf(msgText(msg));
+        const i = left.indexOf(msgText(msg)), w = gone.indexOf(msgText(msg));
         if (i >= 0) { left.splice(i, 1); keep.push(msg); }
+        else if (w >= 0) gone.splice(w, 1);  // taken back with ✕ (here or on another device): never read, so not in the chat
         else if (seen.has(msgText(msg)) && !e.dropped.includes(msgText(msg))) read.push(msg);
         else if (!e.dropped.includes(msgText(msg))) keep.push(msg);  // sent just now: not in the queue yet
       }
