@@ -2885,7 +2885,7 @@
   .deny { background: none; color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 45%, transparent); border-radius: 8px; padding: 8px 16px; }
   /* its own shape: in the chat's column it was stretched to the full width while its height was capped (squashed) */
   /* one size for every section (no jumping between tabs); only the section scrolls */
-  .dialog.settings { width: min(720px, 100%); height: min(620px, 90vh); display: flex; flex-direction: column; }
+  .dialog.settings { width: min(860px, 100%); max-width: 860px; height: min(680px, 90vh); display: flex; flex-direction: column; }  /* wider than the 440px every dialog gets */
   .setgrid { display: grid; grid-template-columns: 150px 1fr; gap: 18px; flex: 1; min-height: 0; }
   .settabs { display: flex; flex-direction: column; gap: 2px; align-items: stretch; align-self: start; }
   .settabs button { text-align: left; padding: 7px 10px; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; font: inherit; }
