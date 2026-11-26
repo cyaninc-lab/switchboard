@@ -71,7 +71,7 @@ test('phone layout: sessions → chat (as text messages) → back; inbox from th
   expect(sb.x).toBeLessThan(lb2.x + 30);
   expect(await live.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
   await expect(input).toHaveAttribute('placeholder', 'Working… Claude reads it after this step');
-  const stop = page.getByRole('button', { name: 'Interrupt' });
+  const stop = page.getByRole('button', { name: 'Stop Claude' });
   await expect(stop).toHaveText('■');
   const box = (await page.locator('form.inputbar').boundingBox())!;
   expect(box.width).toBeLessThanOrEqual(390);
