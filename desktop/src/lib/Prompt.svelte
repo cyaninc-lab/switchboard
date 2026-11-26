@@ -34,12 +34,13 @@
     const label = pointed[q.question] ?? (picked[q.question] ?? [])[0];
     return (q.options.find((o: any) => o.label === label && o.preview) ?? q.options.find((o: any) => o.preview))?.preview ?? '';
   };
-  const answered = $derived(questions.every((q) => (picked[q.question]?.length ?? 0) > 0 || (other[q.question] ?? '').trim()));
+  // pick any: nothing ticked is an answer too ("None of these")
+  const answered = $derived(questions.every((q) => q.multiSelect || (picked[q.question]?.length ?? 0) > 0 || (other[q.question] ?? '').trim()));
   function submitAnswers() {
     const answers: Record<string, string | string[]> = {};
     for (const q of questions) {
       const own = (other[q.question] ?? '').trim();
-      answers[q.question] = own || (q.multiSelect ? picked[q.question] ?? [] : (picked[q.question] ?? [])[0] ?? '');
+      answers[q.question] = own || (q.multiSelect ? (picked[q.question]?.length ? picked[q.question] : 'None of these') : (picked[q.question] ?? [])[0] ?? '');
     }
     live.answer(p.request_id, true, { answers });
   }
@@ -58,7 +59,9 @@
             class:on={(picked[q.question] ?? []).includes(o.label)} onclick={() => toggle(q, o.label)}
             onpointerenter={() => (pointed[q.question] = o.label)} onfocus={() => (pointed[q.question] = o.label)}
             onpointerleave={() => delete pointed[q.question]} onblur={() => delete pointed[q.question]}>
-            <b>{o.label}</b>{#if o.description}<span>{o.description}</span>{/if}
+            <!-- round: pick one; square: pick any -->
+            <i class="mark" class:box={q.multiSelect} aria-hidden="true"></i>
+            <div class="otext"><b>{o.label}</b>{#if o.description}<span>{o.description}</span>{/if}</div>
           </button>
         {/each}
       </div>
@@ -110,10 +113,17 @@
   .qhead { display: flex; gap: 8px; align-items: baseline; }
   .chip { flex: none; white-space: nowrap; font-size: 11px; color: var(--sky); border: 1px solid color-mix(in srgb, var(--sky) 50%, transparent); border-radius: 999px; padding: 1px 8px; }
   .opts { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 6px; }
-  .opts button { display: flex; flex-direction: column; gap: 2px; text-align: left; background: var(--mantle); border: 1px solid var(--s1); color: var(--text); border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+  .opts button { display: flex; gap: 9px; align-items: flex-start; text-align: left; background: var(--mantle); border: 1px solid var(--s1); color: var(--text); border-radius: 8px; padding: 8px 10px; cursor: pointer; }
   .opts button:hover { border-color: var(--s2); }
   .opts button.on { border-color: var(--sky); background: var(--s0); }
   .opts span { font-size: 11px; color: var(--sub0); }
+  .otext { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .mark { flex: none; width: 14px; height: 14px; margin-top: 2px; border: 2px solid var(--o1); border-radius: 50%; display: grid; place-items: center; box-sizing: border-box; }
+  .mark.box { border-radius: 4px; }
+  .on .mark { border-color: var(--sky); }
+  .on .mark:not(.box)::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--sky); }
+  .on .mark.box { background: var(--sky); }
+  .on .mark.box::after { content: "✓"; font-size: 9px; font-weight: 800; color: var(--crust); line-height: 1; }
   /* with previews: options stacked on the left, the preview beside them (below on a narrow view) */
   .split { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr); gap: 8px; align-items: start; }
   .split .opts { grid-template-columns: 1fr; }

@@ -71,3 +71,29 @@ test('questions, plan approval, and allow for this session', async ({ page }) =>
   await page.getByRole('navigation', { name: 'Sessions' }).getByRole('button', { name: /Deploy #52 rolled back/ }).click({ button: 'right' });
   await page.getByRole('menuitem', { name: 'Remove from tree' }).click();
 });
+
+test('pick one shows round marks, pick any square ones; pick any can be sent with nothing ticked', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '+ Connect a machine' }).click();
+  await page.getByLabel('Daemon address').fill(`http://127.0.0.1:${DAEMON_PORT}`);
+  await page.getByLabel('One-time code').fill(execFileSync(daemon, ['--data', DATA, 'pair']).toString().trim());
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await page.getByRole('button', { name: '+ Add' }).click();
+  const dialog = page.getByRole('form', { name: 'Add to Switchboard' });
+  await dialog.getByRole('tab', { name: 'New session' }).click();
+  await dialog.getByLabel(/Folder on/).fill('/tmp');
+  await dialog.getByLabel('Name in the tree').fill('Questions');
+  await dialog.getByRole('button', { name: 'Create session' }).click();
+  const box = page.getByLabel('Message this session'), log = page.getByRole('log', { name: 'Session history' });
+  await box.fill('ask me several'); await box.press('Enter');
+  const checks = page.getByRole('group', { name: 'Which checks should run?' });
+  await expect(checks.getByRole('checkbox')).toHaveCount(2);
+  expect(await checks.locator('.mark.box').count()).toBe(2);  // square: pick any
+  await page.screenshot({ path: 'e2e/.results/question-multi.png' });
+  await page.getByRole('button', { name: 'Answer' }).click();  // nothing ticked: still an answer
+  await expect(log).toContainText('You picked: ');
+  await expect(log).toContainText('None of these');
+  await box.fill('ask me'); await box.press('Enter');
+  const db = page.getByRole('radiogroup', { name: 'Which database should I use?' });
+  expect(await db.locator('.mark:not(.box)').count()).toBe(2);  // round: pick one
+});
