@@ -390,8 +390,11 @@ class ClaudeSDKClient:
             yield UserMessage([ToolResultBlock("r1", [{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": _PNG}}], False)])
         if "show a link" in text.lower():  # a markdown link in the reply
             yield AssistantMessage([TextBlock("See [the docs](https://example.com/docs) for details.")])
-        if "ask me" in text.lower():  # a clarifying question (AskUserQuestion)
-            q = {"question": "Which database should I use?", "header": "DB choice", "multiSelect": False,
+        if "ask me" in text.lower():  # a clarifying question (AskUserQuestion); "ask me several": pick any
+            multi = "several" in text.lower()
+            q = {"question": "Which checks should run?", "header": "Checks", "multiSelect": True,
+                 "options": [{"label": "Unit tests", "description": "~2 min"}, {"label": "Lint", "description": ""}]} if multi else \
+                {"question": "Which database should I use?", "header": "DB choice", "multiSelect": False,
                  "options": [{"label": "SQLite", "description": "One file, no server", "preview": "+ data/app.db\n  tables: users, posts"},
                              {"label": "Postgres", "description": "A real server", "preview": "+ compose.yml: db service\n  port 5432"}]}
             yield AssistantMessage([ToolUseBlock("q1", "AskUserQuestion", {"questions": [q]})])  # shown in the chat, as real Claude Code does
