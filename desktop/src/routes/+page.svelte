@@ -1625,7 +1625,6 @@
       open(m, added[0]);
     } catch (e) { aError = (e as Error).message; }
   }
-  async function remove() { if (selected) await removeEntry(selected.machine, selected.entry); }
   // off the tree, or (forever) deleted from its machine too; its tabs close either way
   async function removeEntry(m: Machine, e: Entry, forever = false) {
     await api.removeEntry(m, e.id, forever);
@@ -1657,9 +1656,10 @@
     }
     catch (e) { const c = (e as Error).message; doomErr = c === 'open_elsewhere' ? "It's open in a terminal on that machine: close it there first." : c; }
   }
-  async function togglePin() {
-    if (!selected) return;
-    selected.entry = await api.updateEntry(selected.machine, selected.entry.id, { pinned: !selected.entry.pinned });
+  async function togglePin(m: Machine, e: Entry) {  // right-click → Pin / Unpin: pinned sessions sit at the top of their project
+    ctx = null;
+    const u = await api.updateEntry(m, e.id, { pinned: !e.pinned });
+    if (selected?.entry.id === e.id) selected.entry = u;
     refresh();
   }
 
@@ -1712,6 +1712,7 @@
       <button role="menuitem" onclick={() => { const m = mm.machine, en = me; ctx = null; tasksFor = { machine: m, entry: en }; }}>Background tasks…{#if bgRunning(me)} <span class="muted small">({bgRunning(me)} running)</span>{/if}</button>
       {#if phone && selected?.entry.id === me.id}<button role="menuitem" onclick={() => { ctx = null; sessOpts = true; }}>Session settings…</button>{/if}
       <button role="menuitem" onclick={() => startRename('e:' + me.id, me.name)}>Rename</button>
+      <button role="menuitem" onclick={() => togglePin(mm.machine, me)}>{me.pinned ? 'Unpin' : 'Pin'}</button>
       <button role="menuitem" disabled={!LIVE_STATES.includes(me.state)} title="Ends the Claude process; it stays in the tree and resumes on your next message, which re-reads its whole history (costly for a long session). To stop what it's doing, use Stop"
         onclick={() => closeSession(mm.machine, me)}>Close session</button>
       {#if isDesktopApp() && !solo}<button role="menuitem" onclick={async () => { const m = mm.machine, en = me; ctx = null; await open(m, en, 'keep'); if (!inWindow[en.id]) popOutCurrent(); }}>Open in new window</button>{/if}
@@ -1924,15 +1925,10 @@
           <button class="tiny" class:on={termFor === selected.entry.id} onclick={() => { termFor = termFor === selected!.entry.id ? null : selected!.entry.id; if (!termFor) open(selected!.machine, selected!.entry); }}
             title="Switch between the chat view and the real claude terminal">{termFor === selected.entry.id ? 'Chat' : 'Terminal'}</button>
           <button class="tiny hstop" aria-label="More" title="More: background tasks, rename, split…" onclick={(ev) => { const r = (ev.currentTarget as HTMLElement).getBoundingClientRect(); ev.stopPropagation(); ctx = { x: r.right - 210, y: r.bottom + 4, machine: selected!.machine, entry: selected!.entry }; }}>⋯</button>
-          <!-- Stop interrupts: the session stays open, so its next message doesn't re-read (and re-cache) the whole history.
-               Closing the process is ⋯ → Close session. -->
-          {#if selected.entry.state === 'working' || selected.entry.state === 'waiting'}<button class="tiny hstop" onclick={() => act((l, id) => l.interrupt(id))} title="Stop what Claude is doing (Esc). The session stays open">Stop</button>{/if}
           {#if solo && !solo.embed}
             <button class="tiny" class:on={onTop} aria-pressed={onTop} onclick={() => { onTop = !onTop; setOnTop(onTop).catch(() => {}); }} title="Keep this window above other windows">Keep on top</button>
           {:else if !solo}
             {#if isDesktopApp()}<button class="tiny" onclick={popOutCurrent} title="Open this session in its own window">Pop out</button>{/if}
-            <button class="tiny" onclick={togglePin}>{selected.entry.pinned ? 'Unpin' : 'Pin'}</button>
-            <button class="tiny" onclick={remove} title="Takes it off the tree; the session stays on its machine (find it under Removed to restore)">Remove from tree</button>
           {/if}
         </div>
         {/if}

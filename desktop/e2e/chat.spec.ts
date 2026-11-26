@@ -99,9 +99,10 @@ test('chat: stream, approve, deny, interrupt, auto mode, stop', async ({ page })
   await input.fill('a slow job');
   await input.press('Enter');
   await expect(entry).toHaveAttribute('title', 'Working');
-  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);  // not in the top bar: the ■ by the box
+  await page.getByRole('button', { name: 'Stop Claude' }).click();
   await expect(entry).toHaveAttribute('title', 'Live and ready', { timeout: 5000 });
-  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);  // nothing to stop now
+  await expect(page.getByRole('button', { name: 'Stop Claude' })).toHaveCount(0);  // nothing to stop now: Send again
 
   // ⋯ → Close session ends the process; it stays in the tree
   await page.getByRole('button', { name: 'More' }).click();

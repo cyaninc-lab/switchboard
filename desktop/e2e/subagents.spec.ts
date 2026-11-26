@@ -60,7 +60,7 @@ test('only running subagents show in the tree; a subagent can be messaged throug
 
   await expect(page.getByLabel('Message this session')).toBeVisible();
   if (added) { // leave the shared demo daemon as we found it (later specs add this session themselves)
-    await page.getByRole('button', { name: 'Remove from tree' }).click();
+    await page.locator('nav .entry.sel').click({ button: 'right' }); await page.getByRole('menuitem', { name: 'Remove from tree' }).click();
     await expect(parent).toHaveCount(0);
   }
 });

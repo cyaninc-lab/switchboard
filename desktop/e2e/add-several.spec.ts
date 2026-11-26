@@ -42,7 +42,7 @@ test('add several sessions at once', async ({ page }) => {
   // tidy up
   for (const name of [one, two]) {
     await tree.getByRole('button', { name: new RegExp(name) }).click();
-    await page.getByRole('button', { name: 'Remove from tree' }).click();
+    await page.locator('nav .entry.sel').click({ button: 'right' }); await page.getByRole('menuitem', { name: 'Remove from tree' }).click();
     await expect(tree.getByRole('button', { name: new RegExp(name) })).toHaveCount(0);
   }
 });

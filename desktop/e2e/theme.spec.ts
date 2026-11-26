@@ -73,7 +73,7 @@ test('themes: pick a Catppuccin palette in Settings; it applies everywhere and i
 
   if (added) { // leave the shared demo daemon as we found it
     await entry.click();
-    await page.getByRole('button', { name: 'Remove from tree' }).click();
+    await page.locator('nav .entry.sel').click({ button: 'right' }); await page.getByRole('menuitem', { name: 'Remove from tree' }).click();
     await expect(entry).toHaveCount(0);
   }
 });
