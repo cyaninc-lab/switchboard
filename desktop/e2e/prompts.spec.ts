@@ -88,12 +88,12 @@ test('pick one shows round marks, pick any square ones; pick any can be sent wit
   await box.fill('ask me several'); await box.press('Enter');
   const checks = page.getByRole('group', { name: 'Which checks should run?' });
   await expect(checks.getByRole('checkbox')).toHaveCount(2);
-  expect(await checks.locator('.mark.box').count()).toBe(2);  // square: pick any
+  await expect(checks.locator('.mark.box')).toHaveCount(2);  // square: pick any
   await page.screenshot({ path: 'e2e/.results/question-multi.png' });
   await page.getByRole('button', { name: 'Answer' }).click();  // nothing ticked: still an answer
   await expect(log).toContainText('You picked: ');
   await expect(log).toContainText('None of these');
   await box.fill('ask me'); await box.press('Enter');
   const db = page.getByRole('radiogroup', { name: 'Which database should I use?' });
-  expect(await db.locator('.mark:not(.box)').count()).toBe(2);  // round: pick one
+  await expect(db.locator('.mark:not(.box)')).toHaveCount(2);  // round: pick one
 });
