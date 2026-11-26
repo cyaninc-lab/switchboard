@@ -86,6 +86,9 @@ def test_tree_flow(env):
         h = await paired(c, store)
         s = await (await c.get("/v1/sessions?q=glance", headers=h)).json()
         assert s["total"] == 1 and s["sessions"][0]["entry_id"] is None
+        for q in ("s2", "claude --resume s2", "claude -r s2"):  # a resume code finds it too
+            s = await (await c.get(f"/v1/sessions?q={q}", headers=h)).json()
+            assert [x["session_id"] for x in s["sessions"]] == ["s2"], q
 
         r = await c.post("/v1/entries", headers=h, json={"session_id": "s2"})
         assert r.status == 201
