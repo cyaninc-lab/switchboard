@@ -1,4 +1,11 @@
-- Quick filters in the session list: click into Filter to show only sessions with a reply in the last hour, day or week, or ones waiting on you, working, unread or pinned.
-- Session names agree everywhere: renaming a session in Switchboard renames it in Claude Code too, so agents find each other by the same name.
-- Agents can message a session by any of its names, its project or its id, and get the closest names when nothing matches.
-- Each session knows its own Switchboard name.
+- Split view has its own tabs: open several sessions in it and drag tabs between the main strip and the split.
+- One Send button that turns into Stop while Claude is busy (on the desktop too, styled like the phone).
+- A spinner by the message box while Claude works.
+- Pick-one questions show round marks and pick-any questions square tick boxes; you can send a pick-any with nothing ticked.
+- Command output folds to six lines as they look on screen, with "Show all" inside the window.
+- A wider Settings window.
+- A tidier top bar: Pin and Remove are in the session's right-click menu.
+- Sessions can leave you a note in the inbox (your phone is notified).
+- Watches can run once at a set time, end on a date or after a number of runs, and agents can edit them in place.
+- Paste a resume code (or `claude --resume <id>`) into + Add to find a session.
+- Fixed: a queued message taken back with ✕ no longer shows up in the chat.
