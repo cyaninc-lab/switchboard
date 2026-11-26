@@ -2562,7 +2562,7 @@
         {#if aError}<p class="error">{aError}</p>{/if}
         <div class="actions"><button type="button" class="btn ghost" onclick={() => (dialog = null)}>Cancel</button><button class="btn primary">Create session</button></div>
       {:else}
-      <label class="search"><span class="sr">Search</span><input type="search" placeholder="Search sessions on {aMachine?.name}…" bind:value={aQuery} oninput={search} /></label>
+      <label class="search"><span class="sr">Search</span><input type="search" placeholder="Search sessions on {aMachine?.name}, or paste a resume ID…" bind:value={aQuery} oninput={search} /></label>
       <div class="slist" role="group" aria-label="Sessions">
         {#each aSessions as s (s.session_id)}
           <button type="button" class="srow" class:on={aPicks.some((x) => x.session_id === s.session_id)} aria-pressed={aPicks.some((x) => x.session_id === s.session_id)} class:intree={!!s.entry_id} disabled={!!s.entry_id} onclick={() => pick(s)}>

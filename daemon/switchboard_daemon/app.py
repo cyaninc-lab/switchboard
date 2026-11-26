@@ -165,11 +165,14 @@ async def machine(request):
 
 
 async def sessions(request):
-    q = request.query.get("q", "").lower()
+    # a resume code works too: the session id, or "claude --resume <id>" pasted whole
+    q = request.query.get("q", "").strip().lower().removeprefix("claude").strip().removeprefix("--resume").removeprefix("-r").strip()
     limit, offset = int(request.query.get("limit", 50)), int(request.query.get("offset", 0))
     found = [s for s in await _off(sdk.list_sessions) if getattr(s, "custom_title", None) != BTW_TITLE]  # side-chat forks aren't sessions to add
     if q:
-        found = [s for s in found if q in (s.summary or "").lower() or q in (s.cwd or "").lower()]
+        found = [s for s in found if any(q in (x or "").lower() for x in (s.summary, s.cwd, s.session_id, getattr(s, "custom_title", None)))]
+        if not found and len(q) == 36 and (info := await _off(sdk.get_session_info, q)):  # not in the list (an old or odd folder)
+            found = [info]
     store, out = request.app[STORE], []
     for s in found[offset:offset + limit]:
         e = store.entry_by_session(s.session_id)
