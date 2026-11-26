@@ -68,5 +68,5 @@ test('watches: notify and wake-an-agent both land in the inbox', async ({ page }
   for (const name of ['Disk check', 'Morning check']) await dlg.getByRole('button', { name: `Delete ${name}` }).click();
   await expect(dlg.getByText('No watches on demo yet.')).toBeVisible();
   await page.getByRole('button', { name: 'Close', exact: true }).click();
-  await page.getByRole('button', { name: 'Remove from tree' }).click();
+  await page.locator('nav .entry.sel').click({ button: 'right' }); await page.getByRole('menuitem', { name: 'Remove from tree' }).click();
 });

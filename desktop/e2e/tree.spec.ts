@@ -62,9 +62,14 @@ test('connect, add from a machine, read history, pin, remove', async ({ page }) 
 
   // pin floats it to the top of its machine; remove takes it off the tree only
   await tree.getByRole('button', { name: /Shorts deploy/ }).click();
-  await page.getByRole('button', { name: 'Pin', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Pin', exact: true })).toHaveCount(0);  // not in the top bar: right-click
+  await tree.getByRole('button', { name: /Shorts deploy/ }).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Pin', exact: true }).click();
   await expect(tree.getByRole('button', { name: /Shorts deploy/ })).toContainText('★');
-  await page.getByRole('button', { name: 'Remove from tree' }).click();
+  await tree.getByRole('button', { name: /Shorts deploy/ }).click({ button: 'right' });
+  await expect(page.getByRole('menuitem', { name: 'Unpin' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.locator('nav .entry.sel').click({ button: 'right' }); await page.getByRole('menuitem', { name: 'Remove from tree' }).click();
   await expect(tree.getByRole('button', { name: /Shorts deploy/ })).toHaveCount(0);
   await page.getByRole('button', { name: '+ Add' }).click();
   await expect(dialog.getByRole('button', { name: /Deploy #52 rolled back/ })).toBeEnabled();

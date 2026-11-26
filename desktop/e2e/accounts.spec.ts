@@ -42,5 +42,5 @@ test('accounts: add one, use it for a session, remove it', async ({ page }) => {
   await expect(list).not.toContainText('work');
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await page.getByRole('button', { name: 'Model, effort, mode and account' }).click(); await expect(page.getByRole('dialog', { name: 'Session settings' }).getByLabel('Account')).toHaveValue(''); await page.getByRole('dialog', { name: 'Session settings' }).getByRole('button', { name: 'Close' }).click();  // back on the machine login
-  await page.getByRole('button', { name: 'Remove from tree' }).click();  // the specs share one demo daemon
+  await page.locator('nav .entry.sel').click({ button: 'right' }); await page.getByRole('menuitem', { name: 'Remove from tree' }).click();  // the specs share one demo daemon
 });
