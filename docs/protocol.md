@@ -59,6 +59,7 @@ Client → daemon:
 | `subscribe` | `entries: [id]` (or `"all"`) |
 | `send` | `entry, text, images?, now?` (starts or resumes the session if stopped; `now`: if it's working, interrupt and send this first, Claude Code's Ctrl+Enter; images = `[{media_type, data(base64)}]`, PNG/JPEG/GIF/WebP, ≤5 MB each, ≤10) |
 | `interrupt` / `stop` | `entry` |
+| `bash` | `entry, command`: a `!command`. It runs in the session's folder on that machine (up to 2 minutes; 30k characters of each of stdout and stderr kept) and is added to the conversation as Claude Code records it (`<bash-input>…</bash-input><bash-stdout>…</bash-stdout><bash-stderr>…</bash-stderr>`) without starting a turn, so Claude sees it with the next message. Clients get it as a `message` |
 | `set_mode` | `entry, mode` (default, acceptEdits, plan, auto, dontAsk, bypassPermissions) |
 | `set_account` | `entry, account` (null = the machine's own login; closes a live session, which resumes on the new account at the next message) |
 | `set_effort` | `entry, effort` (low/medium/high/xhigh/max or null; applies when the session starts, so a live one restarts, after the running turn if busy) |

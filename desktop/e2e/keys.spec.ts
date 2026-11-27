@@ -77,3 +77,27 @@ test("a command's arguments: its hint shows, Tab picks a choice", async ({ page 
   await box.pressSequentially('h');  // the next argument has no choices: just the hint
   await expect(args.getByRole('option')).toHaveCount(0);
 });
+
+test('!command runs on the machine and shows as a Bash window, without a turn', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '+ Connect a machine' }).click();
+  await page.getByLabel('Daemon address').fill(`http://127.0.0.1:${DAEMON_PORT}`);
+  await page.getByLabel('One-time code').fill(execFileSync(daemon, ['--data', DATA, 'pair']).toString().trim());
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await page.getByRole('button', { name: '+ Add' }).click();
+  const dialog = page.getByRole('form', { name: 'Add to Switchboard' });
+  await dialog.getByRole('tab', { name: 'New session' }).click();
+  await dialog.getByLabel(/Folder on/).fill('/tmp');
+  await dialog.getByLabel('Name in the tree').fill('Bang');
+  await dialog.getByRole('button', { name: 'Create session' }).click();
+  await expect(page.getByRole('tablist', { name: 'Open sessions' }).getByRole('tab', { name: 'Bang' })).toHaveAttribute('aria-selected', 'true');
+  const box = page.getByLabel('Message this session'), log = page.getByRole('log', { name: 'Session history' });
+  await box.fill('!echo hi-from-bang && pwd');
+  await expect(page.locator('.prompt.bangp')).toHaveText('!');  // the prompt says it's a command
+  await box.press('Enter');
+  const win = log.locator('.result', { hasText: 'hi-from-bang' });
+  await expect(win.locator('.cmdline')).toContainText('echo hi-from-bang && pwd');
+  await expect(win).toContainText('/tmp');  // ran in the session's folder
+  await expect(log).not.toContainText('Done:');  // no turn
+  await expect(box).toHaveValue('');
+});

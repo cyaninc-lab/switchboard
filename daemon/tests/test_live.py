@@ -901,3 +901,19 @@ def test_upload_saves_the_file_for_the_session(tmp_path, monkeypatch):
         assert (await client.post("/v1/entries/nope/upload?name=a", headers=h, data=b"x")).status == 404
         await client.close()
     asyncio.run(t())
+
+
+def test_bang_command_runs_and_joins_the_conversation(tmp_path, monkeypatch):
+    """`!command`: run in the session's folder, shown to clients as a <bash-input> message, added without starting a turn."""
+    async def t():
+        client, store, token, h, e, ws = await setup(tmp_path, monkeypatch)
+        runner = client.server.app[appmod.RUNNER]
+        await ws.send_json({"type": "bash", "entry": e["id"], "command": "echo hello-bang && echo oops >&2"})
+        m, seen = await until(ws, lambda m: m["type"] == "message" and "<bash-input>" in str(m), timeout=10)
+        text = m["message"]["message"]["content"]
+        assert "<bash-input>echo hello-bang && echo oops >&2</bash-input>" in text
+        assert "<bash-stdout>hello-bang</bash-stdout>" in text and "<bash-stderr>oops</bash-stderr>" in text
+        await asyncio.sleep(0.5)
+        assert runner.state(e["id"]) != "working"  # no turn: Claude sees it with the next message
+        await client.close()
+    asyncio.run(t())

@@ -240,12 +240,21 @@ function untag(t: string): string {
   return t.replace(/<\/?local-command-std(out|err)>/g, '').replace(/<command-message>[\s\S]*?<\/command-message>/g, '');
 }
 
+// a `!command` you ran (Claude Code's way of recording it): shown as a Bash window, its output inside
+export const BANG = /^\s*<bash-input>([\s\S]*?)<\/bash-input>\s*(?:<bash-stdout>([\s\S]*?)<\/bash-stdout>)?\s*(?:<bash-stderr>([\s\S]*?)<\/bash-stderr>)?\s*$/;
+const bangLines = (msg: HistoryMessage, t: string): Line[] | null => {
+  const m = msg.type === 'user' ? BANG.exec(t) : null;
+  if (!m) return null;
+  const id = 'bang:' + msg.uuid, out = [m[2], m[3]].filter((x) => x?.trim()).join('\n');
+  return [{ kind: 'tool', text: `! ${m[1]}`, name: 'Bash', id, input: { command: m[1] } }, { kind: 'result', text: out || '(no output)', id }];
+};
+
 export function render(msg: HistoryMessage): Line[] {
   const c = msg.message?.content;
-  if (typeof c === 'string') return [userText(msg, untag(c))];
+  if (typeof c === 'string') return bangLines(msg, c) ?? [userText(msg, untag(c))];
   if (!Array.isArray(c)) return [];
   return c.flatMap((b: any): Line[] => {
-    if (b.type === 'text') return [userText(msg, untag(b.text))];
+    if (b.type === 'text') return bangLines(msg, b.text) ?? [userText(msg, untag(b.text))];
     if (b.type === 'thinking' && b.thinking) return [{ kind: 'thinking' as const, text: b.thinking }];
     if (b.type === 'image' && b.source?.type === 'base64') return [{ kind: 'image' as const, text: `data:${b.source.media_type};base64,${b.source.data}` }];
     if (b.type === 'tool_use') {
@@ -366,6 +375,8 @@ export class Live {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(o));  // else it goes on the reconnect
   }
   interrupt(entry: string) { this.sendJson({ type: 'interrupt', entry }); }
+  /** `!command`: run in the session's folder on its machine; it joins the conversation without a turn */
+  bash(entry: string, command: string) { this.sendJson({ type: 'bash', entry, command }); }
   stop(entry: string) { this.sendJson({ type: 'stop', entry }); }
   stopTask(entry: string, task: string) { this.sendJson({ type: 'stop_task', entry, task_id: task }); }
   btw(entry: string, text: string) { this.sendJson({ type: 'btw', entry, text }); }

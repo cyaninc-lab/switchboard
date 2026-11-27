@@ -549,8 +549,11 @@
   // edits' hunks (line numbers) by tool_use id, from history and live tool results
   let hunks = $derived(Object.assign({}, ...messages.map((m) => m.patches ?? {})) as Record<string, api.Hunk[]>);
   // Bash commands by tool_use id: a terminal window's title says "Bash" and its body starts with "$ <command>"
-  let bashCmd = $derived(Object.fromEntries(messages.flatMap((m) => Array.isArray(m.message?.content) ? m.message.content : [])
-    .filter((b: any) => b?.type === 'tool_use' && b.name === 'Bash' && b.input?.command).map((b: any) => [b.id, String(b.input.command)])) as Record<string, string>);
+  let bashCmd = $derived(Object.fromEntries([...messages.flatMap((m) => Array.isArray(m.message?.content) ? m.message.content : [])
+    .filter((b: any) => b?.type === 'tool_use' && b.name === 'Bash' && b.input?.command).map((b: any) => [b.id, String(b.input.command)]),
+    // and `!commands` you ran (their window's id is 'bang:' + the message's uuid)
+    ...messages.filter((m) => m.type === 'user' && typeof m.message?.content === 'string').map((m) => [m, api.BANG.exec(m.message.content as string)] as const)
+      .filter(([, x]) => x).map(([m, x]) => ['bang:' + m.uuid, x![1]])]) as Record<string, string>);
   // claude.ai Artifacts by tool_use id: the result shows as a card linking the published page
   let artifacts = $derived(Object.fromEntries(messages.flatMap((m) => Array.isArray(m.message?.content) ? m.message.content : [])
     .filter((b: any) => b?.type === 'tool_use' && b.name === 'Artifact' && (b.input?.action ?? 'publish') === 'publish')
@@ -983,6 +986,12 @@
     ev.preventDefault();
     if (!selected || (!draft.trim() && !attachments.length)) return;
     if (/^\/btw(\s|$)/.test(draft) && !selected.sub) { askBtw(draft.slice(4)); draft = ''; return; }
+    // `!command`, as in Claude Code: runs in the session's folder on its machine, no turn; Claude sees it with your next message
+    if (/^!\S/.test(draft.trim()) && !attachments.length && !selected.sub) {
+      try { live()!.bash(selected.entry.id, draft.trim().slice(1).trim()); keepTab(); draft = ''; liveErr = ''; say('Running it…'); }
+      catch (e) { liveErr = (e as Error).message; }
+      return;
+    }
     try {
       const images = attachments.map(({ media_type, data }) => ({ media_type, data }));
       live()!.send(selected.entry.id, draft, images, sendNow);  // now: the daemon interrupts and sends this first
@@ -2077,7 +2086,7 @@
         {/if}
         <form class="inputbar mono" onsubmit={sendDraft} ondragover={(e) => e.preventDefault()} ondrop={onDrop}>
           <!-- ❯, or a spinner while Claude works -->
-          {#if selected.entry.state === 'working'}<span class="prompt"><span class="promptspin" role="status" aria-label="Claude is working"></span></span>{:else}<span class="prompt">❯</span>{/if}
+          {#if selected.entry.state === 'working'}<span class="prompt"><span class="promptspin" role="status" aria-label="Claude is working"></span></span>{:else if /^!/.test(draft)}<span class="prompt bangp" title="Runs on {selected.machine.name} in the session's folder; Claude sees the output with your next message">!</span>{:else}<span class="prompt">❯</span>{/if}
           <label class="grow"><span class="sr">Message this session</span>
             <textarea rows="1" {@attach grow} bind:value={draft} bind:this={inputEl} oninput={onDraftInput} onblur={() => setTimeout(() => (atQ = null), 150)} onpaste={onPaste} onkeydown={onInputKey} disabled={selected.entry.state === 'terminal' || selected.entry.state === 'missing'}
               placeholder={selected.entry.state === 'terminal' ? 'Open in a terminal elsewhere' : selected.entry.state === 'working' ? (phone ? 'Working… Claude reads it after this step' : 'Working… Enter: Claude reads it after this step · Ctrl+Enter: now') : (phone ? 'Message' : 'Message this session (Shift+Enter for a new line)')}></textarea></label>
@@ -2893,6 +2902,7 @@
   .bgspin { display: inline-block; width: 9px; height: 9px; border: 2px solid var(--sky); border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
   .bgbadge { font-size: 10px; font-weight: 600; color: var(--crust); background: var(--sky); border-radius: 99px; padding: 0 6px; }
   @media (prefers-reduced-motion: reduce) { .bgspin { animation: none; } }
+  .prompt.bangp { color: var(--peach); }
   .promptspin { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--mauve); border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -1px; }
   @media (prefers-reduced-motion: reduce) { .promptspin { animation: none; } }
   .toast { position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%); z-index: 60; max-width: min(70vw, 720px); word-break: break-all;

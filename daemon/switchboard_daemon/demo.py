@@ -265,10 +265,14 @@ class ClaudeSDKClient:
             self.inbox.append((text, 0))
         else:
             async for msg in text:  # a user message with content blocks (images)
+                if msg.get("shouldQuery") is False:  # added to the conversation without a turn (`!command`)
+                    continue
                 blocks = msg["message"]["content"]
                 if isinstance(blocks, str):  # text with a uuid (sent mid-turn)
                     blocks = [{"type": "text", "text": blocks}]
                 self.inbox.append((" ".join(b.get("text", "") for b in blocks if b["type"] == "text"), sum(b["type"] == "image" for b in blocks)))
+            if not self.inbox:
+                return  # only silent messages: no turn
         self.go.set()
 
     async def receive_messages(self):
