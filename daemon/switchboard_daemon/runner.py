@@ -18,6 +18,8 @@ TOOLS = ("mcp__switchboard__inbox", "mcp__switchboard__sessions", "mcp__switchbo
          "mcp__switchboard__watch")  # allowed without asking
 AGENT_WATCHES, AGENT_MIN_MINUTES = 10, 5  # an agent's own watches: how many, how often at most (each wake costs a turn)
 AGENT_IDEAS = 3  # watch ideas one session may send the user per day
+BANG_TIMEOUT = 120  # seconds a `!command` may run
+BANG_MAX = 30000  # characters of its output kept (each of stdout, stderr)
 AGENT_INBOX = 6  # inbox notes one session may leave per hour
 CALL_GAP = 180  # seconds between calls from one session: a guardrail against a session ringing over and over
 MODES = {"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}
@@ -818,6 +820,34 @@ class Runner:
                 await self.broadcast({"type": "permission_resolved", "entry": lv.entry_id, "request_id": request_id, "allow": bool(allow), "by": by})
                 return True
         return False
+
+    async def bang(self, entry, command):
+        """`!command`, as in Claude Code: run it in the session's folder on this machine (no turn, no tokens), show it, and
+        add it to the conversation without starting a turn, so Claude sees it with your next message."""
+        info = await asyncio.to_thread(self.sdk.get_session_info, entry["session_id"]) if hasattr(self.sdk, "get_session_info") else None
+        cwd = (getattr(info, "cwd", None) or entry.get("cwd") or os.path.expanduser("~"))
+        if not os.path.isdir(cwd):
+            cwd = os.path.expanduser("~")
+        try:
+            p = await asyncio.create_subprocess_shell(command, cwd=cwd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                                                      stdin=asyncio.subprocess.DEVNULL)
+            try:
+                out, err = await asyncio.wait_for(p.communicate(), BANG_TIMEOUT)
+            except asyncio.TimeoutError:
+                p.kill()
+                out, err = b"", f"(stopped after {BANG_TIMEOUT} s)".encode()
+        except OSError as e:
+            out, err = b"", str(e).encode()
+        cap = lambda b: (lambda t: t if len(t) <= BANG_MAX else t[:BANG_MAX] + f"\n… ({len(t) - BANG_MAX} more characters)")(b.decode(errors="replace").rstrip())
+        text = f"<bash-input>{command}</bash-input>\n<bash-stdout>{cap(out)}</bash-stdout><bash-stderr>{cap(err)}</bash-stderr>"
+        uid = str(uuid.uuid4())
+        lv = await self._open(entry)
+
+        async def one():
+            yield {"type": "user", "uuid": uid, "shouldQuery": False, "parent_tool_use_id": None, "session_id": "default",
+                   "message": {"role": "user", "content": text}}
+        await lv.client.query(one())
+        await self.broadcast({"type": "message", "entry": entry["id"], "message": {"type": "user", "uuid": uid, "message": {"role": "user", "content": text}}})
 
     async def send_now(self, entry, text, images=None):
         """Claude Code's Ctrl+Enter: interrupt the running turn and send this, ahead of anything already queued."""

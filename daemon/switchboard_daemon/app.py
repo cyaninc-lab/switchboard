@@ -845,6 +845,10 @@ async def ws_handler(request):
                                 seen.pop(next(iter(seen)))
                     if ref:
                         await ws.send_json({"type": "ack", "ref": ref})
+                elif t == "bash":  # `!command`: run in the session's folder, added to the conversation without a turn
+                    if entry["session_id"] in await _off(open_in_terminal) - runner.held_sessions():
+                        raise RuntimeError("open_in_terminal")
+                    asyncio.get_running_loop().create_task(runner.bang(entry, str(m.get("command", ""))[:10000]))
                 elif t == "ping":  # the client's heartbeat: a connection that died unnoticed shows up within seconds
                     await ws.send_json({"type": "pong"})
                 elif t == "interrupt":
